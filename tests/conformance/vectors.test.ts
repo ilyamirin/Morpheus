@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CatalogIndex } from "../../src/catalog/catalog-index.js";
 import { assertEventAuthority } from "../../src/order/authority.js";
+import { validateOrderEventSequence } from "../../src/order/order-flow-validator.js";
 import { OrderStateMachine } from "../../src/order/order-state.js";
 import { validateOrderCreated } from "../../src/order/order-validator.js";
 import { validCatalog, validCustomerBinding, validOrderCreated } from "../../src/conformance/fixtures.js";
@@ -85,13 +86,40 @@ describe("required conformance vectors", () => {
   });
 
   it("9 rejects entitlement.granted before payment.captured when capture_policy=before_entitlement", () => {
-    const machine = new OrderStateMachine();
-    machine.apply("io.marketplace.order.created");
-    machine.apply("io.marketplace.order.accepted");
-    machine.apply("io.marketplace.payment.intent.created");
-    machine.apply("io.marketplace.payment.authorized");
-    expect(() => machine.apply("io.marketplace.entitlement.granted")).toThrow();
-    expect(machine.state).toBe("payment_authorized");
+    expect(() =>
+      validateOrderEventSequence([
+        { type: "io.marketplace.order.created", body: validOrderCreated },
+        { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id } },
+        {
+          type: "io.marketplace.payment.intent.created",
+          body: {
+            order_id: validOrderCreated.order_id,
+            payment_id: "pay:customer.example:01JPAY",
+            adapter: validOrderCreated.payment_adapter,
+            amount: validOrderCreated.price.amount,
+            currency: validOrderCreated.price.currency,
+            capture_policy: "before_entitlement",
+            provider_ref: "pi_123",
+            confirmation: { method: "redirect", uri: "https://payments.example/confirm/pi_123" },
+            expires_at: "2026-05-04T10:20:00Z"
+          }
+        },
+        {
+          type: "io.marketplace.payment.authorized",
+          body: { order_id: validOrderCreated.order_id, payment_id: "pay:customer.example:01JPAY" }
+        },
+        {
+          type: "io.marketplace.entitlement.granted",
+          body: {
+            order_id: validOrderCreated.order_id,
+            payment_id: "pay:customer.example:01JPAY",
+            entitlement_id: "ent:customer.example:01JENT",
+            type: validOrderCreated.entitlement_type,
+            external_ref: "booking:slot-123"
+          }
+        }
+      ])
+    ).toThrow(/before_entitlement/);
   });
 
   it("10 rejects non-allowlisted arbiter", () => {
