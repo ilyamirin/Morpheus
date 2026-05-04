@@ -66,7 +66,7 @@ export function validateOrderCreated(
   assertMoneyEqual(offer.price, order.price);
 }
 
-export function assertMoneyEqual(expected: Money, actual: Money): void {
+function assertMoneyEqual(expected: Money, actual: Money): void {
   if (expected.currency !== actual.currency || !new Decimal(expected.amount).equals(new Decimal(actual.amount))) {
     throw new MarketplaceValidationError("PAYMENT_TERMS_MISMATCH", "Order price does not match offer price", {
       expected,
