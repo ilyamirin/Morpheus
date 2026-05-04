@@ -8,6 +8,7 @@ export type OrderState =
   | "payment_authorized"
   | "payment_captured"
   | "refund_requested"
+  | "entitlement_granted_before_capture"
   | "entitlement_granted"
   | "entitlement_activated"
   | "entitlement_completed"
@@ -46,6 +47,7 @@ const transitions: Record<OrderState, Partial<Record<string, OrderState>>> = {
   },
   payment_authorized: {
     "io.marketplace.payment.captured": "payment_captured",
+    "io.marketplace.entitlement.granted": "entitlement_granted_before_capture",
     "io.marketplace.payment.failed": "cancelled"
   },
   payment_captured: {
@@ -59,6 +61,13 @@ const transitions: Record<OrderState, Partial<Record<string, OrderState>>> = {
     "io.marketplace.payment.refund.requested": "refund_requested",
     "io.marketplace.payment.refunded": "refunded",
     "io.marketplace.payment.chargeback.opened": "chargeback_opened"
+  },
+  entitlement_granted_before_capture: {
+    "io.marketplace.payment.captured": "entitlement_granted",
+    "io.marketplace.dispute.opened": "dispute_opened_after_entitlement",
+    "io.marketplace.payment.failed": "cancelled",
+    "io.marketplace.payment.chargeback.opened": "chargeback_opened",
+    "io.marketplace.entitlement.revoked": "cancelled"
   },
   entitlement_granted: {
     "io.marketplace.order.completed": "completed",

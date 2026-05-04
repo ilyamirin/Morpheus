@@ -15,8 +15,25 @@ interface PaymentIntent {
   capturePolicy: "before_entitlement" | "after_entitlement";
 }
 
+interface CustomerBinding {
+  customerId: string;
+  status: string;
+  acceptedPaymentAdapters: string[];
+  acceptedArbitrationPolicies: string[];
+}
+
+interface OrderTerms {
+  customerId: string;
+  paymentAdapter: string;
+  amount: string;
+  currency: string;
+  arbitrationPolicyId: string;
+}
+
 interface OrderFlowContext {
   orderId?: string;
+  customerBinding?: CustomerBinding;
+  orderTerms?: OrderTerms;
   paymentIntent?: PaymentIntent;
   authorizedPaymentId?: string;
   capturedPaymentId?: string;
@@ -30,6 +47,7 @@ export function validateOrderEventSequence(events: OrderFlowEvent[]): void {
 
   for (const event of events) {
     if (event.type === "io.marketplace.actor.customer.bound") {
+      validateCustomerBound(event, context);
       continue;
     }
 
@@ -50,6 +68,7 @@ function validateEventReferences(event: OrderFlowEvent, context: OrderFlowContex
       });
     }
     context.orderId = createdOrderId;
+    validateCreatedOrderTerms(event, context);
     return;
   }
 
@@ -108,6 +127,67 @@ function validateEventReferences(event: OrderFlowEvent, context: OrderFlowContex
   }
 }
 
+function validateCustomerBound(event: OrderFlowEvent, context: OrderFlowContext): void {
+  if (context.orderId) {
+    fail("INVALID_STATE_TRANSITION", "customer.bound must appear before order.created in an order sequence", {
+      orderId: context.orderId
+    });
+  }
+  const binding = {
+    customerId: requireString(event, "customer_id"),
+    status: requireString(event, "status"),
+    acceptedPaymentAdapters: requireStringArray(event, "accepted_payment_adapters"),
+    acceptedArbitrationPolicies: requireStringArray(event, "accepted_arbitration_policies")
+  };
+  if (binding.status !== "active") {
+    fail("ACTOR_NOT_ACTIVE", `Customer ${binding.customerId} is not active`, {
+      customerId: binding.customerId,
+      status: binding.status
+    });
+  }
+  context.customerBinding = binding;
+}
+
+function validateCreatedOrderTerms(event: OrderFlowEvent, context: OrderFlowContext): void {
+  const customerId = requireString(event, "customer_id");
+  const paymentAdapter = requireString(event, "payment_adapter");
+  const arbitrationPolicyId = requireString(event, "arbitration_policy_id");
+  const price = requireMoney(event, "price");
+  const binding = context.customerBinding;
+
+  if (!binding) {
+    fail("CATALOG_REFERENCE_MISMATCH", "order.created requires a preceding customer.bound event", {
+      customerId
+    });
+  }
+  if (binding.customerId !== customerId) {
+    fail("CATALOG_REFERENCE_MISMATCH", "order.created customer does not match customer.bound", {
+      expected: binding.customerId,
+      actual: customerId
+    });
+  }
+  if (!binding.acceptedPaymentAdapters.includes(paymentAdapter)) {
+    fail("CATALOG_REFERENCE_MISMATCH", "order.created payment adapter is not accepted by customer.bound", {
+      paymentAdapter,
+      acceptedPaymentAdapters: binding.acceptedPaymentAdapters
+    });
+  }
+  if (!binding.acceptedArbitrationPolicies.includes(arbitrationPolicyId)) {
+    fail("CATALOG_REFERENCE_MISMATCH", "order.created arbitration policy is not accepted by customer.bound", {
+      arbitrationPolicyId,
+      acceptedArbitrationPolicies: binding.acceptedArbitrationPolicies
+    });
+  }
+
+  context.orderTerms = {
+    customerId,
+    paymentAdapter,
+    amount: price.amount,
+    currency: price.currency,
+    arbitrationPolicyId
+  };
+}
+
 function validatePaymentIntent(event: OrderFlowEvent, context: OrderFlowContext): void {
   if (context.paymentIntent) {
     fail("PAYMENT_TERMS_MISMATCH", "Order sequence contains multiple payment intents", {
@@ -115,13 +195,22 @@ function validatePaymentIntent(event: OrderFlowEvent, context: OrderFlowContext)
       actual: requireString(event, "payment_id")
     });
   }
-  context.paymentIntent = {
+  const intent = {
     paymentId: requireString(event, "payment_id"),
     adapter: requireString(event, "adapter"),
     amount: requireString(event, "amount"),
     currency: requireString(event, "currency"),
     capturePolicy: requireCapturePolicy(event)
   };
+  const orderTerms = requireOrderTerms(context);
+  if (intent.adapter !== orderTerms.paymentAdapter) {
+    fail("PAYMENT_TERMS_MISMATCH", "payment.intent.created adapter does not match order.created", {
+      expected: orderTerms.paymentAdapter,
+      actual: intent.adapter
+    });
+  }
+  assertMoneyEqual(orderTerms.amount, orderTerms.currency, intent.amount, intent.currency, "payment.intent.created amount does not match order.created");
+  context.paymentIntent = intent;
 }
 
 function validatePaymentCapture(event: OrderFlowEvent, context: OrderFlowContext): void {
@@ -134,6 +223,11 @@ function validatePaymentCapture(event: OrderFlowEvent, context: OrderFlowContext
   }
 
   const intent = requirePaymentIntent(context);
+  if (intent.capturePolicy === "after_entitlement" && !context.entitlementId) {
+    fail("INVALID_STATE_TRANSITION", "payment.captured requires entitlement.granted first when capture_policy=after_entitlement", {
+      paymentId: intent.paymentId
+    });
+  }
   const adapter = requireString(event, "adapter");
   const amount = requireString(event, "amount");
   const currency = requireString(event, "currency");
@@ -223,6 +317,13 @@ function requirePaymentIntent(context: OrderFlowContext): PaymentIntent {
   return context.paymentIntent;
 }
 
+function requireOrderTerms(context: OrderFlowContext): OrderTerms {
+  if (!context.orderTerms) {
+    fail("INVALID_STATE_TRANSITION", "Payment-bound event requires order.created terms first");
+  }
+  return context.orderTerms;
+}
+
 function requireCapturePolicy(event: OrderFlowEvent): PaymentIntent["capturePolicy"] {
   const capturePolicy = requireString(event, "capture_policy");
   if (capturePolicy !== "before_entitlement" && capturePolicy !== "after_entitlement") {
@@ -237,6 +338,33 @@ function requireString(event: OrderFlowEvent, key: string): string {
     fail("MISSING_REQUIRED_FIELD", `${event.type} must include ${key}`, { eventType: event.type, key });
   }
   return value;
+}
+
+function requireStringArray(event: OrderFlowEvent, key: string): string[] {
+  const value = (event.body as Record<string, unknown>)[key];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    fail("MISSING_REQUIRED_FIELD", `${event.type} must include string array ${key}`, {
+      eventType: event.type,
+      key
+    });
+  }
+  return value;
+}
+
+function requireMoney(event: OrderFlowEvent, key: string): { amount: string; currency: string } {
+  const value = (event.body as Record<string, unknown>)[key];
+  if (!value || typeof value !== "object") {
+    fail("MISSING_REQUIRED_FIELD", `${event.type} must include ${key}`, { eventType: event.type, key });
+  }
+  const amount = (value as Record<string, unknown>).amount;
+  const currency = (value as Record<string, unknown>).currency;
+  if (typeof amount !== "string" || typeof currency !== "string") {
+    fail("MISSING_REQUIRED_FIELD", `${event.type} must include ${key}.amount and ${key}.currency`, {
+      eventType: event.type,
+      key
+    });
+  }
+  return { amount, currency };
 }
 
 function getOptionalString(body: object, key: string): string | undefined {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validateOrderEventSequence, type OrderFlowEvent } from "../../src/order/order-flow-validator.js";
 import { MarketplaceValidationError } from "../../src/protocol/errors.js";
-import { validOrderCreated } from "../../src/conformance/fixtures.js";
+import { validCustomerBinding, validOrderCreated } from "../../src/conformance/fixtures.js";
 
 const paymentIntent = {
   order_id: validOrderCreated.order_id,
@@ -38,6 +38,8 @@ const entitlementGranted = {
   entitlement_id: "ent:customer.example:01JENT",
   type: validOrderCreated.entitlement_type,
   external_ref: "booking:slot-123",
+  valid_from: "2026-05-04T11:00:00Z",
+  valid_until: "2026-05-04T12:00:00Z",
   evidence: {
     kind: "provider_receipt",
     uri: "https://entitlements.example/receipt/slot-123",
@@ -45,8 +47,16 @@ const entitlementGranted = {
   }
 };
 
+const customerBound = {
+  customer_id: validCustomerBinding.customer_id,
+  status: validCustomerBinding.status,
+  accepted_payment_adapters: validCustomerBinding.accepted_payment_adapters,
+  accepted_arbitration_policies: validCustomerBinding.accepted_arbitration_policies
+};
+
 function happyPath(overrides: Partial<Record<string, Record<string, unknown>>> = {}): OrderFlowEvent[] {
   return [
+    { type: "io.marketplace.actor.customer.bound", body: { ...customerBound, ...overrides.customer } },
     { type: "io.marketplace.order.created", body: { ...validOrderCreated, ...overrides.created } },
     { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id, ...overrides.accepted } },
     { type: "io.marketplace.payment.intent.created", body: { ...paymentIntent, ...overrides.intent } },
@@ -62,9 +72,52 @@ describe("validateOrderEventSequence", () => {
     expect(() => validateOrderEventSequence(happyPath())).not.toThrow();
   });
 
+  it("accepts entitlement before capture when capture_policy=after_entitlement", () => {
+    expect(() =>
+      validateOrderEventSequence([
+        { type: "io.marketplace.actor.customer.bound", body: customerBound },
+        { type: "io.marketplace.order.created", body: validOrderCreated },
+        { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id } },
+        {
+          type: "io.marketplace.payment.intent.created",
+          body: { ...paymentIntent, capture_policy: "after_entitlement" }
+        },
+        { type: "io.marketplace.payment.authorized", body: { order_id: validOrderCreated.order_id, payment_id: paymentIntent.payment_id } },
+        { type: "io.marketplace.entitlement.granted", body: entitlementGranted },
+        { type: "io.marketplace.payment.captured", body: paymentCaptured },
+        { type: "io.marketplace.order.completed", body: { order_id: validOrderCreated.order_id } }
+      ])
+    ).not.toThrow();
+  });
+
+  it("rejects order creation without a preceding customer binding", () => {
+    expect(() => validateOrderEventSequence(happyPath().slice(1))).toThrow(/customer.bound/);
+  });
+
+  it("rejects order terms that are not accepted by the customer binding", () => {
+    expect(() => validateOrderEventSequence(happyPath({ customer: { accepted_payment_adapters: ["other"] } }))).toThrow(
+      /payment adapter/
+    );
+  });
+
+  it("rejects payment intents whose terms differ from order.created", () => {
+    expect(() => validateOrderEventSequence(happyPath({ intent: { amount: "1.00" } }))).toThrow(
+      /payment.intent.created amount/
+    );
+  });
+
+  it("rejects capture before entitlement when capture_policy=after_entitlement", () => {
+    expect(() =>
+      validateOrderEventSequence(happyPath({ intent: { capture_policy: "after_entitlement" } }).filter(
+        (event) => event.type !== "io.marketplace.entitlement.granted"
+      ))
+    ).toThrow(/after_entitlement/);
+  });
+
   it("rejects refund events before payment capture", () => {
     expect(() =>
       validateOrderEventSequence([
+        { type: "io.marketplace.actor.customer.bound", body: customerBound },
         { type: "io.marketplace.order.created", body: validOrderCreated },
         { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id } },
         { type: "io.marketplace.payment.intent.created", body: paymentIntent },
@@ -77,6 +130,7 @@ describe("validateOrderEventSequence", () => {
   it("rejects entitlement before capture when capture_policy=before_entitlement", () => {
     expect(() =>
       validateOrderEventSequence([
+        { type: "io.marketplace.actor.customer.bound", body: customerBound },
         { type: "io.marketplace.order.created", body: validOrderCreated },
         { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id } },
         { type: "io.marketplace.payment.intent.created", body: paymentIntent },

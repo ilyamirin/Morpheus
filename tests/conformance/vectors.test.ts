@@ -88,6 +88,15 @@ describe("required conformance vectors", () => {
   it("9 rejects entitlement.granted before payment.captured when capture_policy=before_entitlement", () => {
     expect(() =>
       validateOrderEventSequence([
+        {
+          type: "io.marketplace.actor.customer.bound",
+          body: {
+            customer_id: validCustomerBinding.customer_id,
+            status: validCustomerBinding.status,
+            accepted_payment_adapters: validCustomerBinding.accepted_payment_adapters,
+            accepted_arbitration_policies: validCustomerBinding.accepted_arbitration_policies
+          }
+        },
         { type: "io.marketplace.order.created", body: validOrderCreated },
         { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id } },
         {

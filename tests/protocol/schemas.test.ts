@@ -83,6 +83,12 @@ describe("marketplaceEventSchema", () => {
     expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/sender.*issuer/i);
   });
 
+  it("rejects actor-bound events without an issuer actor id", () => {
+    const invalid = structuredClone(baseEvent);
+    delete (invalid.content.issuer as Partial<typeof invalid.content.issuer>).actor_id;
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/actor_id/);
+  });
+
   it("rejects invalid money amounts", () => {
     const invalid = structuredClone(baseEvent);
     const body = invalid.content.body as { price: { amount: string } };
@@ -129,5 +135,33 @@ describe("marketplaceEventSchema", () => {
     };
 
     expect(marketplaceEventSchema.parse(valid).content.body).toEqual(valid.content.body);
+  });
+
+  it("rejects booking entitlement grants without validity window", () => {
+    const invalid = structuredClone(baseEvent);
+    invalid.type = "io.marketplace.entitlement.granted";
+    invalid.content.body = {
+      order_id: "ord:customer.example:01JORDER",
+      payment_id: "pay:shop.example:01JPAY",
+      entitlement_id: "ent:customer.example:01JENT",
+      type: "booking_slot",
+      external_ref: "booking:slot-123"
+    };
+
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/valid_from/);
+  });
+
+  it("rejects external entitlement grants without evidence", () => {
+    const invalid = structuredClone(baseEvent);
+    invalid.type = "io.marketplace.entitlement.granted";
+    invalid.content.body = {
+      order_id: "ord:customer.example:01JORDER",
+      payment_id: "pay:shop.example:01JPAY",
+      entitlement_id: "ent:customer.example:01JENT",
+      type: "external_entitlement",
+      external_ref: "license:abc"
+    };
+
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/evidence/);
   });
 });

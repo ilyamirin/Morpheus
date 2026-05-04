@@ -22,6 +22,19 @@ describe("OrderStateMachine", () => {
     expect(() => machine.apply("io.marketplace.entitlement.granted")).toThrow(/Invalid transition/);
   });
 
+  it("allows after-entitlement payment capture", () => {
+    const machine = new OrderStateMachine();
+    machine.apply("io.marketplace.order.created");
+    machine.apply("io.marketplace.order.accepted");
+    machine.apply("io.marketplace.payment.intent.created");
+    machine.apply("io.marketplace.payment.authorized");
+    machine.apply("io.marketplace.entitlement.granted");
+    machine.apply("io.marketplace.payment.captured");
+    machine.apply("io.marketplace.order.completed");
+
+    expect(machine.state).toBe("completed");
+  });
+
   it("allows disputes after captured payment", () => {
     const machine = new OrderStateMachine();
     machine.apply("io.marketplace.order.created");

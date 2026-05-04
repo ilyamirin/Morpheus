@@ -221,6 +221,21 @@ export const entitlementGrantedBodySchema = z.object({
     uri: z.string().url(),
     sha256: z.string().min(1)
   }).optional()
+}).superRefine((body, ctx) => {
+  if ((body.type === "booking_slot" || body.type === "subscription_access") && (!body.valid_from || !body.valid_until)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["valid_from"],
+      message: `${body.type} entitlements require valid_from and valid_until`
+    });
+  }
+  if ((body.type === "service_delivery" || body.type === "external_entitlement") && !body.evidence) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["evidence"],
+      message: `${body.type} entitlements require evidence`
+    });
+  }
 });
 
 export const entitlementLifecycleBodySchema = z.object({
@@ -319,6 +334,13 @@ export const marketplaceEventSchema = z.object({
       message: "Matrix sender must match content.issuer.matrix_user_id"
     });
   }
+  if (requiresActorIssuer(event.type) && !event.content.issuer.actor_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["content", "issuer", "actor_id"],
+      message: `${event.type} requires content.issuer.actor_id`
+    });
+  }
   if (event.type === "io.marketplace.order.created" && parsed.data.room_id !== event.room_id) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -327,3 +349,11 @@ export const marketplaceEventSchema = z.object({
     });
   }
 });
+
+function requiresActorIssuer(eventType: KnownEventType): boolean {
+  return ![
+    "io.marketplace.instance.profile",
+    "io.marketplace.catalog.profile",
+    "io.marketplace.catalog.snapshot.published"
+  ].includes(eventType);
+}
