@@ -13,6 +13,7 @@
 ## File Structure
 
 - Create `package.json`: package scripts and dependencies.
+- Create `.gitignore`: generated dependency and build directories.
 - Create `tsconfig.json`: strict TypeScript config.
 - Create `vitest.config.ts`: test runner config.
 - Create `src/protocol/constants.ts`: protocol constants, event types, room profiles, enum values.
@@ -36,6 +37,7 @@
 
 **Files:**
 - Create: `package.json`
+- Create: `.gitignore`
 - Create: `tsconfig.json`
 - Create: `vitest.config.ts`
 - Create: `src/index.ts`
@@ -52,7 +54,7 @@ Write `package.json`:
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "check": "npm run build && npm run test"
   },
@@ -69,7 +71,16 @@ Write `package.json`:
 }
 ```
 
-- [ ] **Step 2: Add strict TypeScript config**
+- [ ] **Step 2: Add generated-file ignores**
+
+Write `.gitignore`:
+
+```gitignore
+node_modules/
+dist/
+```
+
+- [ ] **Step 3: Add strict TypeScript config**
 
 Write `tsconfig.json`:
 
@@ -93,7 +104,7 @@ Write `tsconfig.json`:
 }
 ```
 
-- [ ] **Step 3: Add Vitest config**
+- [ ] **Step 4: Add Vitest config**
 
 Write `vitest.config.ts`:
 
@@ -108,7 +119,7 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 4: Add temporary public export**
+- [ ] **Step 5: Add temporary public export**
 
 Write `src/index.ts`:
 
@@ -116,22 +127,22 @@ Write `src/index.ts`:
 export const protocolName = "io.marketplace";
 ```
 
-- [ ] **Step 5: Install dependencies**
+- [ ] **Step 6: Install dependencies**
 
 Run: `npm install`
 
 Expected: `package-lock.json` is created and dependencies install successfully.
 
-- [ ] **Step 6: Run initial checks**
+- [ ] **Step 7: Run initial checks**
 
 Run: `npm run check`
 
 Expected: TypeScript and Vitest complete without test files or with no failing tests.
 
-- [ ] **Step 7: Commit scaffold**
+- [ ] **Step 8: Commit scaffold**
 
 ```bash
-git add package.json package-lock.json tsconfig.json vitest.config.ts src/index.ts
+git add .gitignore package.json package-lock.json tsconfig.json vitest.config.ts src/index.ts
 git commit -m "chore: scaffold protocol validator package"
 ```
 
