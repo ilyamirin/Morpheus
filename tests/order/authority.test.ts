@@ -38,6 +38,42 @@ describe("assertEventAuthority", () => {
     ).not.toThrow();
   });
 
+  it("allows customer AS to create orders and rejects outsider AS", () => {
+    expect(() =>
+      assertEventAuthority("io.marketplace.order.created", "@market:customer.example", authorities)
+    ).not.toThrow();
+
+    expect(() =>
+      assertEventAuthority("io.marketplace.order.created", "@market:outsider.example", authorities)
+    ).toThrow(/seller|customer/);
+  });
+
+  it("allows seller AS to accept orders and rejects customer AS", () => {
+    expect(() =>
+      assertEventAuthority("io.marketplace.order.accepted", "@market:shop.example", authorities)
+    ).not.toThrow();
+
+    expect(() =>
+      assertEventAuthority("io.marketplace.order.accepted", "@market:customer.example", authorities)
+    ).toThrow(/seller/);
+  });
+
+  it("allows seller AS to complete orders and rejects customer AS", () => {
+    expect(() =>
+      assertEventAuthority("io.marketplace.order.completed", "@market:shop.example", authorities)
+    ).not.toThrow();
+
+    expect(() =>
+      assertEventAuthority("io.marketplace.order.completed", "@market:customer.example", authorities)
+    ).toThrow(/seller/);
+  });
+
+  it("allows customer AS to cancel orders", () => {
+    expect(() =>
+      assertEventAuthority("io.marketplace.order.cancelled", "@market:customer.example", authorities)
+    ).not.toThrow();
+  });
+
   it("rejects customer AS for revoked and expired entitlements", () => {
     expect(() =>
       assertEventAuthority("io.marketplace.entitlement.revoked", "@market:customer.example", authorities)

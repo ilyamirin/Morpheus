@@ -26,7 +26,31 @@ const entitlementEventTypes = new Set([
   "io.marketplace.entitlement.expired"
 ]);
 
+const customerOrSellerOrderEventTypes = new Set([
+  "io.marketplace.order.created",
+  "io.marketplace.order.cancelled"
+]);
+
+const sellerOrderEventTypes = new Set([
+  "io.marketplace.order.accepted",
+  "io.marketplace.order.rejected",
+  "io.marketplace.order.completed"
+]);
+
 export function assertEventAuthority(eventType: string, sender: string, authorities: OrderAuthorities): void {
+  if (customerOrSellerOrderEventTypes.has(eventType)) {
+    assertSenderIn(sender, [
+      { userId: authorities.customerAsUser, role: "customer" },
+      { userId: authorities.sellerAsUser, role: "seller" }
+    ]);
+    return;
+  }
+
+  if (sellerOrderEventTypes.has(eventType)) {
+    assertSender(sender, authorities.sellerAsUser, "seller");
+    return;
+  }
+
   if (paymentEventTypes.has(eventType)) {
     assertPaymentSender(sender, authorities);
     return;
