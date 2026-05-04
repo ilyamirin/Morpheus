@@ -11,6 +11,13 @@ import {
 
 const moneyAmountSchema = z.string().regex(/^[0-9]+(\.[0-9]{1,8})?$/);
 const isoDateSchema = z.string().datetime({ offset: true });
+const orderIdSchema = z.string().startsWith("ord:");
+const paymentIdSchema = z.string().startsWith("pay:");
+const entitlementIdSchema = z.string().startsWith("ent:");
+const disputeIdSchema = z.string().startsWith("disp:");
+const productIdSchema = z.string().startsWith("prod:");
+const offerIdSchema = z.string().startsWith("offer:");
+const sellerIdSchema = z.string().startsWith("seller:");
 
 export const moneySchema = z.object({
   amount: moneyAmountSchema,
@@ -29,7 +36,7 @@ export const envelopeSchema = z.object({
   event_id: z.string().min(1),
   created_at: isoDateSchema,
   issuer: issuerSchema,
-  critical: z.array(z.string()),
+  critical: z.array(z.string()).max(0),
   body: z.unknown()
 });
 
@@ -45,7 +52,7 @@ export const instanceProfileBodySchema = z.object({
 });
 
 export const sellerAnnouncedBodySchema = z.object({
-  seller_id: z.string().startsWith("seller:"),
+  seller_id: sellerIdSchema,
   status: z.enum(["active", "suspended"]),
   display_name: z.string().min(1),
   legal_profile_ref: z.string().url(),
@@ -53,6 +60,12 @@ export const sellerAnnouncedBodySchema = z.object({
   terms_hash: z.string().startsWith("sha256:"),
   supported_payment_adapters: z.array(z.string().min(1)),
   supported_entitlement_types: z.array(z.enum(ENTITLEMENT_TYPES))
+});
+
+export const sellerSuspendedBodySchema = z.object({
+  seller_id: sellerIdSchema,
+  status: z.literal("suspended"),
+  reason_code: z.string().min(1).optional()
 });
 
 export const customerBoundBodySchema = z.object({
@@ -77,9 +90,15 @@ export const snapshotPublishedBodySchema = z.object({
   created_at: isoDateSchema
 });
 
+export const catalogProfileBodySchema = z.object({
+  instance_id: z.string().min(1),
+  snapshot_required: z.boolean(),
+  delta_required: z.boolean()
+});
+
 export const productUpsertedBodySchema = z.object({
-  product_id: z.string().startsWith("prod:"),
-  seller_id: z.string().startsWith("seller:"),
+  product_id: productIdSchema,
+  seller_id: sellerIdSchema,
   revision: z.number().int().positive(),
   status: z.enum(["active", "withdrawn"]),
   kind: z.enum(PRODUCT_KINDS),
@@ -91,10 +110,15 @@ export const productUpsertedBodySchema = z.object({
   terms_hash: z.string().startsWith("sha256:")
 });
 
+export const productWithdrawnBodySchema = z.object({
+  product_id: productIdSchema,
+  revision: z.number().int().positive()
+});
+
 export const offerUpsertedBodySchema = z.object({
-  offer_id: z.string().startsWith("offer:"),
-  product_id: z.string().startsWith("prod:"),
-  seller_id: z.string().startsWith("seller:"),
+  offer_id: offerIdSchema,
+  product_id: productIdSchema,
+  seller_id: sellerIdSchema,
   revision: z.number().int().positive(),
   status: z.enum(["active", "withdrawn"]),
   price: moneySchema,
@@ -114,8 +138,19 @@ export const offerUpsertedBodySchema = z.object({
   })
 });
 
+export const offerWithdrawnBodySchema = z.object({
+  offer_id: offerIdSchema,
+  revision: z.number().int().positive()
+});
+
+export const inventoryUpdatedBodySchema = z.object({
+  offer_id: offerIdSchema,
+  revision: z.number().int().positive(),
+  available_quantity: z.number().int().nonnegative()
+});
+
 export const orderCreatedBodySchema = z.object({
-  order_id: z.string().startsWith("ord:"),
+  order_id: orderIdSchema,
   room_id: z.string().startsWith("!"),
   customer_id: z.string().startsWith("customer:"),
   seller_id: z.string().startsWith("seller:"),
@@ -133,9 +168,33 @@ export const orderCreatedBodySchema = z.object({
   expires_at: isoDateSchema
 });
 
+export const orderLifecycleBodySchema = z.object({
+  order_id: orderIdSchema
+});
+
+export const paymentIntentCreatedBodySchema = z.object({
+  order_id: orderIdSchema,
+  payment_id: paymentIdSchema,
+  adapter: z.string().min(1),
+  amount: moneyAmountSchema,
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  capture_policy: z.enum(["before_entitlement", "after_entitlement"]),
+  provider_ref: z.string().min(1),
+  confirmation: z.object({
+    method: z.string().min(1),
+    uri: z.string().url()
+  }),
+  expires_at: isoDateSchema
+});
+
+export const paymentLifecycleBodySchema = z.object({
+  order_id: orderIdSchema,
+  payment_id: paymentIdSchema
+});
+
 export const paymentCapturedBodySchema = z.object({
-  order_id: z.string().startsWith("ord:"),
-  payment_id: z.string().startsWith("pay:"),
+  order_id: orderIdSchema,
+  payment_id: paymentIdSchema,
   adapter: z.string().min(1),
   amount: moneyAmountSchema,
   currency: z.string().regex(/^[A-Z]{3}$/),
@@ -148,9 +207,9 @@ export const paymentCapturedBodySchema = z.object({
 });
 
 export const entitlementGrantedBodySchema = z.object({
-  order_id: z.string().startsWith("ord:"),
-  payment_id: z.string().startsWith("pay:").optional(),
-  entitlement_id: z.string().startsWith("ent:"),
+  order_id: orderIdSchema,
+  payment_id: paymentIdSchema.optional(),
+  entitlement_id: entitlementIdSchema,
   type: z.enum(ENTITLEMENT_TYPES),
   external_ref: z.string().min(1),
   valid_from: isoDateSchema.optional(),
@@ -162,9 +221,19 @@ export const entitlementGrantedBodySchema = z.object({
   }).optional()
 });
 
+export const entitlementLifecycleBodySchema = z.object({
+  order_id: orderIdSchema,
+  entitlement_id: entitlementIdSchema
+});
+
+export const disputeLifecycleBodySchema = z.object({
+  order_id: orderIdSchema,
+  dispute_id: disputeIdSchema
+});
+
 export const disputeRulingBodySchema = z.object({
-  order_id: z.string().startsWith("ord:"),
-  dispute_id: z.string().startsWith("disp:"),
+  order_id: orderIdSchema,
+  dispute_id: disputeIdSchema,
   ruling: z.enum(DISPUTE_RULINGS),
   reason_code: z.string().min(1),
   remedy: z.object({
@@ -177,8 +246,45 @@ export const disputeRulingBodySchema = z.object({
 });
 
 const knownEventTypes = [...CATALOG_EVENT_TYPES, ...ORDER_EVENT_TYPES] as const;
+type KnownEventType = (typeof knownEventTypes)[number];
 
 export const knownEventTypeSchema = z.enum(knownEventTypes);
+
+const bodySchemas: Record<KnownEventType, z.ZodTypeAny> = {
+  "io.marketplace.instance.profile": instanceProfileBodySchema,
+  "io.marketplace.catalog.profile": catalogProfileBodySchema,
+  "io.marketplace.catalog.snapshot.published": snapshotPublishedBodySchema,
+  "io.marketplace.actor.seller.announced": sellerAnnouncedBodySchema,
+  "io.marketplace.actor.seller.suspended": sellerSuspendedBodySchema,
+  "io.marketplace.product.upserted": productUpsertedBodySchema,
+  "io.marketplace.product.withdrawn": productWithdrawnBodySchema,
+  "io.marketplace.offer.upserted": offerUpsertedBodySchema,
+  "io.marketplace.offer.withdrawn": offerWithdrawnBodySchema,
+  "io.marketplace.inventory.updated": inventoryUpdatedBodySchema,
+  "io.marketplace.actor.customer.bound": customerBoundBodySchema,
+  "io.marketplace.order.created": orderCreatedBodySchema,
+  "io.marketplace.order.accepted": orderLifecycleBodySchema,
+  "io.marketplace.order.cancelled": orderLifecycleBodySchema,
+  "io.marketplace.order.rejected": orderLifecycleBodySchema,
+  "io.marketplace.order.completed": orderLifecycleBodySchema,
+  "io.marketplace.payment.intent.created": paymentIntentCreatedBodySchema,
+  "io.marketplace.payment.authorized": paymentLifecycleBodySchema,
+  "io.marketplace.payment.captured": paymentCapturedBodySchema,
+  "io.marketplace.payment.failed": paymentLifecycleBodySchema,
+  "io.marketplace.payment.cancelled": paymentLifecycleBodySchema,
+  "io.marketplace.payment.refund.requested": paymentLifecycleBodySchema,
+  "io.marketplace.payment.refunded": paymentLifecycleBodySchema,
+  "io.marketplace.payment.chargeback.opened": paymentLifecycleBodySchema,
+  "io.marketplace.entitlement.granted": entitlementGrantedBodySchema,
+  "io.marketplace.entitlement.activated": entitlementLifecycleBodySchema,
+  "io.marketplace.entitlement.completed": entitlementLifecycleBodySchema,
+  "io.marketplace.entitlement.revoked": entitlementLifecycleBodySchema,
+  "io.marketplace.entitlement.expired": entitlementLifecycleBodySchema,
+  "io.marketplace.dispute.opened": disputeLifecycleBodySchema,
+  "io.marketplace.dispute.evidence.submitted": disputeLifecycleBodySchema,
+  "io.marketplace.dispute.ruling.issued": disputeRulingBodySchema,
+  "io.marketplace.dispute.closed": disputeLifecycleBodySchema
+};
 
 export const marketplaceEventSchema = z.object({
   type: knownEventTypeSchema,
@@ -188,20 +294,13 @@ export const marketplaceEventSchema = z.object({
   origin_server_ts: z.number().int().nonnegative(),
   content: envelopeSchema
 }).superRefine((event, ctx) => {
-  const bodySchemas: Record<string, z.ZodTypeAny> = {
-    "io.marketplace.instance.profile": instanceProfileBodySchema,
-    "io.marketplace.actor.seller.announced": sellerAnnouncedBodySchema,
-    "io.marketplace.actor.customer.bound": customerBoundBodySchema,
-    "io.marketplace.catalog.snapshot.published": snapshotPublishedBodySchema,
-    "io.marketplace.product.upserted": productUpsertedBodySchema,
-    "io.marketplace.offer.upserted": offerUpsertedBodySchema,
-    "io.marketplace.order.created": orderCreatedBodySchema,
-    "io.marketplace.payment.captured": paymentCapturedBodySchema,
-    "io.marketplace.entitlement.granted": entitlementGrantedBodySchema,
-    "io.marketplace.dispute.ruling.issued": disputeRulingBodySchema
-  };
   const schema = bodySchemas[event.type];
   if (!schema) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["content", "body"],
+      message: `No body schema is registered for ${event.type}`
+    });
     return;
   }
   const parsed = schema.safeParse(event.content.body);

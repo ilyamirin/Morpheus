@@ -1,7 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { marketplaceEventSchema } from "../../src/protocol/schemas.js";
 
-const baseEvent = {
+type MarketplaceEventFixture = {
+  type: string;
+  room_id: string;
+  event_id: string;
+  sender: string;
+  origin_server_ts: number;
+  content: {
+    protocol: string;
+    protocol_version: string;
+    event_id: string;
+    created_at: string;
+    issuer: {
+      instance_id: string;
+      actor_id: string;
+      matrix_user_id: string;
+    };
+    critical: string[];
+    body: unknown;
+  };
+};
+
+const baseEvent: MarketplaceEventFixture = {
   type: "io.marketplace.order.created",
   room_id: "!order:customer.example",
   event_id: "$matrix",
@@ -52,7 +73,42 @@ describe("marketplaceEventSchema", () => {
 
   it("rejects invalid money amounts", () => {
     const invalid = structuredClone(baseEvent);
-    invalid.content.body.price.amount = "free";
+    const body = invalid.content.body as { price: { amount: string } };
+    body.price.amount = "free";
     expect(() => marketplaceEventSchema.parse(invalid)).toThrow();
+  });
+
+  it("rejects unknown critical extensions", () => {
+    const invalid = structuredClone(baseEvent);
+    invalid.content.critical = ["com.example.unknown"];
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow();
+  });
+
+  it("rejects arbitrary bodies for known payment intent events", () => {
+    const invalid = structuredClone(baseEvent);
+    invalid.type = "io.marketplace.payment.intent.created";
+    invalid.content.body = { arbitrary: true };
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow();
+  });
+
+  it("accepts valid payment intent created bodies", () => {
+    const valid = structuredClone(baseEvent);
+    valid.type = "io.marketplace.payment.intent.created";
+    valid.content.body = {
+      order_id: "ord:customer.example:01JORDER",
+      payment_id: "pay:shop.example:01JPAY",
+      adapter: "stripe",
+      amount: "100.00",
+      currency: "USD",
+      capture_policy: "before_entitlement",
+      provider_ref: "pi_01JPAY",
+      confirmation: {
+        method: "redirect",
+        uri: "https://pay.shop.example/confirm/pi_01JPAY"
+      },
+      expires_at: "2026-05-04T10:30:00Z"
+    };
+
+    expect(marketplaceEventSchema.parse(valid).content.body).toEqual(valid.content.body);
   });
 });
