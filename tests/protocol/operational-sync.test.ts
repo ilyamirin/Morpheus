@@ -9,8 +9,8 @@ describe("operational sync rules", () => {
   it("invalidates snapshot cache entries when the hash changes for the same sequence", () => {
     expect(() =>
       validateSnapshotCache(
-        { snapshotId: "snap_1", sequence: 1, sha256: "sha256:" + "1".repeat(64) },
-        { snapshotId: "snap_1", sequence: 1, sha256: "sha256:" + "2".repeat(64) }
+        { snapshotId: "snap:shop.example:01J", sequence: 1, sha256: "sha256:" + "1".repeat(64) },
+        { snapshotId: "snap:shop.example:01J", sequence: 1, sha256: "sha256:" + "2".repeat(64) }
       )
     ).toThrow(/cache/i);
   });

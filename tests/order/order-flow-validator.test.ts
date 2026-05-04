@@ -10,6 +10,7 @@ const paymentIntent = {
   amount: validOrderCreated.price.amount,
   currency: validOrderCreated.price.currency,
   capture_policy: "before_entitlement",
+  idempotency_key: "idem-123",
   provider_ref: "pi_123",
   confirmation: {
     method: "redirect",
@@ -29,6 +30,20 @@ const paymentCaptured = {
     kind: "provider_receipt",
     uri: "https://payments.example/receipts/ch_123",
     sha256: "sha256:receipt"
+  }
+};
+
+const refundRequested = {
+  order_id: validOrderCreated.order_id,
+  payment_id: paymentIntent.payment_id,
+  refund_id: "refund:customer.example:01JREFUND",
+  amount: paymentIntent.amount,
+  currency: paymentIntent.currency,
+  provider_ref: "re_123",
+  evidence: {
+    kind: "provider_receipt",
+    uri: "https://payments.example/refunds/re_123",
+    sha256: "sha256:refund"
   }
 };
 
@@ -76,7 +91,7 @@ describe("validateOrderEventSequence", () => {
     expect(() =>
       validateOrderEventSequence([
         { type: "io.marketplace.actor.customer.bound", body: customerBound },
-        { type: "io.marketplace.order.created", body: validOrderCreated },
+        { type: "io.marketplace.order.created", body: { ...validOrderCreated, payment_capture_policy: "after_entitlement" } },
         { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id } },
         {
           type: "io.marketplace.payment.intent.created",
@@ -88,6 +103,15 @@ describe("validateOrderEventSequence", () => {
         { type: "io.marketplace.order.completed", body: { order_id: validOrderCreated.order_id } }
       ])
     ).not.toThrow();
+  });
+
+  it("rejects customer binding after order creation", () => {
+    expect(() =>
+      validateOrderEventSequence([
+        { type: "io.marketplace.order.created", body: validOrderCreated },
+        { type: "io.marketplace.actor.customer.bound", body: customerBound }
+      ])
+    ).toThrow(/customer.bound/);
   });
 
   it("rejects order creation without a preceding customer binding", () => {
@@ -106,9 +130,15 @@ describe("validateOrderEventSequence", () => {
     );
   });
 
+  it("rejects payment intent capture policy mismatch with order.created", () => {
+    expect(() => validateOrderEventSequence(happyPath({ intent: { capture_policy: "after_entitlement" } }))).toThrow(
+      /capture_policy/
+    );
+  });
+
   it("rejects capture before entitlement when capture_policy=after_entitlement", () => {
     expect(() =>
-      validateOrderEventSequence(happyPath({ intent: { capture_policy: "after_entitlement" } }).filter(
+      validateOrderEventSequence(happyPath({ created: { payment_capture_policy: "after_entitlement" }, intent: { capture_policy: "after_entitlement" } }).filter(
         (event) => event.type !== "io.marketplace.entitlement.granted"
       ))
     ).toThrow(/after_entitlement/);
@@ -122,9 +152,19 @@ describe("validateOrderEventSequence", () => {
         { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id } },
         { type: "io.marketplace.payment.intent.created", body: paymentIntent },
         { type: "io.marketplace.payment.authorized", body: { order_id: validOrderCreated.order_id, payment_id: paymentIntent.payment_id } },
-        { type: "io.marketplace.payment.refund.requested", body: { order_id: validOrderCreated.order_id, payment_id: paymentIntent.payment_id } }
+        { type: "io.marketplace.payment.refund.requested", body: refundRequested }
       ])
     ).toThrow(MarketplaceValidationError);
+  });
+
+  it("rejects refund amount mismatches against captured payment", () => {
+    expect(() =>
+      validateOrderEventSequence([
+        ...happyPath().slice(0, 5),
+        { type: "io.marketplace.payment.captured", body: paymentCaptured },
+        { type: "io.marketplace.payment.refund.requested", body: { ...refundRequested, amount: "101.00" } }
+      ])
+    ).toThrow(/refund.*amount/i);
   });
 
   it("rejects entitlement before capture when capture_policy=before_entitlement", () => {

@@ -157,9 +157,9 @@ describe("required conformance vectors", () => {
     ).toThrow();
   });
 
-  it("12 rejects unknown critical extension at schema layer", () => {
+  it("12 rejects unknown critical extension at validator layer", () => {
     expect(() =>
-      marketplaceEventSchema.parse({
+      validateMarketplaceEvent({
         type: "io.marketplace.order.created",
         room_id: validOrderCreated.room_id,
         event_id: "$order-created",
@@ -168,7 +168,7 @@ describe("required conformance vectors", () => {
         content: {
           protocol: "io.marketplace",
           protocol_version: "0.1",
-          event_id: "evt:customer.example:01JORDER",
+          protocol_event_id: "evt:customer.example:01JORDER",
           created_at: "2026-05-04T10:00:00Z",
           issuer: {
             instance_id: "customer.example",
@@ -178,7 +178,7 @@ describe("required conformance vectors", () => {
           critical: ["com.example.unknown"],
           body: validOrderCreated
         }
-      })
+      }, { roomProfile: "order" })
     ).toThrow();
   });
 
@@ -193,7 +193,7 @@ describe("required conformance vectors", () => {
         content: {
           protocol: "io.marketplace",
           protocol_version: "0.1",
-          event_id: "evt:customer.example:01JORDER",
+          protocol_event_id: "evt:customer.example:01JORDER",
           created_at: "2026-05-04T10:00:00Z",
           issuer: {
             instance_id: "customer.example",
@@ -229,7 +229,7 @@ describe("required conformance vectors", () => {
     expect(() =>
       validateCatalogSnapshot(
         {
-          snapshot_id: "snap_01JVALID",
+          snapshot_id: "snap:shop.example:01JVALID",
           sequence: 1,
           covers_events_until: "$snapshot",
           sellers: [validCatalog.seller],
@@ -255,7 +255,7 @@ describe("required conformance vectors", () => {
           content: {
             protocol: "io.marketplace",
             protocol_version: "0.1",
-            event_id: "$order-created",
+            protocol_event_id: "evt:customer.example:01JORDER",
             created_at: "2026-05-04T10:00:00Z",
             issuer: {
               instance_id: "customer.example",
@@ -289,14 +289,14 @@ describe("required conformance vectors", () => {
   it("20 rejects dispute evidence refs outside the order room timeline", () => {
     expect(() =>
       validateArbitrationFlow([
-        { type: "io.marketplace.dispute.opened", event_id: "$disp", room_id: validOrderCreated.room_id, body: { order_id: validOrderCreated.order_id, dispute_id: "disp:arbiter.example:1" } },
+        { type: "io.marketplace.dispute.opened", event_id: "$disp", room_id: validOrderCreated.room_id, body: { order_id: validOrderCreated.order_id, dispute_id: "disp:arbiter.example:01JDISP" } },
         {
           type: "io.marketplace.dispute.ruling.issued",
           event_id: "$ruling",
           room_id: validOrderCreated.room_id,
           body: {
             order_id: validOrderCreated.order_id,
-            dispute_id: "disp:arbiter.example:1",
+            dispute_id: "disp:arbiter.example:01JDISP",
             ruling: "refund_required",
             remedy: { type: "full_refund" },
             evidence_refs: ["$missing"],

@@ -12,7 +12,7 @@ function envelope(type: string, body: object, sender = "@market:customer.example
     content: {
       protocol: "io.marketplace",
       protocol_version: "0.1",
-      event_id: `$${type}`,
+      protocol_event_id: `evt:customer.example:${type.replaceAll(".", "").toUpperCase()}`,
       created_at: "2026-05-04T10:00:00Z",
       issuer: {
         instance_id: sender.split(":")[1],

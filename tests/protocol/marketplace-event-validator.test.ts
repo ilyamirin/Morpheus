@@ -12,7 +12,7 @@ function event(overrides: Record<string, unknown> = {}) {
     content: {
       protocol: "io.marketplace",
       protocol_version: "0.1",
-      event_id: "$matrix",
+      protocol_event_id: "evt:customer.example:01JPROTO",
       created_at: "2026-05-04T10:00:00Z",
       issuer: {
         instance_id: "customer.example",
@@ -39,10 +39,26 @@ describe("validateMarketplaceEvent", () => {
     ).toThrow(/redacted/i);
   });
 
-  it("rejects mismatched Matrix event and envelope event ids", () => {
-    const invalid = event();
-    invalid.content.event_id = "$other";
-    expect(() => validateMarketplaceEvent(invalid, { roomProfile: "order" })).toThrow(/event_id/i);
+  it("allows Matrix event id to differ from protocol event id", () => {
+    const valid = event({ event_id: "$matrix-from-homeserver" });
+    expect(validateMarketplaceEvent(valid, { roomProfile: "order" }).status).toBe("accepted");
+  });
+
+  it("accepts registered critical extensions for known event types", () => {
+    const known = event();
+    (known.content.critical as string[]) = ["com.example.required"];
+    expect(
+      validateMarketplaceEvent(known, {
+        roomProfile: "order",
+        supportedCritical: ["com.example.required"]
+      }).status
+    ).toBe("accepted");
+  });
+
+  it("rejects unsupported critical extensions for known event types", () => {
+    const known = event();
+    (known.content.critical as string[]) = ["com.example.unsupported"];
+    expect(() => validateMarketplaceEvent(known, { roomProfile: "order" })).toThrow(/critical/i);
   });
 
   it("ignores unknown non-critical marketplace events", () => {

@@ -79,6 +79,15 @@ export function assertEventAuthority(eventType: string, sender: string, authorit
 }
 
 function assertPaymentSender(sender: string, authorities: OrderAuthorities): void {
+  const sellerServer = authorities.sellerAsUser.split(":")[1];
+  const senderServer = sender.split(":")[1];
+  if (senderServer !== sellerServer) {
+    throw new MarketplaceValidationError(
+      "UNAUTHORIZED_SENDER",
+      `Payment sender must be a seller-instance virtual user, got ${sender}`,
+      { sender, sellerAsUser: authorities.sellerAsUser }
+    );
+  }
   assertSenderIn(sender, [
     { userId: authorities.sellerAsUser, role: "seller" },
     ...(authorities.paymentAsUsers ?? []).map((userId) => ({ userId, role: "payment" }))

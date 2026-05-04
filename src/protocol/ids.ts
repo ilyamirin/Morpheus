@@ -5,6 +5,7 @@ export type ObjectIdKind =
   | "offer"
   | "ord"
   | "pay"
+  | "refund"
   | "ent"
   | "disp"
   | "seller"
@@ -18,6 +19,7 @@ const OBJECT_ID_KINDS = new Set<string>([
   "offer",
   "ord",
   "pay",
+  "refund",
   "ent",
   "disp",
   "seller",
@@ -26,6 +28,9 @@ const OBJECT_ID_KINDS = new Set<string>([
   "evt",
   "snap"
 ]);
+
+const instanceIdPattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const localIdPattern = /^[A-Z0-9][A-Z0-9_-]{2,63}$/;
 
 export interface ParsedActorId {
   kind: "seller" | "customer" | "arbiter";
@@ -39,8 +44,8 @@ export function parseActorId(actorId: string): ParsedActorId {
   if (
     segments.length !== 3 ||
     (kind !== "seller" && kind !== "customer" && kind !== "arbiter") ||
-    !instanceId ||
-    !localId
+    !isValidInstanceId(instanceId) ||
+    !isValidLocalId(localId)
   ) {
     throw invalidId("actor", actorId);
   }
@@ -50,10 +55,30 @@ export function parseActorId(actorId: string): ParsedActorId {
 export function parseObjectInstance(objectId: string): string {
   const segments = objectId.split(":");
   const [kind, instanceId, localId] = segments;
-  if (segments.length !== 3 || !isObjectIdKind(kind) || !instanceId || !localId) {
+  if (segments.length !== 3 || !isObjectIdKind(kind) || !isValidInstanceId(instanceId) || !isValidLocalId(localId)) {
     throw invalidId("object", objectId);
   }
   return instanceId;
+}
+
+export function isProtocolObjectId(id: string, kind?: ObjectIdKind): boolean {
+  const segments = id.split(":");
+  const [actualKind, instanceId, localId] = segments;
+  return (
+    segments.length === 3 &&
+    isObjectIdKind(actualKind) &&
+    (!kind || actualKind === kind) &&
+    isValidInstanceId(instanceId) &&
+    isValidLocalId(localId)
+  );
+}
+
+export function isValidInstanceId(instanceId: string | undefined): instanceId is string {
+  return typeof instanceId === "string" && instanceIdPattern.test(instanceId);
+}
+
+export function isValidLocalId(localId: string | undefined): localId is string {
+  return typeof localId === "string" && localIdPattern.test(localId);
 }
 
 function isObjectIdKind(kind: string | undefined): kind is ObjectIdKind {

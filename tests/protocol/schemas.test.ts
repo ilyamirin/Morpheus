@@ -10,7 +10,7 @@ type MarketplaceEventFixture = {
   content: {
     protocol: string;
     protocol_version: string;
-    event_id: string;
+    protocol_event_id: string;
     created_at: string;
     issuer: {
       instance_id: string;
@@ -31,7 +31,7 @@ const baseEvent: MarketplaceEventFixture = {
   content: {
     protocol: "io.marketplace",
     protocol_version: "0.1",
-    event_id: "evt_01JORDER",
+    protocol_event_id: "evt:customer.example:01JPROTO",
     created_at: "2026-05-04T10:00:00Z",
     issuer: {
       instance_id: "customer.example",
@@ -46,14 +46,18 @@ const baseEvent: MarketplaceEventFixture = {
       seller_id: "seller:shop.example:01JSELLER",
       offer_id: "offer:shop.example:01JOFFER",
       offer_revision: 3,
-      catalog_snapshot_id: "snap_01J",
+      catalog_snapshot_id: "snap:shop.example:01JSNAP",
       quantity: 1,
       price: { amount: "100.00", currency: "USD" },
       payment_adapter: "stripe",
+      payment_capture_policy: "before_entitlement",
       entitlement_type: "booking_slot",
+      seller_terms_hash: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      offer_terms_hash: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       arbiter_instance: "arbiter.example",
-      arbiter_actor: "arbiter:arbiter.example:default",
+      arbiter_actor: "arbiter:arbiter.example:DEFAULT",
       arbitration_policy_id: "standard-digital-v1",
+      arbitration_policy_version: "1",
       arbitration_window: "P14D",
       expires_at: "2026-05-04T10:30:00Z"
     }
@@ -103,10 +107,10 @@ describe("marketplaceEventSchema", () => {
     expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/room.*mismatch/i);
   });
 
-  it("rejects unknown critical extensions", () => {
-    const invalid = structuredClone(baseEvent);
-    invalid.content.critical = ["com.example.unknown"];
-    expect(() => marketplaceEventSchema.parse(invalid)).toThrow();
+  it("allows critical extensions at schema layer for registry validation", () => {
+    const valid = structuredClone(baseEvent);
+    valid.content.critical = ["com.example.known"];
+    expect(marketplaceEventSchema.parse(valid).content.critical).toEqual(["com.example.known"]);
   });
 
   it("rejects arbitrary bodies for known payment intent events", () => {
@@ -126,6 +130,7 @@ describe("marketplaceEventSchema", () => {
       amount: "100.00",
       currency: "USD",
       capture_policy: "before_entitlement",
+      idempotency_key: "idem-123",
       provider_ref: "pi_01JPAY",
       confirmation: {
         method: "redirect",
@@ -135,6 +140,13 @@ describe("marketplaceEventSchema", () => {
     };
 
     expect(marketplaceEventSchema.parse(valid).content.body).toEqual(valid.content.body);
+  });
+
+  it("rejects old underscore snapshot ids in order.created", () => {
+    const invalid = structuredClone(baseEvent);
+    const body = invalid.content.body as { catalog_snapshot_id: string };
+    body.catalog_snapshot_id = "snap_01J";
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/snapshot/i);
   });
 
   it("rejects booking entitlement grants without validity window", () => {

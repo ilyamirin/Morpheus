@@ -49,6 +49,9 @@ export function replayCatalogTimeline(
   for (const offer of snapshot.offers) {
     catalog.upsertOffer(offer);
   }
+  for (const tombstone of snapshot.tombstones) {
+    catalog.removeObject(tombstone.object_id);
+  }
 
   const seen = new Set<string>();
   for (const event of events) {
@@ -74,6 +77,10 @@ function applyDelta(catalog: CatalogIndex, event: CatalogDeltaEvent): void {
       return;
     case "io.marketplace.offer.upserted":
       catalog.upsertOffer(event.body as unknown as OfferRecord);
+      return;
+    case "io.marketplace.product.withdrawn":
+    case "io.marketplace.offer.withdrawn":
+      catalog.removeObject((event.body as { product_id?: string; offer_id?: string }).product_id ?? (event.body as { offer_id?: string }).offer_id ?? "");
       return;
     default:
       throw new MarketplaceValidationError("ROOM_PROFILE_VIOLATION", `Unsupported catalog delta ${event.type}`, {

@@ -8,18 +8,32 @@ import {
   PROTOCOL_NAME,
   PROTOCOL_VERSION
 } from "./constants.js";
+import { isProtocolObjectId, isValidInstanceId } from "./ids.js";
 
 const moneyAmountSchema = z.string().regex(/^[0-9]+(\.[0-9]{1,8})?$/);
 const isoDateSchema = z.string().datetime({ offset: true }).refine((value) => value.endsWith("Z"), {
   message: "Timestamp must be UTC and end with Z"
 });
-const orderIdSchema = z.string().startsWith("ord:");
-const paymentIdSchema = z.string().startsWith("pay:");
-const entitlementIdSchema = z.string().startsWith("ent:");
-const disputeIdSchema = z.string().startsWith("disp:");
-const productIdSchema = z.string().startsWith("prod:");
-const offerIdSchema = z.string().startsWith("offer:");
-const sellerIdSchema = z.string().startsWith("seller:");
+const instanceIdSchema = z.string().refine((id) => isValidInstanceId(id), "Invalid instance id");
+const protocolEventIdSchema = z.string().refine((id) => isProtocolObjectId(id, "evt"), "Invalid protocol_event_id");
+const orderIdSchema = z.string().refine((id) => isProtocolObjectId(id, "ord"), "Invalid order id");
+const paymentIdSchema = z.string().refine((id) => isProtocolObjectId(id, "pay"), "Invalid payment id");
+const refundIdSchema = z.string().refine((id) => isProtocolObjectId(id, "refund"), "Invalid refund id");
+const entitlementIdSchema = z.string().refine((id) => isProtocolObjectId(id, "ent"), "Invalid entitlement id");
+const disputeIdSchema = z.string().refine((id) => isProtocolObjectId(id, "disp"), "Invalid dispute id");
+const productIdSchema = z.string().refine((id) => isProtocolObjectId(id, "prod"), "Invalid product id");
+const offerIdSchema = z.string().refine((id) => isProtocolObjectId(id, "offer"), "Invalid offer id");
+const sellerIdSchema = z.string().refine((id) => isProtocolObjectId(id, "seller"), "Invalid seller id");
+const customerIdSchema = z.string().refine((id) => isProtocolObjectId(id, "customer"), "Invalid customer id");
+const arbiterIdSchema = z.string().refine((id) => isProtocolObjectId(id, "arbiter"), "Invalid arbiter id");
+const actorIdSchema = z
+  .string()
+  .refine(
+    (id) => isProtocolObjectId(id, "seller") || isProtocolObjectId(id, "customer") || isProtocolObjectId(id, "arbiter"),
+    "Invalid actor id"
+  );
+const snapshotIdSchema = z.string().refine((id) => isProtocolObjectId(id, "snap"), "Invalid snapshot id");
+const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 
 export const moneySchema = z.object({
   amount: moneyAmountSchema,
@@ -27,24 +41,24 @@ export const moneySchema = z.object({
 });
 
 export const issuerSchema = z.object({
-  instance_id: z.string().min(1),
-  actor_id: z.string().min(1).optional(),
+  instance_id: instanceIdSchema,
+  actor_id: actorIdSchema.optional(),
   matrix_user_id: z.string().regex(/^@[^:]+:[^:]+$/)
 });
 
 export const envelopeSchema = z.object({
   protocol: z.literal(PROTOCOL_NAME),
   protocol_version: z.literal(PROTOCOL_VERSION),
-  event_id: z.string().min(1),
+  protocol_event_id: protocolEventIdSchema,
   created_at: isoDateSchema,
   issuer: issuerSchema,
-  critical: z.array(z.string()).max(0),
+  critical: z.array(z.string()),
   body: z.unknown()
 });
 
 export const instanceProfileBodySchema = z.object({
-  instance_id: z.string().min(1),
-  matrix_server_name: z.string().min(1),
+  instance_id: instanceIdSchema,
+  matrix_server_name: instanceIdSchema,
   application_service_id: z.string().min(1),
   catalog_room_id: z.string().startsWith("!"),
   protocol_versions: z.array(z.literal(PROTOCOL_VERSION)),
@@ -59,7 +73,7 @@ export const sellerAnnouncedBodySchema = z.object({
   display_name: z.string().min(1),
   legal_profile_ref: z.string().url(),
   terms_ref: z.string().url(),
-  terms_hash: z.string().startsWith("sha256:"),
+  terms_hash: sha256Schema,
   supported_payment_adapters: z.array(z.string().min(1)),
   supported_entitlement_types: z.array(z.enum(ENTITLEMENT_TYPES))
 });
@@ -71,21 +85,21 @@ export const sellerSuspendedBodySchema = z.object({
 });
 
 export const customerBoundBodySchema = z.object({
-  customer_id: z.string().startsWith("customer:"),
+  customer_id: customerIdSchema,
   status: z.enum(["active", "suspended"]),
   display_name: z.string().min(1),
-  instance_id: z.string().min(1),
+  instance_id: instanceIdSchema,
   authorized_representatives: z.array(z.string().regex(/^@[^:]+:[^:]+$/)),
   accepted_payment_adapters: z.array(z.string().min(1)),
   accepted_arbitration_policies: z.array(z.string().min(1))
 });
 
 export const snapshotPublishedBodySchema = z.object({
-  snapshot_id: z.string().startsWith("snap_"),
+  snapshot_id: snapshotIdSchema,
   sequence: z.number().int().nonnegative(),
   format: z.literal("application/json+io.marketplace.catalog.v0"),
   uri: z.string().min(1),
-  sha256: z.string().min(32),
+  sha256: sha256Schema,
   covers_events_until: z.string().startsWith("$"),
   product_count: z.number().int().nonnegative(),
   offer_count: z.number().int().nonnegative(),
@@ -93,7 +107,7 @@ export const snapshotPublishedBodySchema = z.object({
 });
 
 export const catalogProfileBodySchema = z.object({
-  instance_id: z.string().min(1),
+  instance_id: instanceIdSchema,
   snapshot_required: z.boolean(),
   delta_required: z.boolean()
 });
@@ -109,7 +123,7 @@ export const productUpsertedBodySchema = z.object({
   categories: z.array(z.string().min(1)),
   tags: z.array(z.string().min(1)),
   media: z.array(z.object({ uri: z.string().min(1), sha256: z.string().min(1) })),
-  terms_hash: z.string().startsWith("sha256:")
+  terms_hash: sha256Schema
 });
 
 export const productWithdrawnBodySchema = z.object({
@@ -125,7 +139,7 @@ export const offerUpsertedBodySchema = z.object({
   status: z.enum(["active", "withdrawn"]),
   price: moneySchema,
   payment_terms: z.object({
-    capture: z.enum(["before_entitlement", "after_entitlement"]),
+    capture_policy: z.enum(["before_entitlement", "after_entitlement"]),
     adapter_policy: z.enum(["seller_supported"])
   }),
   entitlement: z.object({
@@ -154,18 +168,22 @@ export const inventoryUpdatedBodySchema = z.object({
 export const orderCreatedBodySchema = z.object({
   order_id: orderIdSchema,
   room_id: z.string().startsWith("!"),
-  customer_id: z.string().startsWith("customer:"),
-  seller_id: z.string().startsWith("seller:"),
-  offer_id: z.string().startsWith("offer:"),
+  customer_id: customerIdSchema,
+  seller_id: sellerIdSchema,
+  offer_id: offerIdSchema,
   offer_revision: z.number().int().positive(),
-  catalog_snapshot_id: z.string().startsWith("snap_"),
+  catalog_snapshot_id: snapshotIdSchema,
   quantity: z.number().int().positive(),
   price: moneySchema,
   payment_adapter: z.string().min(1),
+  payment_capture_policy: z.enum(["before_entitlement", "after_entitlement"]),
   entitlement_type: z.enum(ENTITLEMENT_TYPES),
-  arbiter_instance: z.string().min(1),
-  arbiter_actor: z.string().startsWith("arbiter:"),
+  arbiter_instance: instanceIdSchema,
+  arbiter_actor: arbiterIdSchema,
+  seller_terms_hash: sha256Schema,
+  offer_terms_hash: sha256Schema,
   arbitration_policy_id: z.string().min(1),
+  arbitration_policy_version: z.string().min(1),
   arbitration_window: z.string().min(1),
   expires_at: isoDateSchema
 });
@@ -181,6 +199,7 @@ export const paymentIntentCreatedBodySchema = z.object({
   amount: moneyAmountSchema,
   currency: z.string().regex(/^[A-Z]{3}$/),
   capture_policy: z.enum(["before_entitlement", "after_entitlement"]),
+  idempotency_key: z.string().min(1),
   provider_ref: z.string().min(1),
   confirmation: z.object({
     method: z.string().min(1),
@@ -192,6 +211,20 @@ export const paymentIntentCreatedBodySchema = z.object({
 export const paymentLifecycleBodySchema = z.object({
   order_id: orderIdSchema,
   payment_id: paymentIdSchema
+});
+
+export const paymentRefundBodySchema = z.object({
+  order_id: orderIdSchema,
+  payment_id: paymentIdSchema,
+  refund_id: refundIdSchema,
+  amount: moneyAmountSchema,
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  provider_ref: z.string().min(1),
+  evidence: z.object({
+    kind: z.literal("provider_receipt"),
+    uri: z.string().url(),
+    sha256: z.string().min(1)
+  })
 });
 
 export const paymentCapturedBodySchema = z.object({
@@ -289,8 +322,8 @@ const bodySchemas: Record<KnownEventType, z.ZodTypeAny> = {
   "io.marketplace.payment.captured": paymentCapturedBodySchema,
   "io.marketplace.payment.failed": paymentLifecycleBodySchema,
   "io.marketplace.payment.cancelled": paymentLifecycleBodySchema,
-  "io.marketplace.payment.refund.requested": paymentLifecycleBodySchema,
-  "io.marketplace.payment.refunded": paymentLifecycleBodySchema,
+  "io.marketplace.payment.refund.requested": paymentRefundBodySchema,
+  "io.marketplace.payment.refunded": paymentRefundBodySchema,
   "io.marketplace.payment.chargeback.opened": paymentLifecycleBodySchema,
   "io.marketplace.entitlement.granted": entitlementGrantedBodySchema,
   "io.marketplace.entitlement.activated": entitlementLifecycleBodySchema,

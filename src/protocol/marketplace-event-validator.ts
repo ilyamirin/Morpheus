@@ -3,9 +3,11 @@ import { MarketplaceValidationError } from "./errors.js";
 import { assertEventAllowedInRoom } from "./room-profile.js";
 import { marketplaceEventSchema } from "./schemas.js";
 import type { MatrixMarketplaceEvent, RoomProfile } from "./types.js";
+import { isProtocolObjectId, isValidInstanceId } from "./ids.js";
 
 export interface MarketplaceEventValidationContext {
   roomProfile: RoomProfile;
+  supportedCritical?: string[];
 }
 
 export type MarketplaceEventValidationResult =
@@ -22,11 +24,20 @@ const genericMarketplaceEventSchema = z.object({
   content: z.object({
     protocol: z.literal("io.marketplace"),
     protocol_version: z.literal("0.1"),
-    event_id: z.string().startsWith("$"),
+    protocol_event_id: z.string().refine((id) => isProtocolObjectId(id, "evt"), "Invalid protocol_event_id"),
     created_at: z.string().datetime({ offset: true }),
     issuer: z.object({
-      instance_id: z.string().min(1),
-      actor_id: z.string().min(1).optional(),
+      instance_id: z.string().refine((id) => isValidInstanceId(id), "Invalid instance id"),
+      actor_id: z
+        .string()
+        .refine(
+          (id) =>
+            isProtocolObjectId(id, "seller") ||
+            isProtocolObjectId(id, "customer") ||
+            isProtocolObjectId(id, "arbiter"),
+          "Invalid actor id"
+        )
+        .optional(),
       matrix_user_id: z.string().regex(/^@[^:]+:[^:]+$/)
     }),
     critical: z.array(z.string()),
@@ -42,12 +53,6 @@ export function validateMarketplaceEvent(
   if (generic.unsigned?.redacted_because) {
     throw new MarketplaceValidationError("REDACTED_EVENT", "Redacted marketplace events are not protocol-valid", {
       eventId: generic.event_id
-    });
-  }
-  if (generic.event_id !== generic.content.event_id) {
-    throw new MarketplaceValidationError("CATALOG_REFERENCE_MISMATCH", "Matrix event_id must match content.event_id", {
-      matrixEventId: generic.event_id,
-      envelopeEventId: generic.content.event_id
     });
   }
   if (generic.sender !== generic.content.issuer.matrix_user_id) {
@@ -72,6 +77,18 @@ export function validateMarketplaceEvent(
     throw known.error;
   }
 
+  assertSupportedCritical(generic.content.critical, context.supportedCritical ?? []);
+
   assertEventAllowedInRoom(context.roomProfile, known.data.type);
   return { status: "accepted", event: known.data as MatrixMarketplaceEvent };
+}
+
+function assertSupportedCritical(critical: string[], supported: string[]): void {
+  const unsupported = critical.filter((extension) => !supported.includes(extension));
+  if (unsupported.length > 0) {
+    throw new MarketplaceValidationError("UNKNOWN_CRITICAL_EXTENSION", "Unsupported critical extension", {
+      unsupported,
+      supported
+    });
+  }
 }

@@ -4,7 +4,7 @@ import { sha256Canonical } from "../../src/protocol/canonical-json.js";
 import { validCatalog } from "../../src/conformance/fixtures.js";
 
 const snapshot = {
-  snapshot_id: "snap_01JVALID",
+  snapshot_id: "snap:shop.example:01JVALID",
   sequence: 1,
   covers_events_until: "$snapshot",
   sellers: [{ ...validCatalog.seller }],
@@ -30,5 +30,13 @@ describe("catalog snapshot and replay", () => {
     };
     const catalog = replayCatalogTimeline([delta, delta], snapshot, { instanceId: "shop.example" });
     expect(catalog.getOffer(validCatalog.offer.offerId)?.revision).toBe(4);
+  });
+
+  it("applies tombstones for withdrawn offers during catalog replay", () => {
+    const catalog = replayCatalogTimeline([], {
+      ...snapshot,
+      tombstones: [{ object_id: validCatalog.offer.offerId, revision: 4, reason: "withdrawn" }]
+    }, { instanceId: "shop.example" });
+    expect(catalog.getOffer(validCatalog.offer.offerId)).toBeUndefined();
   });
 });

@@ -94,13 +94,22 @@ describe("assertEventAuthority", () => {
     expect(() => assertEventAuthority(eventType, "@market:customer.example", authorities)).toThrow(/seller|payment/);
   });
 
-  it("allows configured payment AS to capture payment", () => {
+  it("allows configured seller-instance payment virtual user to capture payment", () => {
+    expect(() =>
+      assertEventAuthority("io.marketplace.payment.captured", "@market_payment:shop.example", {
+        ...authorities,
+        paymentAsUsers: ["@market_payment:shop.example"]
+      })
+    ).not.toThrow();
+  });
+
+  it("rejects external payment homeserver senders", () => {
     expect(() =>
       assertEventAuthority("io.marketplace.payment.captured", "@market:payments.example", {
         ...authorities,
-        paymentAsUsers: ["@market:payments.example"]
+        paymentAsUsers: ["@market_payment:shop.example"]
       })
-    ).not.toThrow();
+    ).toThrow(/seller|payment/);
   });
 
   it("allows only arbiter AS to issue rulings", () => {

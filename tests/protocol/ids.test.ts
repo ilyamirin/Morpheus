@@ -26,4 +26,12 @@ describe("protocol ids", () => {
   it("rejects object ids with unsupported prefixes", () => {
     expect(() => parseObjectInstance("bad:shop.example:01J")).toThrow(MarketplaceValidationError);
   });
+
+  it("rejects legacy underscore snapshot ids", () => {
+    expect(() => parseObjectInstance("snap_01J")).toThrow(MarketplaceValidationError);
+  });
+
+  it("rejects non-DNS instance ids", () => {
+    expect(() => parseObjectInstance("offer:not a host:01JOFFER")).toThrow(MarketplaceValidationError);
+  });
 });

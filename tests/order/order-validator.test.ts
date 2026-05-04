@@ -8,7 +8,7 @@ import type { ValidationCode } from "../../src/protocol/errors.js";
 
 function catalog(): CatalogIndex {
   const index = new CatalogIndex("shop.example");
-  index.applySnapshot({ snapshotId: "snap_01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
+  index.applySnapshot({ snapshotId: "snap:shop.example:01JSNAP", sequence: 1, sha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", coversEventsUntil: "$snap" });
   index.upsertSeller({ sellerId: "seller:shop.example:01JSELLER", status: "active" });
   index.upsertProduct({ productId: "prod:shop.example:01JPROD", sellerId: "seller:shop.example:01JSELLER", revision: 1 });
   index.upsertOffer({
@@ -17,7 +17,10 @@ function catalog(): CatalogIndex {
     sellerId: "seller:shop.example:01JSELLER",
     revision: 3,
     price: { amount: "100.00", currency: "USD" },
-    entitlementType: "booking_slot"
+    entitlementType: "booking_slot",
+    paymentCapturePolicy: "before_entitlement",
+    sellerTermsHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    offerTermsHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222"
   });
   return index;
 }
@@ -29,14 +32,18 @@ const body: OrderCreatedBody = {
   seller_id: "seller:shop.example:01JSELLER",
   offer_id: "offer:shop.example:01JOFFER",
   offer_revision: 3,
-  catalog_snapshot_id: "snap_01J",
+  catalog_snapshot_id: "snap:shop.example:01JSNAP",
   quantity: 1,
   price: { amount: "100.00", currency: "USD" },
   payment_adapter: "stripe",
+  payment_capture_policy: "before_entitlement",
   entitlement_type: "booking_slot",
+  seller_terms_hash: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  offer_terms_hash: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
   arbiter_instance: "arbiter.example",
-  arbiter_actor: "arbiter:arbiter.example:default",
+  arbiter_actor: "arbiter:arbiter.example:DEFAULT",
   arbitration_policy_id: "standard-digital-v1",
+  arbitration_policy_version: "1",
   arbitration_window: "P14D",
   expires_at: "2026-05-04T10:30:00Z"
 };
@@ -107,7 +114,7 @@ describe("validateOrderCreated", () => {
     expectValidationCode(
       () =>
         validateOrderCreated(
-          { ...body, arbiter_instance: "arbiter.example", arbiter_actor: "arbiter:other-arbiter.example:default" },
+          { ...body, arbiter_instance: "arbiter.example", arbiter_actor: "arbiter:other-arbiter.example:DEFAULT" },
           catalog(),
           allowlist(),
           customerBinding()

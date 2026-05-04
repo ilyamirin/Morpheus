@@ -18,14 +18,14 @@ describe("arbitration policy and dispute flow", () => {
   it("rejects dispute rulings with evidence refs outside the order room timeline", () => {
     expect(() =>
       validateArbitrationFlow([
-        { type: "io.marketplace.dispute.opened", event_id: "$disp", room_id: validOrderCreated.room_id, body: { order_id: validOrderCreated.order_id, dispute_id: "disp:arbiter.example:1" } },
+        { type: "io.marketplace.dispute.opened", event_id: "$disp", room_id: validOrderCreated.room_id, body: { order_id: validOrderCreated.order_id, dispute_id: "disp:arbiter.example:01JDISP" } },
         {
           type: "io.marketplace.dispute.ruling.issued",
           event_id: "$ruling",
           room_id: validOrderCreated.room_id,
           body: {
             order_id: validOrderCreated.order_id,
-            dispute_id: "disp:arbiter.example:1",
+            dispute_id: "disp:arbiter.example:01JDISP",
             ruling: "refund_required",
             remedy: { type: "full_refund" },
             evidence_refs: ["$missing"],
@@ -39,15 +39,15 @@ describe("arbitration policy and dispute flow", () => {
   it("requires refund execution after a binding refund ruling", () => {
     expect(() =>
       validateArbitrationFlow([
-        { type: "io.marketplace.dispute.opened", event_id: "$disp", room_id: validOrderCreated.room_id, body: { order_id: validOrderCreated.order_id, dispute_id: "disp:arbiter.example:1" } },
-        { type: "io.marketplace.dispute.evidence.submitted", event_id: "$ev", room_id: validOrderCreated.room_id, body: { order_id: validOrderCreated.order_id, dispute_id: "disp:arbiter.example:1" } },
+        { type: "io.marketplace.dispute.opened", event_id: "$disp", room_id: validOrderCreated.room_id, body: { order_id: validOrderCreated.order_id, dispute_id: "disp:arbiter.example:01JDISP" } },
+        { type: "io.marketplace.dispute.evidence.submitted", event_id: "$ev", room_id: validOrderCreated.room_id, body: { order_id: validOrderCreated.order_id, dispute_id: "disp:arbiter.example:01JDISP" } },
         {
           type: "io.marketplace.dispute.ruling.issued",
           event_id: "$ruling",
           room_id: validOrderCreated.room_id,
           body: {
             order_id: validOrderCreated.order_id,
-            dispute_id: "disp:arbiter.example:1",
+            dispute_id: "disp:arbiter.example:01JDISP",
             ruling: "refund_required",
             remedy: { type: "full_refund" },
             evidence_refs: ["$ev"],

@@ -24,7 +24,7 @@ export interface Issuer {
 export interface MarketplaceEnvelope<TBody> {
   protocol: "io.marketplace";
   protocol_version: "0.1";
-  event_id: string;
+  protocol_event_id: string;
   created_at: string;
   issuer: Issuer;
   critical: string[];

@@ -8,9 +8,9 @@ import {
 import type { CustomerBinding, OrderCreatedBody } from "../order/order-validator.js";
 
 const snapshot: SnapshotRecord = {
-  snapshotId: "snap_01J",
+  snapshotId: "snap:shop.example:01JSNAP",
   sequence: 1,
-  sha256: "abc",
+  sha256: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   coversEventsUntil: "$snap"
 };
 
@@ -22,7 +22,8 @@ const seller: SellerRecord = {
 const product: ProductRecord = {
   productId: "prod:shop.example:01JPROD",
   sellerId: seller.sellerId,
-  revision: 1
+  revision: 1,
+  termsHash: "sha256:3333333333333333333333333333333333333333333333333333333333333333"
 };
 
 const offer: OfferRecord = {
@@ -31,7 +32,10 @@ const offer: OfferRecord = {
   sellerId: seller.sellerId,
   revision: 3,
   price: { amount: "100.00", currency: "USD" },
-  entitlementType: "booking_slot"
+  entitlementType: "booking_slot",
+  paymentCapturePolicy: "before_entitlement",
+  offerTermsHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  sellerTermsHash: "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 };
 
 export const validCatalog = {
@@ -60,10 +64,14 @@ export const validOrderCreated: OrderCreatedBody = {
   quantity: 1,
   price: offer.price,
   payment_adapter: "stripe",
+  payment_capture_policy: "before_entitlement",
   entitlement_type: offer.entitlementType,
+  seller_terms_hash: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  offer_terms_hash: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
   arbiter_instance: "arbiter.example",
-  arbiter_actor: "arbiter:arbiter.example:default",
+  arbiter_actor: "arbiter:arbiter.example:DEFAULT",
   arbitration_policy_id: "standard-digital-v1",
+  arbitration_policy_version: "1",
   arbitration_window: "P14D",
   expires_at: "2026-05-04T10:30:00Z"
 };

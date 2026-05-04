@@ -115,6 +115,8 @@ io.marketplace.inventory.updated
 
 Catalog synchronization uses mandatory snapshots plus mandatory delta events.
 
+`io.marketplace.inventory.updated` is limited to non-binding catalog availability metadata. Booking-slot holds, provider inventory locks, and reschedules are outside Matrix in v0.1.
+
 An indexer MUST:
 
 1. find the latest valid snapshot;
@@ -132,8 +134,10 @@ Recommended Matrix settings:
 ```text
 join_rule: invite
 history_visibility: invited or shared
-encryption: hybrid
+encryption: optional for non-protocol messages
 ```
+
+Marketplace protocol events are plaintext to all participating marketplace AS users in the order room so each instance can validate and replay the order. Secrets, artifacts, bearer URLs, and private credentials MUST remain outside Matrix marketplace protocol events. If participants use encrypted attachments or encrypted free-form Matrix messages, those messages are outside `io.marketplace.*` validation.
 
 Required members:
 
@@ -145,9 +149,16 @@ seller actor representatives
 arbiter AS user or operator
 ```
 
-An order room becomes protocol-valid only after a valid `io.marketplace.order.created` event has been accepted by the required parties.
+An order room becomes protocol-valid only after a valid `io.marketplace.actor.customer.bound` event appears before a valid `io.marketplace.order.created` event in timeline order.
 
-Required order lifecycle events:
+Structurally required order-room protocol events:
+
+```text
+io.marketplace.actor.customer.bound
+io.marketplace.order.created
+```
+
+Happy-path order lifecycle events:
 
 ```text
 io.marketplace.order.created
@@ -198,11 +209,26 @@ Seller actors are announced in the catalog room. Customer actors are disclosed o
 
 Every marketplace Matrix event stores the protocol payload in Matrix `content`.
 
+Outer Matrix event fields are authoritative for Matrix routing and replay:
+
+```json
+{
+  "type": "io.marketplace.order.created",
+  "room_id": "!orderroom:customer.example",
+  "event_id": "$matrix_event_id",
+  "sender": "@market:customer.example",
+  "origin_server_ts": 1777888000000,
+  "content": {}
+}
+```
+
+The protocol envelope inside `content` carries an independent protocol id:
+
 ```json
 {
   "protocol": "io.marketplace",
   "protocol_version": "0.1",
-  "event_id": "evt_01J...",
+  "protocol_event_id": "evt:shop.example:01JABC",
   "created_at": "2026-05-04T10:00:00Z",
   "issuer": {
     "instance_id": "shop.example",
@@ -216,12 +242,21 @@ Every marketplace Matrix event stores the protocol payload in Matrix `content`.
 
 Rules:
 
-- `event_id` MUST be globally unique. ULID or UUIDv7 is recommended.
+- Matrix `event_id` and `content.protocol_event_id` are independent and MUST NOT be required to match.
+- `protocol_event_id` MUST follow `evt:<instance_id>:<local_id>` and be generated before the event is sent.
 - `created_at` MUST be ISO-8601 UTC.
 - `issuer.instance_id` MUST match a trusted marketplace instance for the action.
 - `issuer.actor_id` is required for actor-bound events.
 - `critical` lists fields or extensions that MUST NOT be ignored.
 - `body` contains the typed payload for the event type.
+
+Canonical marketplace object ids use:
+
+```text
+<kind>:<instance_id>:<local_id>
+```
+
+`instance_id` is DNS-like and must contain at least one dot. `local_id` is ULID/UUIDv7-like, uppercase ASCII letters, digits, `_`, or `-`. Standard kinds in v0.1 include `seller`, `customer`, `arbiter`, `prod`, `offer`, `ord`, `pay`, `ent`, `disp`, `refund`, `snap`, and `evt`.
 
 ## Versioning and Compatibility
 
@@ -230,7 +265,7 @@ Protocol versioning is strict.
 ```json
 {
   "protocol": "io.marketplace",
-  "version": "0.1",
+  "protocol_version": "0.1",
   "min_consumer_version": "0.1",
   "extensions": []
 }
@@ -239,8 +274,9 @@ Protocol versioning is strict.
 Compatibility rules:
 
 - unsupported `protocol_version`: reject;
-- unknown event type in catalog or order room: ignore unless referenced by `critical`;
+- unknown event type in catalog or order room: ignore only when `critical` is empty;
 - unknown non-critical field: preserve when relaying, ignore for validation;
+- known event type with a critical extension: accept only if the extension is registered in local validation context;
 - unknown critical field or extension: reject;
 - extension events MUST use reverse-DNS names outside `io.marketplace.*` unless standardized.
 
@@ -289,7 +325,7 @@ Timeline event in catalog room.
     "display_name": "Acme Digital",
     "legal_profile_ref": "https://shop.example/sellers/acme/legal.json",
     "terms_ref": "https://shop.example/sellers/acme/terms",
-    "terms_hash": "sha256:...",
+    "terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "supported_payment_adapters": ["stripe"],
     "supported_entitlement_types": ["license_key", "booking_slot"]
   }
@@ -303,11 +339,11 @@ Timeline event in catalog room.
 ```json
 {
   "body": {
-    "snapshot_id": "snap_01J...",
+    "snapshot_id": "snap:shop.example:01JSNAP",
     "sequence": 42,
     "format": "application/json+io.marketplace.catalog.v0",
     "uri": "mxc://shop.example/...",
-    "sha256": "...",
+    "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "covers_events_until": "$matrix_event_id",
     "product_count": 1200,
     "offer_count": 3400,
@@ -323,7 +359,11 @@ sellers[]
 products[]
 offers[]
 tombstones[]
+sequence
+covers_events_until
 ```
+
+Snapshot JSON is hashed with canonical JSON. `sha256` values use `sha256:<64 lowercase hex>`. Snapshot replay applies tombstones before later deltas, and product/offer withdrawal deltas remove the withdrawn object from the local catalog view.
 
 ### `io.marketplace.product.upserted`
 
@@ -344,10 +384,10 @@ Timeline event in catalog room.
     "media": [
       {
         "uri": "https://shop.example/media/prod.png",
-        "sha256": "..."
+        "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       }
     ],
-    "terms_hash": "sha256:..."
+    "terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   }
 }
 ```
@@ -381,7 +421,7 @@ Timeline event in catalog room.
       "currency": "USD"
     },
     "payment_terms": {
-      "capture": "before_entitlement",
+      "capture_policy": "before_entitlement",
       "adapter_policy": "seller_supported"
     },
     "entitlement": {
@@ -402,7 +442,7 @@ Timeline event in catalog room.
 
 Timeline event in order room.
 
-Before or together with this event, the order room MUST contain a valid `io.marketplace.actor.customer.bound` event for the customer actor.
+Before this event, the order room MUST contain a valid `io.marketplace.actor.customer.bound` event for the customer actor. `customer.bound` after `order.created` is invalid.
 
 ```json
 {
@@ -413,17 +453,21 @@ Before or together with this event, the order room MUST contain a valid `io.mark
     "seller_id": "seller:shop.example:01JSELLER",
     "offer_id": "offer:shop.example:01JOFFER",
     "offer_revision": 3,
-    "catalog_snapshot_id": "snap_01J...",
+    "catalog_snapshot_id": "snap:shop.example:01JSNAP",
     "quantity": 1,
     "price": {
       "amount": "100.00",
       "currency": "USD"
     },
     "payment_adapter": "stripe",
+    "payment_capture_policy": "before_entitlement",
     "entitlement_type": "booking_slot",
+    "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
     "arbiter_instance": "arbiter.example",
-    "arbiter_actor": "arbiter:arbiter.example:default",
+    "arbiter_actor": "arbiter:arbiter.example:DEFAULT",
     "arbitration_policy_id": "standard-digital-v1",
+    "arbitration_policy_version": "1",
     "arbitration_window": "P14D",
     "expires_at": "2026-05-04T10:30:00Z"
   }
@@ -465,6 +509,7 @@ Timeline event in order room.
     "amount": "100.00",
     "currency": "USD",
     "capture_policy": "before_entitlement",
+    "idempotency_key": "pay-intent-01JPAY",
     "provider_ref": "pi_...",
     "confirmation": {
       "method": "redirect",
@@ -474,6 +519,8 @@ Timeline event in order room.
   }
 }
 ```
+
+The `capture_policy` in `payment.intent.created` MUST match `payment_capture_policy` locked in `order.created`.
 
 ### `io.marketplace.payment.captured`
 
@@ -491,11 +538,36 @@ Timeline event in order room.
     "evidence": {
       "kind": "provider_receipt",
       "uri": "https://shop.example/payments/ch_...",
-      "sha256": "..."
+      "sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
     }
   }
 }
 ```
+
+### `io.marketplace.payment.refund.requested` and `io.marketplace.payment.refunded`
+
+Timeline events in order room.
+
+```json
+{
+  "body": {
+    "order_id": "ord:customer.example:01JORDER",
+    "payment_id": "pay:shop.example:01JPAY",
+    "refund_id": "refund:shop.example:01JREFUND",
+    "adapter": "stripe",
+    "amount": "100.00",
+    "currency": "USD",
+    "provider_ref": "re_...",
+    "evidence": {
+      "kind": "provider_receipt",
+      "uri": "https://shop.example/payments/refunds/re_...",
+      "sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  }
+}
+```
+
+Refund events MUST reference a captured `payment_id`, carry a stable `refund_id`, and include external evidence. A full-refund ruling constrains the refund amount to the captured amount. A partial-refund ruling constrains the refund amount and currency to the ruling remedy.
 
 ### `io.marketplace.entitlement.granted`
 
@@ -514,7 +586,7 @@ Timeline event in order room.
     "evidence": {
       "kind": "provider_receipt",
       "uri": "https://shop.example/receipts/bk_92381",
-      "sha256": "..."
+      "sha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     }
   }
 }
@@ -584,7 +656,9 @@ seller policy
 
 One product can have multiple offers.
 
-## Order State Machine
+## Order Transition Graph
+
+The low-level transition helper is a transition graph only. It is useful for shape checks, but strict order acceptance MUST use timeline replay (`validateOrderRoomTimeline` or payload-aware `validateOrderEventSequence`) because capture policy, terms, refund amounts, room binding, and actor authority are payload-dependent.
 
 Nominal lifecycle:
 
@@ -646,7 +720,9 @@ Rules:
 
 - The adapter MUST be announced in the seller instance profile.
 - The customer instance MUST accept the adapter in `order.created`.
-- Payment events MAY be issued only by the seller marketplace AS or a payment AS bound to the seller instance.
+- Payment events MAY be issued only by the seller marketplace AS or seller-instance virtual payment AS users on the seller Matrix server.
+- External payment provider homeservers are not normative event issuers in v0.1.
+- Payment intent and refund events MUST carry idempotency/reference fields sufficient for adapter-level dedupe.
 - Payment secrets MUST NOT be transmitted through Matrix marketplace events.
 - Payment evidence MAY be an external URI plus hash.
 - Refund events MUST reference a captured `payment_id`.
@@ -693,6 +769,8 @@ Rules:
 - Entitlements MUST reference `payment_id` when the offer requires payment before delivery.
 - `valid_from` and `valid_until` are required for bookings and subscriptions.
 - Evidence is required for `service_delivery` and `external_entitlement`.
+- Booking hold, live inventory reservation, provider calendar state, reschedule, and cancellation-slot mechanics remain outside Matrix in v0.1.
+- For `booking_slot`, Matrix records final entitlement proof via `entitlement.granted`; there are no booking hold events in v0.1.
 
 ## Arbitration and Disputes
 
@@ -702,6 +780,7 @@ Each order fixes the arbiter and arbitration policy in `order.created`:
 arbiter_instance
 arbiter_actor
 arbitration_policy_id
+arbitration_policy_version
 arbitration_window
 ```
 
@@ -721,14 +800,15 @@ Rules:
 - `dispute.opened` MAY be issued by the customer, seller, or arbiter AS.
 - `evidence.submitted` MAY be issued by any order party.
 - `ruling.issued` MAY be issued only by the arbiter AS.
+- Evidence references in a ruling MUST point to events in the same order-room timeline.
 - A binding ruling MUST be executed if the arbitration policy was accepted in `order.created`.
 - If a payment adapter cannot automate a refund, `refund_required` remains a protocol obligation and execution is confirmed by a later refund event.
 
 ## Privacy Model
 
-Order rooms use a hybrid privacy profile.
+Order rooms use a plaintext-protocol privacy profile.
 
-Structured protocol events readable by marketplace AS participants:
+Structured marketplace protocol events are readable by participating marketplace AS users:
 
 ```text
 order_id
@@ -775,7 +855,7 @@ issuer.actor_id
 actor status
 local allowlist permission
 event type authority
-state machine transition
+transition graph state
 referenced object revision/hash
 critical fields
 ```
@@ -790,7 +870,7 @@ An instance MUST reject an event when:
 - object revision goes backwards;
 - required fields are missing;
 - unknown critical field or extension is present;
-- order transition violates the state machine;
+- order transition violates the transition graph or payload-aware timeline rules;
 - price, currency, or offer revision differs from trusted catalog state;
 - payment, entitlement, or dispute event is issued by an unauthorized party.
 
@@ -803,7 +883,7 @@ Cross-room references MUST include enough data to prevent replay and substitutio
     "event_id": "$abc...",
     "object_id": "offer:shop.example:01JOFFER",
     "revision": 3,
-    "sha256": "..."
+    "sha256": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
   }
 }
 ```
@@ -840,9 +920,9 @@ fraud by a locally allowlisted instance
 legal enforcement outside payment adapter and arbitration policy
 ```
 
-## Minimal Test Vectors
+## Required Test Vectors
 
-The protocol conformance suite SHOULD include:
+The protocol conformance suite includes:
 
 1. valid catalog snapshot accepted;
 2. valid product and offer delta after snapshot accepted;
@@ -855,10 +935,19 @@ The protocol conformance suite SHOULD include:
 9. `entitlement.granted` before `payment.captured` rejected when `capture_policy=before_entitlement`;
 10. arbiter not allowlisted by both sides, order rejected;
 11. `dispute.ruling.issued` from non-arbiter rejected;
-12. unknown critical extension rejected;
+12. unknown critical extension rejected by validator context;
 13. order event replayed into different room rejected;
 14. snapshot hash mismatch rejected;
-15. revision rollback rejected.
+15. revision rollback rejected;
+16. canonical catalog snapshot hash mismatch rejected;
+17. redacted marketplace event rejected;
+18. catalog privacy leakage rejected;
+19. non-idempotent duplicate appservice transaction rejected;
+20. dispute evidence reference outside order-room timeline rejected;
+21. withdrawn offer removed from local search index;
+22. protocol downgrade attempt rejected;
+23. zero-day retention policy rejected;
+24. compatibility profile from non-allowlisted instance rejected.
 
 ## Open Implementation Notes
 
@@ -887,15 +976,18 @@ validateAllowlistPolicy(policy, now)
 ConformanceRunner
 ```
 
-Low-level exports remain building blocks and MUST NOT be treated as complete protocol acceptance on their own. In particular, `OrderStateMachine` validates only transition shape; strict order acceptance requires order-room timeline validation.
+Low-level exports remain building blocks and MUST NOT be treated as complete protocol acceptance on their own. In particular, `OrderStateMachine` is the transition graph helper and validates only transition shape; strict order acceptance requires order-room timeline validation.
+
+Retention, security, compatibility, indexing, and privacy validators are policy validators. They are advisory unless an implementation invokes them from its strict validation context.
 
 ### Canonical Event and Hash Rules
 
 - Matrix events MUST include `type`, `room_id`, `event_id`, `sender`, `origin_server_ts`, and `content`.
-- `content.event_id` MUST match the Matrix `event_id`.
+- `content.protocol_event_id` MUST follow `evt:<instance_id>:<local_id>` and is independent from Matrix `event_id`.
 - Redacted marketplace events are not protocol-valid.
 - Known `io.marketplace.*` events MUST pass the registered body schema and room-profile rules.
 - Unknown non-critical marketplace events MAY be ignored by routing code.
+- Known critical extensions MUST be present in the local supported-critical registry.
 - Unknown critical events or extensions MUST be rejected.
 - Canonical JSON uses sorted object keys and UTF-8 JSON serialization.
 - Hashes use `sha256:<64 lowercase hex>`.

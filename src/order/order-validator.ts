@@ -16,10 +16,14 @@ export interface OrderCreatedBody {
   quantity: number;
   price: Money;
   payment_adapter: string;
+  payment_capture_policy: "before_entitlement" | "after_entitlement";
   entitlement_type: EntitlementType;
+  seller_terms_hash: string;
+  offer_terms_hash: string;
   arbiter_instance: string;
   arbiter_actor: string;
   arbitration_policy_id: string;
+  arbitration_policy_version: string;
   arbitration_window: string;
   expires_at: string;
 }
@@ -122,6 +126,28 @@ export function validateOrderCreated(
       "CATALOG_REFERENCE_MISMATCH",
       "Order entitlement type does not match offer"
     );
+  }
+  if (offer.paymentCapturePolicy && offer.paymentCapturePolicy !== order.payment_capture_policy) {
+    throw new MarketplaceValidationError(
+      "PAYMENT_TERMS_MISMATCH",
+      "Order payment capture policy does not match offer",
+      {
+        expected: offer.paymentCapturePolicy,
+        actual: order.payment_capture_policy
+      }
+    );
+  }
+  if (offer.offerTermsHash && offer.offerTermsHash !== order.offer_terms_hash) {
+    throw new MarketplaceValidationError("CATALOG_REFERENCE_MISMATCH", "Order offer terms hash does not match offer", {
+      expected: offer.offerTermsHash,
+      actual: order.offer_terms_hash
+    });
+  }
+  if (offer.sellerTermsHash && offer.sellerTermsHash !== order.seller_terms_hash) {
+    throw new MarketplaceValidationError("CATALOG_REFERENCE_MISMATCH", "Order seller terms hash does not match offer", {
+      expected: offer.sellerTermsHash,
+      actual: order.seller_terms_hash
+    });
   }
   const arbiterActor = parseActorId(order.arbiter_actor);
   if (arbiterActor.kind !== "arbiter" || arbiterActor.instanceId !== order.arbiter_instance) {

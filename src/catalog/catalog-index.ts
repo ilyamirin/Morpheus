@@ -18,6 +18,7 @@ export interface ProductRecord {
   productId: string;
   sellerId: string;
   revision: number;
+  termsHash?: string;
 }
 
 export interface OfferRecord {
@@ -27,6 +28,9 @@ export interface OfferRecord {
   revision: number;
   price: Money;
   entitlementType: EntitlementType;
+  paymentCapturePolicy?: "before_entitlement" | "after_entitlement";
+  offerTermsHash?: string;
+  sellerTermsHash?: string;
 }
 
 export class CatalogIndex {
@@ -113,6 +117,21 @@ export class CatalogIndex {
     }
 
     return offer;
+  }
+
+  removeObject(objectId: string): void {
+    if (objectId.startsWith("offer:")) {
+      this.offers.delete(objectId);
+      return;
+    }
+    if (objectId.startsWith("prod:")) {
+      this.products.delete(objectId);
+      for (const [offerId, offer] of this.offers.entries()) {
+        if (offer.productId === objectId) {
+          this.offers.delete(offerId);
+        }
+      }
+    }
   }
 
   private assertSellerActive(sellerId: string): void {

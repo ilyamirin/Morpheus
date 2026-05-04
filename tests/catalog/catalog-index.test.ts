@@ -5,7 +5,7 @@ import { MarketplaceValidationError } from "../../src/protocol/errors.js";
 describe("CatalogIndex", () => {
   it("accepts snapshot then seller/product/offer deltas and retrieves offer revision", () => {
     const index = new CatalogIndex("shop.example");
-    index.applySnapshot({ snapshotId: "snap_01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
+    index.applySnapshot({ snapshotId: "snap:shop.example:01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
     index.upsertSeller({ sellerId: "seller:shop.example:01JSELLER", status: "active" });
     index.upsertProduct({ productId: "prod:shop.example:01JPROD", sellerId: "seller:shop.example:01JSELLER", revision: 1 });
     index.upsertOffer({
@@ -22,7 +22,7 @@ describe("CatalogIndex", () => {
 
   it("rejects offers for suspended sellers", () => {
     const index = new CatalogIndex("shop.example");
-    index.applySnapshot({ snapshotId: "snap_01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
+    index.applySnapshot({ snapshotId: "snap:shop.example:01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
     index.upsertSeller({ sellerId: "seller:shop.example:01JSELLER", status: "suspended" });
 
     expect(() =>
@@ -39,7 +39,7 @@ describe("CatalogIndex", () => {
 
   it("does not return offers after their seller is suspended", () => {
     const index = new CatalogIndex("shop.example");
-    index.applySnapshot({ snapshotId: "snap_01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
+    index.applySnapshot({ snapshotId: "snap:shop.example:01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
     index.upsertSeller({ sellerId: "seller:shop.example:01JSELLER", status: "active" });
     index.upsertProduct({ productId: "prod:shop.example:01JPROD", sellerId: "seller:shop.example:01JSELLER", revision: 1 });
     index.upsertOffer({
@@ -58,7 +58,7 @@ describe("CatalogIndex", () => {
 
   it("rejects revision rollback on product", () => {
     const index = new CatalogIndex("shop.example");
-    index.applySnapshot({ snapshotId: "snap_01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
+    index.applySnapshot({ snapshotId: "snap:shop.example:01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
     index.upsertSeller({ sellerId: "seller:shop.example:01JSELLER", status: "active" });
     index.upsertProduct({ productId: "prod:shop.example:01JPROD", sellerId: "seller:shop.example:01JSELLER", revision: 2 });
     expect(() =>
@@ -68,11 +68,11 @@ describe("CatalogIndex", () => {
 
   it("rejects a same-sequence snapshot with a different hash", () => {
     const index = new CatalogIndex("shop.example");
-    index.applySnapshot({ snapshotId: "snap_01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
+    index.applySnapshot({ snapshotId: "snap:shop.example:01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
 
     let error: unknown;
     try {
-      index.applySnapshot({ snapshotId: "snap_01J_ALT", sequence: 1, sha256: "def", coversEventsUntil: "$snap" });
+      index.applySnapshot({ snapshotId: "snap:shop.example:01JALT", sequence: 1, sha256: "def", coversEventsUntil: "$snap" });
     } catch (caught) {
       error = caught;
     }
@@ -84,10 +84,10 @@ describe("CatalogIndex", () => {
 
   it("treats a same-sequence snapshot with the same hash as idempotent", () => {
     const index = new CatalogIndex("shop.example");
-    index.applySnapshot({ snapshotId: "snap_01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
+    index.applySnapshot({ snapshotId: "snap:shop.example:01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
 
     expect(() =>
-      index.applySnapshot({ snapshotId: "snap_01J_REPLAY", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" })
+      index.applySnapshot({ snapshotId: "snap:shop.example:01JREPLAY", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" })
     ).not.toThrow();
   });
 

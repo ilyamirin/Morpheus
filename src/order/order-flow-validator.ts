@@ -25,6 +25,7 @@ interface CustomerBinding {
 interface OrderTerms {
   customerId: string;
   paymentAdapter: string;
+  capturePolicy: "before_entitlement" | "after_entitlement";
   amount: string;
   currency: string;
   arbitrationPolicyId: string;
@@ -37,6 +38,8 @@ interface OrderFlowContext {
   paymentIntent?: PaymentIntent;
   authorizedPaymentId?: string;
   capturedPaymentId?: string;
+  capturedAmount?: string;
+  capturedCurrency?: string;
   entitlementId?: string;
   disputeId?: string;
 }
@@ -151,6 +154,7 @@ function validateCustomerBound(event: OrderFlowEvent, context: OrderFlowContext)
 function validateCreatedOrderTerms(event: OrderFlowEvent, context: OrderFlowContext): void {
   const customerId = requireString(event, "customer_id");
   const paymentAdapter = requireString(event, "payment_adapter");
+  const capturePolicy = requireCapturePolicyField(event, "payment_capture_policy");
   const arbitrationPolicyId = requireString(event, "arbitration_policy_id");
   const price = requireMoney(event, "price");
   const binding = context.customerBinding;
@@ -182,6 +186,7 @@ function validateCreatedOrderTerms(event: OrderFlowEvent, context: OrderFlowCont
   context.orderTerms = {
     customerId,
     paymentAdapter,
+    capturePolicy,
     amount: price.amount,
     currency: price.currency,
     arbitrationPolicyId
@@ -207,6 +212,12 @@ function validatePaymentIntent(event: OrderFlowEvent, context: OrderFlowContext)
     fail("PAYMENT_TERMS_MISMATCH", "payment.intent.created adapter does not match order.created", {
       expected: orderTerms.paymentAdapter,
       actual: intent.adapter
+    });
+  }
+  if (intent.capturePolicy !== orderTerms.capturePolicy) {
+    fail("PAYMENT_TERMS_MISMATCH", "payment.intent.created capture_policy does not match order.created", {
+      expected: orderTerms.capturePolicy,
+      actual: intent.capturePolicy
     });
   }
   assertMoneyEqual(orderTerms.amount, orderTerms.currency, intent.amount, intent.currency, "payment.intent.created amount does not match order.created");
@@ -240,6 +251,8 @@ function validatePaymentCapture(event: OrderFlowEvent, context: OrderFlowContext
   }
   assertMoneyEqual(intent.amount, intent.currency, amount, currency, "payment.captured amount does not match payment.intent.created");
   context.capturedPaymentId = paymentId;
+  context.capturedAmount = amount;
+  context.capturedCurrency = currency;
 }
 
 function validateEntitlementGrant(event: OrderFlowEvent, context: OrderFlowContext): void {
@@ -307,6 +320,18 @@ function requireCapturedPaymentId(event: OrderFlowEvent, context: OrderFlowConte
       eventType: event.type
     });
   }
+  const amount = requireString(event, "amount");
+  const currency = requireString(event, "currency");
+  requireString(event, "refund_id");
+  requireString(event, "provider_ref");
+  requireEvidence(event);
+  assertMoneyEqual(
+    context.capturedAmount ?? "",
+    context.capturedCurrency ?? "",
+    amount,
+    currency,
+    `${event.type} refund amount does not match captured payment`
+  );
   return paymentId;
 }
 
@@ -325,11 +350,22 @@ function requireOrderTerms(context: OrderFlowContext): OrderTerms {
 }
 
 function requireCapturePolicy(event: OrderFlowEvent): PaymentIntent["capturePolicy"] {
-  const capturePolicy = requireString(event, "capture_policy");
+  return requireCapturePolicyField(event, "capture_policy");
+}
+
+function requireCapturePolicyField(event: OrderFlowEvent, key: string): PaymentIntent["capturePolicy"] {
+  const capturePolicy = requireString(event, key);
   if (capturePolicy !== "before_entitlement" && capturePolicy !== "after_entitlement") {
     fail("PAYMENT_TERMS_MISMATCH", "Unsupported capture policy", { capturePolicy });
   }
   return capturePolicy;
+}
+
+function requireEvidence(event: OrderFlowEvent): void {
+  const evidence = (event.body as Record<string, unknown>).evidence;
+  if (!evidence || typeof evidence !== "object") {
+    fail("MISSING_REQUIRED_FIELD", `${event.type} must include evidence`, { eventType: event.type });
+  }
 }
 
 function requireString(event: OrderFlowEvent, key: string): string {
