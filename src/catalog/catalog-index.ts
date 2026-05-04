@@ -1,0 +1,78 @@
+import { MarketplaceValidationError } from "../protocol/errors.js";
+import type { EntitlementType, Money } from "../protocol/types.js";
+
+export interface SnapshotRecord {
+  snapshotId: string;
+  sequence: number;
+  sha256: string;
+  coversEventsUntil: string;
+}
+
+export interface SellerRecord {
+  sellerId: string;
+  status: "active" | "suspended";
+}
+
+export interface ProductRecord {
+  productId: string;
+  sellerId: string;
+  revision: number;
+}
+
+export interface OfferRecord {
+  offerId: string;
+  productId: string;
+  sellerId: string;
+  revision: number;
+  price: Money;
+  entitlementType: EntitlementType;
+}
+
+export class CatalogIndex {
+  private snapshot?: SnapshotRecord;
+  private readonly sellers = new Map<string, SellerRecord>();
+  private readonly products = new Map<string, ProductRecord>();
+  private readonly offers = new Map<string, OfferRecord>();
+
+  constructor(public readonly instanceId: string) {}
+
+  applySnapshot(snapshot: SnapshotRecord): void {
+    if (this.snapshot && snapshot.sequence <= this.snapshot.sequence) {
+      throw new MarketplaceValidationError("REVISION_ROLLBACK", "Snapshot sequence rollback", { snapshot });
+    }
+    this.snapshot = snapshot;
+  }
+
+  upsertSeller(seller: SellerRecord): void {
+    this.sellers.set(seller.sellerId, seller);
+  }
+
+  upsertProduct(product: ProductRecord): void {
+    this.assertSellerActive(product.sellerId);
+    const current = this.products.get(product.productId);
+    if (current && product.revision <= current.revision) {
+      throw new MarketplaceValidationError("REVISION_ROLLBACK", "Product revision rollback", { product });
+    }
+    this.products.set(product.productId, product);
+  }
+
+  upsertOffer(offer: OfferRecord): void {
+    this.assertSellerActive(offer.sellerId);
+    const current = this.offers.get(offer.offerId);
+    if (current && offer.revision <= current.revision) {
+      throw new MarketplaceValidationError("REVISION_ROLLBACK", "Offer revision rollback", { offer });
+    }
+    this.offers.set(offer.offerId, offer);
+  }
+
+  getOffer(offerId: string): OfferRecord | undefined {
+    return this.offers.get(offerId);
+  }
+
+  private assertSellerActive(sellerId: string): void {
+    const seller = this.sellers.get(sellerId);
+    if (!seller || seller.status !== "active") {
+      throw new MarketplaceValidationError("ACTOR_NOT_ACTIVE", `Seller ${sellerId} is not active`, { sellerId });
+    }
+  }
+}

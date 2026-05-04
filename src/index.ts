@@ -5,3 +5,4 @@ export * from "./protocol/schemas.js";
 export * from "./protocol/ids.js";
 export * from "./protocol/allowlist.js";
 export * from "./protocol/room-profile.js";
+export * from "./catalog/catalog-index.js";
