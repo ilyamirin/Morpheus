@@ -871,3 +871,7 @@ The implementation plan should define:
 - catalog snapshot file format;
 - local allowlist storage format;
 - conformance test runner structure.
+
+## Implementation Status
+
+The first implementation milestone is a TypeScript reference validator and conformance suite. It covers event schemas, local allowlist checks, catalog snapshot/delta rules, order state transitions, payment/entitlement/dispute authority checks, and the required v0.1 test vectors.
