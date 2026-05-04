@@ -28,6 +28,26 @@ describe("assertEventAuthority", () => {
     ).not.toThrow();
   });
 
+  it("allows seller AS to activate and complete entitlements", () => {
+    expect(() =>
+      assertEventAuthority("io.marketplace.entitlement.activated", "@market:shop.example", authorities)
+    ).not.toThrow();
+
+    expect(() =>
+      assertEventAuthority("io.marketplace.entitlement.completed", "@market:shop.example", authorities)
+    ).not.toThrow();
+  });
+
+  it("rejects customer AS for revoked and expired entitlements", () => {
+    expect(() =>
+      assertEventAuthority("io.marketplace.entitlement.revoked", "@market:customer.example", authorities)
+    ).toThrow(/seller/);
+
+    expect(() =>
+      assertEventAuthority("io.marketplace.entitlement.expired", "@market:customer.example", authorities)
+    ).toThrow(/seller/);
+  });
+
   it("rejects payment capture from customer AS", () => {
     expect(() =>
       assertEventAuthority("io.marketplace.payment.captured", "@market:customer.example", authorities)

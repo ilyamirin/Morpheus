@@ -18,13 +18,21 @@ const paymentEventTypes = new Set([
   "io.marketplace.payment.chargeback.opened"
 ]);
 
+const entitlementEventTypes = new Set([
+  "io.marketplace.entitlement.granted",
+  "io.marketplace.entitlement.activated",
+  "io.marketplace.entitlement.completed",
+  "io.marketplace.entitlement.revoked",
+  "io.marketplace.entitlement.expired"
+]);
+
 export function assertEventAuthority(eventType: string, sender: string, authorities: OrderAuthorities): void {
   if (paymentEventTypes.has(eventType)) {
     assertPaymentSender(sender, authorities);
     return;
   }
 
-  if (eventType === "io.marketplace.entitlement.granted") {
+  if (entitlementEventTypes.has(eventType)) {
     assertSender(sender, authorities.sellerAsUser, "seller");
     return;
   }
