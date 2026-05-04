@@ -10,7 +10,19 @@ export type ValidationCode =
   | "INVALID_STATE_TRANSITION"
   | "INVALID_ID"
   | "CATALOG_REFERENCE_MISMATCH"
-  | "PAYMENT_TERMS_MISMATCH";
+  | "PAYMENT_TERMS_MISMATCH"
+  | "HASH_MISMATCH"
+  | "REDACTED_EVENT"
+  | "ROOM_MEMBERSHIP_VIOLATION"
+  | "PRIVACY_VIOLATION"
+  | "POLICY_VIOLATION"
+  | "DUPLICATE_EVENT";
+
+export type ValidationDisposition = "retryable" | "terminal";
+
+export function validationDisposition(code: ValidationCode): ValidationDisposition {
+  return code === "ROOM_PROFILE_VIOLATION" || code === "MISSING_REQUIRED_FIELD" ? "retryable" : "terminal";
+}
 
 export class MarketplaceValidationError extends Error {
   constructor(
@@ -20,5 +32,9 @@ export class MarketplaceValidationError extends Error {
   ) {
     super(message);
     this.name = "MarketplaceValidationError";
+  }
+
+  get disposition(): ValidationDisposition {
+    return validationDisposition(this.code);
   }
 }
