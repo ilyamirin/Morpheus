@@ -71,6 +71,18 @@ describe("marketplaceEventSchema", () => {
     expect(() => marketplaceEventSchema.parse(invalid)).toThrow();
   });
 
+  it("rejects non-UTC envelope timestamps", () => {
+    const invalid = structuredClone(baseEvent);
+    invalid.content.created_at = "2026-05-04T13:00:00+03:00";
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/UTC/);
+  });
+
+  it("rejects envelopes whose sender differs from issuer matrix user", () => {
+    const invalid = structuredClone(baseEvent);
+    invalid.sender = "@attacker:customer.example";
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/sender.*issuer/i);
+  });
+
   it("rejects invalid money amounts", () => {
     const invalid = structuredClone(baseEvent);
     const body = invalid.content.body as { price: { amount: string } };

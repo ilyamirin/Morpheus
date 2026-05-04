@@ -10,7 +10,9 @@ import {
 } from "./constants.js";
 
 const moneyAmountSchema = z.string().regex(/^[0-9]+(\.[0-9]{1,8})?$/);
-const isoDateSchema = z.string().datetime({ offset: true });
+const isoDateSchema = z.string().datetime({ offset: true }).refine((value) => value.endsWith("Z"), {
+  message: "Timestamp must be UTC and end with Z"
+});
 const orderIdSchema = z.string().startsWith("ord:");
 const paymentIdSchema = z.string().startsWith("pay:");
 const entitlementIdSchema = z.string().startsWith("ent:");
@@ -309,6 +311,13 @@ export const marketplaceEventSchema = z.object({
       ctx.addIssue(issue);
     }
     return;
+  }
+  if (event.sender !== event.content.issuer.matrix_user_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["sender"],
+      message: "Matrix sender must match content.issuer.matrix_user_id"
+    });
   }
   if (event.type === "io.marketplace.order.created" && parsed.data.room_id !== event.room_id) {
     ctx.addIssue({
