@@ -1,4 +1,5 @@
 import { AllowlistPolicy } from "../protocol/allowlist.js";
+import { MarketplaceValidationError } from "../protocol/errors.js";
 
 export interface CatalogIndexingEvent {
   type: string;
@@ -47,7 +48,7 @@ export class LocalSearchIndex {
 function requireId(body: Record<string, unknown>, snake: string, camel: string): string {
   const value = body[snake] ?? body[camel];
   if (typeof value !== "string") {
-    throw new Error(`Missing ${snake}`);
+    throw new MarketplaceValidationError("MISSING_REQUIRED_FIELD", `Missing ${snake}`, { field: snake });
   }
   return value;
 }

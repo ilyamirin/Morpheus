@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AllowlistPolicy } from "../../src/protocol/allowlist.js";
 import { LocalSearchIndex, shouldIndexCatalogRoom } from "../../src/catalog/indexing-policy.js";
 import { validCatalog } from "../../src/conformance/fixtures.js";
+import { MarketplaceValidationError } from "../../src/protocol/errors.js";
 
 describe("local indexing policy", () => {
   it("indexes only catalog rooms from instances with catalog and indexing capabilities", () => {
@@ -27,5 +28,12 @@ describe("local indexing policy", () => {
     });
     index.apply({ type: "io.marketplace.actor.seller.suspended", body: { seller_id: validCatalog.seller.sellerId, status: "suspended" } });
     expect(index.hasOffer(validCatalog.offer.offerId)).toBe(false);
+  });
+
+  it("reports malformed indexing events with canonical validation errors", () => {
+    const index = new LocalSearchIndex();
+    expect(() => index.apply({ type: "io.marketplace.offer.upserted", body: { seller_id: validCatalog.seller.sellerId } })).toThrow(
+      MarketplaceValidationError
+    );
   });
 });
