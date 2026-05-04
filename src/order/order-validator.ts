@@ -2,7 +2,7 @@ import { Decimal } from "decimal.js";
 import type { CatalogIndex } from "../catalog/catalog-index.js";
 import type { AllowlistPolicy } from "../protocol/allowlist.js";
 import { MarketplaceValidationError } from "../protocol/errors.js";
-import { parseObjectInstance } from "../protocol/ids.js";
+import { parseActorId, parseObjectInstance } from "../protocol/ids.js";
 import type { EntitlementType, Money } from "../protocol/types.js";
 
 export interface OrderCreatedBody {
@@ -47,6 +47,16 @@ export function validateOrderCreated(
   if (!offer) {
     throw new MarketplaceValidationError("CATALOG_REFERENCE_MISMATCH", `Offer ${order.offer_id} not found`);
   }
+  if (order.seller_id !== offer.sellerId) {
+    throw new MarketplaceValidationError(
+      "CATALOG_REFERENCE_MISMATCH",
+      "Order seller does not match trusted offer",
+      {
+        expected: offer.sellerId,
+        actual: order.seller_id
+      }
+    );
+  }
   if (offer.revision !== order.offer_revision) {
     throw new MarketplaceValidationError(
       "CATALOG_REFERENCE_MISMATCH",
@@ -61,6 +71,17 @@ export function validateOrderCreated(
     throw new MarketplaceValidationError(
       "CATALOG_REFERENCE_MISMATCH",
       "Order entitlement type does not match offer"
+    );
+  }
+  const arbiterActor = parseActorId(order.arbiter_actor);
+  if (arbiterActor.kind !== "arbiter" || arbiterActor.instanceId !== order.arbiter_instance) {
+    throw new MarketplaceValidationError(
+      "CATALOG_REFERENCE_MISMATCH",
+      "Order arbiter actor does not match arbiter instance",
+      {
+        expected: order.arbiter_instance,
+        actual: order.arbiter_actor
+      }
     );
   }
   assertMoneyEqual(offer.price, order.price);

@@ -3,6 +3,8 @@ import { CatalogIndex } from "../../src/catalog/catalog-index.js";
 import { validateOrderCreated } from "../../src/order/order-validator.js";
 import type { OrderCreatedBody } from "../../src/order/order-validator.js";
 import { AllowlistPolicy } from "../../src/protocol/allowlist.js";
+import { MarketplaceValidationError } from "../../src/protocol/errors.js";
+import type { ValidationCode } from "../../src/protocol/errors.js";
 
 function catalog(): CatalogIndex {
   const index = new CatalogIndex("shop.example");
@@ -39,35 +41,78 @@ const body: OrderCreatedBody = {
   expires_at: "2026-05-04T10:30:00Z"
 };
 
+function allowlist(): AllowlistPolicy {
+  return new AllowlistPolicy({
+    "shop.example": ["catalog", "orders"],
+    "arbiter.example": ["arbitration"]
+  });
+}
+
+function expectValidationCode(fn: () => void, code: ValidationCode): void {
+  expect(fn).toThrow(MarketplaceValidationError);
+  try {
+    fn();
+  } catch (error) {
+    expect(error).toBeInstanceOf(MarketplaceValidationError);
+    expect((error as MarketplaceValidationError).code).toBe(code);
+  }
+}
+
 describe("validateOrderCreated", () => {
   it("accepts a matching trusted offer", () => {
-    const allowlist = new AllowlistPolicy({
-      "shop.example": ["catalog", "orders"],
-      "arbiter.example": ["arbitration"]
-    });
-    expect(() => validateOrderCreated(body, catalog(), allowlist)).not.toThrow();
+    expect(() => validateOrderCreated(body, catalog(), allowlist())).not.toThrow();
   });
 
   it("rejects stale offer revisions", () => {
-    const allowlist = new AllowlistPolicy({
-      "shop.example": ["catalog", "orders"],
-      "arbiter.example": ["arbitration"]
-    });
-    expect(() => validateOrderCreated({ ...body, offer_revision: 2 }, catalog(), allowlist)).toThrow(/revision/);
+    expect(() => validateOrderCreated({ ...body, offer_revision: 2 }, catalog(), allowlist())).toThrow(/revision/);
   });
 
   it("rejects price substitution", () => {
-    const allowlist = new AllowlistPolicy({
-      "shop.example": ["catalog", "orders"],
-      "arbiter.example": ["arbitration"]
-    });
     expect(() =>
-      validateOrderCreated({ ...body, price: { amount: "1.00", currency: "USD" } }, catalog(), allowlist)
+      validateOrderCreated({ ...body, price: { amount: "1.00", currency: "USD" } }, catalog(), allowlist())
     ).toThrow(/price/);
   });
 
+  it("rejects seller/offer mismatch", () => {
+    expectValidationCode(
+      () =>
+        validateOrderCreated(
+          { ...body, seller_id: "seller:shop.example:01JOTHER" },
+          catalog(),
+          allowlist()
+        ),
+      "CATALOG_REFERENCE_MISMATCH"
+    );
+  });
+
+  it("rejects arbiter_actor/arbiter_instance mismatch", () => {
+    expectValidationCode(
+      () =>
+        validateOrderCreated(
+          { ...body, arbiter_instance: "arbiter.example", arbiter_actor: "arbiter:other-arbiter.example:default" },
+          catalog(),
+          allowlist()
+        ),
+      "CATALOG_REFERENCE_MISMATCH"
+    );
+  });
+
+  it("rejects currency mismatch", () => {
+    expectValidationCode(
+      () => validateOrderCreated({ ...body, price: { amount: "100.00", currency: "EUR" } }, catalog(), allowlist()),
+      "PAYMENT_TERMS_MISMATCH"
+    );
+  });
+
+  it("rejects entitlement mismatch", () => {
+    expectValidationCode(
+      () => validateOrderCreated({ ...body, entitlement_type: "download_access" }, catalog(), allowlist()),
+      "CATALOG_REFERENCE_MISMATCH"
+    );
+  });
+
   it("rejects non-allowlisted arbiters", () => {
-    const allowlist = new AllowlistPolicy({ "shop.example": ["catalog", "orders"] });
-    expect(() => validateOrderCreated(body, catalog(), allowlist)).toThrow(/arbiter/);
+    const policy = new AllowlistPolicy({ "shop.example": ["catalog", "orders"] });
+    expect(() => validateOrderCreated(body, catalog(), policy)).toThrow(/arbiter/);
   });
 });
