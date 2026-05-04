@@ -9,3 +9,4 @@ export * from "./catalog/catalog-index.js";
 export * from "./order/order-state.js";
 export * from "./order/order-validator.js";
 export * from "./order/authority.js";
+export * from "./conformance/fixtures.js";
