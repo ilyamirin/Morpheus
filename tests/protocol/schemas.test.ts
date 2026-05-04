@@ -142,6 +142,73 @@ describe("marketplaceEventSchema", () => {
     expect(marketplaceEventSchema.parse(valid).content.body).toEqual(valid.content.body);
   });
 
+  it("requires offer terms hashes in offer.upserted", () => {
+    const invalid = structuredClone(baseEvent);
+    invalid.type = "io.marketplace.offer.upserted";
+    invalid.content.issuer = {
+      instance_id: "shop.example",
+      actor_id: "seller:shop.example:01JSELLER",
+      matrix_user_id: "@market:shop.example"
+    };
+    invalid.sender = "@market:shop.example";
+    invalid.content.body = {
+      offer_id: "offer:shop.example:01JOFFER",
+      product_id: "prod:shop.example:01JPROD",
+      seller_id: "seller:shop.example:01JSELLER",
+      revision: 3,
+      status: "active",
+      price: { amount: "100.00", currency: "USD" },
+      payment_terms: { capture_policy: "before_entitlement", adapter_policy: "seller_supported" },
+      entitlement: { type: "booking_slot", duration: "PT1H", delivery: "external" },
+      availability: { mode: "limited", quantity: 1 }
+    };
+
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/terms/i);
+  });
+
+  it("rejects order quantities above one in v0.1", () => {
+    const invalid = structuredClone(baseEvent);
+    const body = invalid.content.body as { quantity: number };
+    body.quantity = 2;
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/quantity/i);
+  });
+
+  it("requires strict sha256 evidence hashes", () => {
+    const invalid = structuredClone(baseEvent);
+    invalid.type = "io.marketplace.payment.captured";
+    invalid.content.body = {
+      order_id: "ord:customer.example:01JORDER",
+      payment_id: "pay:shop.example:01JPAY",
+      adapter: "stripe",
+      amount: "100.00",
+      currency: "USD",
+      provider_ref: "ch_123",
+      evidence: {
+        kind: "provider_receipt",
+        uri: "https://pay.shop.example/receipts/ch_123",
+        sha256: "sha256:not-a-real-hash"
+      }
+    };
+
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/sha256/i);
+  });
+
+  it("requires dispute evidence payloads", () => {
+    const invalid = structuredClone(baseEvent);
+    invalid.type = "io.marketplace.dispute.evidence.submitted";
+    invalid.content.issuer = {
+      instance_id: "customer.example",
+      actor_id: "customer:customer.example:01JCUST",
+      matrix_user_id: "@market:customer.example"
+    };
+    invalid.content.body = {
+      order_id: "ord:customer.example:01JORDER",
+      dispute_id: "disp:arbiter.example:01JDISP"
+    };
+
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/evidence/i);
+  });
+
   it("rejects old underscore snapshot ids in order.created", () => {
     const invalid = structuredClone(baseEvent);
     const body = invalid.content.body as { catalog_snapshot_id: string };

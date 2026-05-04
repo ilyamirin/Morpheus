@@ -69,11 +69,20 @@ const customerBound = {
   accepted_arbitration_policies: validCustomerBinding.accepted_arbitration_policies
 };
 
+const orderAccepted = {
+  order_id: validOrderCreated.order_id,
+  offer_revision: validOrderCreated.offer_revision,
+  seller_terms_hash: validOrderCreated.seller_terms_hash,
+  offer_terms_hash: validOrderCreated.offer_terms_hash,
+  payment_capture_policy: validOrderCreated.payment_capture_policy,
+  arbitration_policy_version: validOrderCreated.arbitration_policy_version
+};
+
 function happyPath(overrides: Partial<Record<string, Record<string, unknown>>> = {}): OrderFlowEvent[] {
   return [
     { type: "io.marketplace.actor.customer.bound", body: { ...customerBound, ...overrides.customer } },
     { type: "io.marketplace.order.created", body: { ...validOrderCreated, ...overrides.created } },
-    { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id, ...overrides.accepted } },
+    { type: "io.marketplace.order.accepted", body: { ...orderAccepted, ...overrides.accepted } },
     { type: "io.marketplace.payment.intent.created", body: { ...paymentIntent, ...overrides.intent } },
     { type: "io.marketplace.payment.authorized", body: { order_id: validOrderCreated.order_id, payment_id: paymentIntent.payment_id, ...overrides.authorized } },
     { type: "io.marketplace.payment.captured", body: { ...paymentCaptured, ...overrides.captured } },
@@ -92,7 +101,7 @@ describe("validateOrderEventSequence", () => {
       validateOrderEventSequence([
         { type: "io.marketplace.actor.customer.bound", body: customerBound },
         { type: "io.marketplace.order.created", body: { ...validOrderCreated, payment_capture_policy: "after_entitlement" } },
-        { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id } },
+        { type: "io.marketplace.order.accepted", body: { ...orderAccepted, payment_capture_policy: "after_entitlement" } },
         {
           type: "io.marketplace.payment.intent.created",
           body: { ...paymentIntent, capture_policy: "after_entitlement" }
@@ -130,6 +139,22 @@ describe("validateOrderEventSequence", () => {
     );
   });
 
+  it("rejects seller acceptance that does not confirm locked order terms", () => {
+    expect(() =>
+      validateOrderEventSequence(
+        happyPath({
+          accepted: {
+            offer_revision: 99,
+            seller_terms_hash: validOrderCreated.seller_terms_hash,
+            offer_terms_hash: validOrderCreated.offer_terms_hash,
+            payment_capture_policy: validOrderCreated.payment_capture_policy,
+            arbitration_policy_version: validOrderCreated.arbitration_policy_version
+          }
+        })
+      )
+    ).toThrow(/accepted.*terms/i);
+  });
+
   it("rejects payment intent capture policy mismatch with order.created", () => {
     expect(() => validateOrderEventSequence(happyPath({ intent: { capture_policy: "after_entitlement" } }))).toThrow(
       /capture_policy/
@@ -138,7 +163,11 @@ describe("validateOrderEventSequence", () => {
 
   it("rejects capture before entitlement when capture_policy=after_entitlement", () => {
     expect(() =>
-      validateOrderEventSequence(happyPath({ created: { payment_capture_policy: "after_entitlement" }, intent: { capture_policy: "after_entitlement" } }).filter(
+      validateOrderEventSequence(happyPath({
+        created: { payment_capture_policy: "after_entitlement" },
+        accepted: { payment_capture_policy: "after_entitlement" },
+        intent: { capture_policy: "after_entitlement" }
+      }).filter(
         (event) => event.type !== "io.marketplace.entitlement.granted"
       ))
     ).toThrow(/after_entitlement/);
@@ -149,7 +178,7 @@ describe("validateOrderEventSequence", () => {
       validateOrderEventSequence([
         { type: "io.marketplace.actor.customer.bound", body: customerBound },
         { type: "io.marketplace.order.created", body: validOrderCreated },
-        { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id } },
+        { type: "io.marketplace.order.accepted", body: orderAccepted },
         { type: "io.marketplace.payment.intent.created", body: paymentIntent },
         { type: "io.marketplace.payment.authorized", body: { order_id: validOrderCreated.order_id, payment_id: paymentIntent.payment_id } },
         { type: "io.marketplace.payment.refund.requested", body: refundRequested }
@@ -167,12 +196,78 @@ describe("validateOrderEventSequence", () => {
     ).toThrow(/refund.*amount/i);
   });
 
+  it("accepts a partial refund when constrained by a partial-refund ruling", () => {
+    expect(() =>
+      validateOrderEventSequence([
+        ...happyPath().slice(0, 7),
+        {
+          type: "io.marketplace.dispute.opened",
+          body: { order_id: validOrderCreated.order_id, dispute_id: "disp:arbiter.example:01JDISP" }
+        },
+        {
+          type: "io.marketplace.dispute.evidence.submitted",
+          body: {
+            order_id: validOrderCreated.order_id,
+            dispute_id: "disp:arbiter.example:01JDISP",
+            evidence: {
+              kind: "customer_statement",
+              uri: "mxc://customer.example/evidence",
+              sha256: "sha256:" + "4".repeat(64)
+            }
+          }
+        },
+        {
+          type: "io.marketplace.dispute.ruling.issued",
+          body: {
+            order_id: validOrderCreated.order_id,
+            dispute_id: "disp:arbiter.example:01JDISP",
+            ruling: "partial_refund_required",
+            remedy: { type: "partial_refund", amount: "25.00", currency: "USD" },
+            evidence_refs: ["$evidence"],
+            binding: true
+          }
+        },
+        {
+          type: "io.marketplace.payment.refund.requested",
+          body: { ...refundRequested, amount: "25.00" }
+        }
+      ])
+    ).not.toThrow();
+  });
+
+  it("rejects full refund amounts after a partial-refund ruling", () => {
+    expect(() =>
+      validateOrderEventSequence([
+        ...happyPath().slice(0, 7),
+        {
+          type: "io.marketplace.dispute.opened",
+          body: { order_id: validOrderCreated.order_id, dispute_id: "disp:arbiter.example:01JDISP" }
+        },
+        {
+          type: "io.marketplace.dispute.ruling.issued",
+          body: {
+            order_id: validOrderCreated.order_id,
+            dispute_id: "disp:arbiter.example:01JDISP",
+            ruling: "partial_refund_required",
+            remedy: { type: "partial_refund", amount: "25.00", currency: "USD" },
+            evidence_refs: ["$evidence"],
+            binding: true
+          }
+        },
+        {
+          type: "io.marketplace.payment.refund.requested",
+          body: refundRequested
+        }
+      ])
+    ).toThrow(/refund.*amount/i);
+  });
+
   it("rejects entitlement before capture when capture_policy=before_entitlement", () => {
     expect(() =>
       validateOrderEventSequence([
         { type: "io.marketplace.actor.customer.bound", body: customerBound },
         { type: "io.marketplace.order.created", body: validOrderCreated },
-        { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id } },
+        { type: "io.marketplace.order.accepted", body: orderAccepted },
         { type: "io.marketplace.payment.intent.created", body: paymentIntent },
         { type: "io.marketplace.payment.authorized", body: { order_id: validOrderCreated.order_id, payment_id: paymentIntent.payment_id } },
         { type: "io.marketplace.entitlement.granted", body: entitlementGranted }

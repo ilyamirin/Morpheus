@@ -107,7 +107,17 @@ describe("required conformance vectors", () => {
           }
         },
         { type: "io.marketplace.order.created", body: validOrderCreated },
-        { type: "io.marketplace.order.accepted", body: { order_id: validOrderCreated.order_id } },
+        {
+          type: "io.marketplace.order.accepted",
+          body: {
+            order_id: validOrderCreated.order_id,
+            offer_revision: validOrderCreated.offer_revision,
+            seller_terms_hash: validOrderCreated.seller_terms_hash,
+            offer_terms_hash: validOrderCreated.offer_terms_hash,
+            payment_capture_policy: validOrderCreated.payment_capture_policy,
+            arbitration_policy_version: validOrderCreated.arbitration_policy_version
+          }
+        },
         {
           type: "io.marketplace.payment.intent.created",
           body: {

@@ -25,6 +25,15 @@ function envelope(type: string, body: object, sender = "@market:customer.example
   };
 }
 
+const orderAccepted = {
+  order_id: validOrderCreated.order_id,
+  offer_revision: validOrderCreated.offer_revision,
+  seller_terms_hash: validOrderCreated.seller_terms_hash,
+  offer_terms_hash: validOrderCreated.offer_terms_hash,
+  payment_capture_policy: validOrderCreated.payment_capture_policy,
+  arbitration_policy_version: validOrderCreated.arbitration_policy_version
+};
+
 describe("validateOrderRoomTimeline", () => {
   it("validates order room membership, authorities, and payload replay", () => {
     expect(() =>
@@ -40,7 +49,7 @@ describe("validateOrderRoomTimeline", () => {
             accepted_arbitration_policies: validCustomerBinding.accepted_arbitration_policies
           }),
           envelope("io.marketplace.order.created", validOrderCreated),
-          envelope("io.marketplace.order.accepted", { order_id: validOrderCreated.order_id }, "@market:shop.example")
+          envelope("io.marketplace.order.accepted", orderAccepted, "@market:shop.example")
         ],
         {
           roomId: validOrderCreated.room_id,
@@ -48,7 +57,7 @@ describe("validateOrderRoomTimeline", () => {
           customerAsUser: "@market:customer.example",
           arbiterAsUser: "@market:arbiter.example",
           requiredMembers: ["@market:shop.example", "@market:customer.example", "@market:arbiter.example"],
-          members: ["@market:shop.example", "@market:customer.example", "@market:arbiter.example"]
+          members: ["@market:shop.example", "@market:customer.example", "@market:arbiter.example", "@buyer:customer.example"]
         }
       )
     ).not.toThrow();
@@ -65,5 +74,32 @@ describe("validateOrderRoomTimeline", () => {
         members: ["@market:shop.example"]
       })
     ).toThrow(/member/i);
+  });
+
+  it("rejects customer representatives that are disclosed but not joined to the order room", () => {
+    expect(() =>
+      validateOrderRoomTimeline(
+        [
+          envelope("io.marketplace.actor.customer.bound", {
+            customer_id: validCustomerBinding.customer_id,
+            status: validCustomerBinding.status,
+            display_name: "Acme Procurement",
+            instance_id: "customer.example",
+            authorized_representatives: ["@buyer:customer.example"],
+            accepted_payment_adapters: validCustomerBinding.accepted_payment_adapters,
+            accepted_arbitration_policies: validCustomerBinding.accepted_arbitration_policies
+          }),
+          envelope("io.marketplace.order.created", validOrderCreated)
+        ],
+        {
+          roomId: validOrderCreated.room_id,
+          sellerAsUser: "@market:shop.example",
+          customerAsUser: "@market:customer.example",
+          arbiterAsUser: "@market:arbiter.example",
+          requiredMembers: ["@market:shop.example", "@market:customer.example", "@market:arbiter.example"],
+          members: ["@market:shop.example", "@market:customer.example", "@market:arbiter.example"]
+        }
+      )
+    ).toThrow(/representative/i);
   });
 });

@@ -72,4 +72,22 @@ describe("validateMarketplaceEvent", () => {
     (unknown.content.critical as string[]) = ["com.example.analytics.required"];
     expect(() => validateMarketplaceEvent(unknown, { roomProfile: "order" })).toThrow(/critical/i);
   });
+
+  it("rejects protocol_event_id replay with a different Matrix event or body hash", () => {
+    const seenProtocolEvents = new Map<string, { matrixEventId: string; bodyHash: string }>();
+    validateMarketplaceEvent(event(), { roomProfile: "order", seenProtocolEvents });
+
+    expect(() =>
+      validateMarketplaceEvent(
+        event({
+          event_id: "$different-matrix-event",
+          content: {
+            ...event().content,
+            body: { ...validOrderCreated, price: { amount: "1.00", currency: "USD" } }
+          }
+        }),
+        { roomProfile: "order", seenProtocolEvents }
+      )
+    ).toThrow(/protocol_event_id/i);
+  });
 });

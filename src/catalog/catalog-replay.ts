@@ -30,7 +30,7 @@ export interface CatalogSnapshotDocument {
 export interface CatalogDeltaEvent {
   type: string;
   event_id: string;
-  catalog_sequence?: number;
+  catalog_sequence: number;
   body: Record<string, unknown>;
 }
 
@@ -87,15 +87,13 @@ export function replayCatalogTimeline(
       continue;
     }
     seen.add(event.event_id);
-    if (event.catalog_sequence !== undefined) {
-      if (event.catalog_sequence !== expectedSequence) {
-        throw new MarketplaceValidationError("CATALOG_REFERENCE_MISMATCH", "Catalog delta sequence gap", {
-          expectedSequence,
-          actualSequence: event.catalog_sequence
-        });
-      }
-      expectedSequence += 1;
+    if (event.catalog_sequence !== expectedSequence) {
+      throw new MarketplaceValidationError("CATALOG_REFERENCE_MISMATCH", "Catalog delta sequence gap", {
+        expectedSequence,
+        actualSequence: event.catalog_sequence
+      });
     }
+    expectedSequence += 1;
     applyDelta(catalog, event);
   }
   return catalog;

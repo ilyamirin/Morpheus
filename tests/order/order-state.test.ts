@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { MarketplaceValidationError } from "../../src/protocol/errors.js";
-import { OrderStateMachine } from "../../src/order/order-state.js";
+import { OrderStateMachine, OrderTransitionGraph } from "../../src/order/order-state.js";
 
 describe("OrderStateMachine", () => {
+  it("exposes OrderTransitionGraph as the preferred transition helper name", () => {
+    const graph = new OrderTransitionGraph();
+    graph.apply("io.marketplace.order.created");
+    expect(graph.state).toBe("created");
+  });
+
   it("accepts the happy path", () => {
     const machine = new OrderStateMachine();
     machine.apply("io.marketplace.order.created");

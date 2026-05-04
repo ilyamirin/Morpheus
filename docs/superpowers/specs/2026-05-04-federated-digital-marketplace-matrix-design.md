@@ -113,17 +113,18 @@ io.marketplace.offer.withdrawn
 io.marketplace.inventory.updated
 ```
 
-Catalog synchronization uses mandatory snapshots plus mandatory delta events.
+Catalog synchronization uses mandatory snapshots plus mandatory delta events. Wire-format catalog records use `snake_case`; reference implementations MAY map them into local camelCase/index records internally, but the wire format remains normative.
 
-`io.marketplace.inventory.updated` is limited to non-binding catalog availability metadata. Booking-slot holds, provider inventory locks, and reschedules are outside Matrix in v0.1.
+`io.marketplace.inventory.updated` is non-binding advisory catalog metadata. Canonical purchase terms remain in `offer.upserted`; booking-slot holds, provider inventory locks, and reschedules are outside Matrix in v0.1.
 
 An indexer MUST:
 
 1. find the latest valid snapshot;
 2. verify its hash, schema, and issuer;
 3. apply delta events after the snapshot;
-4. reject events from invalid actors or unsupported protocol versions;
-5. rebuild from a later valid snapshot after mismatch or corruption.
+4. apply delta events in contiguous `catalog_sequence` order;
+5. reject events from invalid actors or unsupported protocol versions;
+6. rebuild from a later valid snapshot after mismatch, missing delta, or corruption.
 
 ### Order Room
 
@@ -363,7 +364,7 @@ sequence
 covers_events_until
 ```
 
-Snapshot JSON is hashed with canonical JSON. `sha256` values use `sha256:<64 lowercase hex>`. Snapshot replay applies tombstones before later deltas, and product/offer withdrawal deltas remove the withdrawn object from the local catalog view.
+Snapshot JSON is hashed with canonical JSON. `sha256` values use `sha256:<64 lowercase hex>`. `snapshot_id` uses `snap:<instance_id>:<local_id>`. Snapshot replay applies tombstones before later deltas, and product/offer withdrawal deltas remove the withdrawn object from the local catalog view. Deltas MUST carry a contiguous `catalog_sequence`; missing sequences require recovery from a later snapshot.
 
 ### `io.marketplace.product.upserted`
 
@@ -424,6 +425,8 @@ Timeline event in catalog room.
       "capture_policy": "before_entitlement",
       "adapter_policy": "seller_supported"
     },
+    "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
     "entitlement": {
       "type": "booking_slot",
       "duration": "PT1H",
@@ -474,6 +477,27 @@ Before this event, the order room MUST contain a valid `io.marketplace.actor.cus
 }
 ```
 
+In v0.1, `quantity` MUST be `1`. Multi-quantity carts, bundles, and quantity-priced offers are out of scope until the protocol defines separate `unit_price` and `total_price` semantics.
+
+### `io.marketplace.order.accepted`
+
+Timeline event in order room, issued by the seller AS.
+
+```json
+{
+  "body": {
+    "order_id": "ord:customer.example:01JORDER",
+    "offer_revision": 3,
+    "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "payment_capture_policy": "before_entitlement",
+    "arbitration_policy_version": "1"
+  }
+}
+```
+
+`order.accepted` confirms the seller is accepting the exact terms locked by `order.created`; mismatched revision, terms hashes, capture policy, or arbitration policy version are invalid.
+
 ### `io.marketplace.actor.customer.bound`
 
 Timeline event in order room.
@@ -495,6 +519,8 @@ This event discloses the customer actor for a specific order. It is intentionall
   }
 }
 ```
+
+Every `authorized_representatives[]` Matrix user disclosed in `customer.bound` MUST be joined to the order room. Seller representatives follow the same room-profile rule when disclosed by seller-side policy.
 
 ### `io.marketplace.payment.intent.created`
 
@@ -567,7 +593,7 @@ Timeline events in order room.
 }
 ```
 
-Refund events MUST reference a captured `payment_id`, carry a stable `refund_id`, and include external evidence. A full-refund ruling constrains the refund amount to the captured amount. A partial-refund ruling constrains the refund amount and currency to the ruling remedy.
+Refund events MUST reference a captured `payment_id`, carry a stable `refund_id`, and include external evidence. Without a dispute ruling, a refund amount is validated against the captured amount. A full-refund ruling constrains the refund amount to the captured amount. A partial-refund ruling constrains the refund amount and currency to the ruling remedy.
 
 ### `io.marketplace.entitlement.granted`
 
@@ -608,11 +634,31 @@ Timeline event in order room.
       "amount": "100.00",
       "currency": "USD"
     },
-    "evidence_refs": ["ev_01", "ev_02"],
+    "evidence_refs": ["$evidence_1", "$evidence_2"],
     "binding": true
   }
 }
 ```
+
+### `io.marketplace.dispute.evidence.submitted`
+
+Timeline event in order room.
+
+```json
+{
+  "body": {
+    "order_id": "ord:customer.example:01JORDER",
+    "dispute_id": "disp:arbiter.example:01JDISP",
+    "evidence": {
+      "kind": "customer_statement",
+      "uri": "mxc://customer.example/evidence",
+      "sha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  }
+}
+```
+
+Ruling `evidence_refs` MUST reference Matrix event ids from the same order-room timeline, not protocol-local evidence ids.
 
 Allowed rulings:
 
@@ -656,9 +702,13 @@ seller policy
 
 One product can have multiple offers.
 
+`seller_terms_hash` and `offer_terms_hash` in an offer are the hashes that `order.created` and `order.accepted` later lock. The seller hash should correspond to the seller terms current for that offer; the offer hash covers offer-specific purchase terms.
+
 ## Order Transition Graph
 
 The low-level transition helper is a transition graph only. It is useful for shape checks, but strict order acceptance MUST use timeline replay (`validateOrderRoomTimeline` or payload-aware `validateOrderEventSequence`) because capture policy, terms, refund amounts, room binding, and actor authority are payload-dependent.
+
+The preferred public helper name is `OrderTransitionGraph`. `OrderStateMachine` is retained as a compatibility alias and should not be used as the strict protocol acceptance API.
 
 Nominal lifecycle:
 
@@ -784,7 +834,7 @@ arbitration_policy_version
 arbitration_window
 ```
 
-The arbiter MUST be allowlisted by both customer and seller instances. Otherwise `order.created` is invalid.
+The validating instance MUST locally allowlist the arbiter for `arbitration`. v0.1 does not require a global or mutual allowlist proof; each participant validates the order against its own local allowlist before accepting or continuing the room.
 
 Dispute events:
 
@@ -800,7 +850,7 @@ Rules:
 - `dispute.opened` MAY be issued by the customer, seller, or arbiter AS.
 - `evidence.submitted` MAY be issued by any order party.
 - `ruling.issued` MAY be issued only by the arbiter AS.
-- Evidence references in a ruling MUST point to events in the same order-room timeline.
+- Evidence references in a ruling MUST point to Matrix events in the same order-room timeline.
 - A binding ruling MUST be executed if the arbitration policy was accepted in `order.created`.
 - If a payment adapter cannot automate a refund, `refund_required` remains a protocol obligation and execution is confirmed by a later refund event.
 
@@ -858,6 +908,7 @@ event type authority
 transition graph state
 referenced object revision/hash
 critical fields
+protocol_event_id replay
 ```
 
 An instance MUST reject an event when:
@@ -870,6 +921,7 @@ An instance MUST reject an event when:
 - object revision goes backwards;
 - required fields are missing;
 - unknown critical field or extension is present;
+- the same `protocol_event_id` appears on a different Matrix event or with a different canonical body hash;
 - order transition violates the transition graph or payload-aware timeline rules;
 - price, currency, or offer revision differs from trusted catalog state;
 - payment, entitlement, or dispute event is issued by an unauthorized party.
@@ -949,17 +1001,9 @@ The protocol conformance suite includes:
 23. zero-day retention policy rejected;
 24. compatibility profile from non-allowlisted instance rejected.
 
-## Open Implementation Notes
+## Remaining v0.1 Gaps
 
-The implementation plan should define:
-
-- concrete JSON Schema files for each event;
-- canonical ID formats for instance, actor, product, offer, order, payment, entitlement, and dispute IDs;
-- Application Service namespace rules;
-- Matrix room creation and invitation flow;
-- catalog snapshot file format;
-- local allowlist storage format;
-- conformance test runner structure.
+The current Spec+Validator surface intentionally leaves production integration out of scope. Remaining implementation work is Matrix Application Service runtime behavior, persistent storage, HTTP APIs, homeserver deployment profiles, and operator tooling. These are implementation milestones, not protocol semantics.
 
 ## v0.1 Completion Clarifications
 
@@ -976,7 +1020,7 @@ validateAllowlistPolicy(policy, now)
 ConformanceRunner
 ```
 
-Low-level exports remain building blocks and MUST NOT be treated as complete protocol acceptance on their own. In particular, `OrderStateMachine` is the transition graph helper and validates only transition shape; strict order acceptance requires order-room timeline validation.
+Low-level exports remain building blocks and MUST NOT be treated as complete protocol acceptance on their own. In particular, `OrderTransitionGraph`/`OrderStateMachine` validate only transition shape; strict order acceptance requires order-room timeline validation.
 
 Retention, security, compatibility, indexing, and privacy validators are policy validators. They are advisory unless an implementation invokes them from its strict validation context.
 

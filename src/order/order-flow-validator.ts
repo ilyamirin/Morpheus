@@ -210,26 +210,18 @@ function validateCreatedOrderTerms(event: OrderFlowEvent, context: OrderFlowCont
 
 function validateOrderAccepted(event: OrderFlowEvent, context: OrderFlowContext): void {
   const terms = requireOrderTerms(context);
-  const body = event.body as Record<string, unknown>;
-  const confirmationKeys = [
-    "offer_revision",
-    "seller_terms_hash",
-    "offer_terms_hash",
-    "arbitration_policy_version"
-  ];
-  if (!confirmationKeys.some((key) => body[key] !== undefined)) {
-    return;
-  }
   const actual = {
     offerRevision: requireNumber(event, "offer_revision"),
     sellerTermsHash: requireString(event, "seller_terms_hash"),
     offerTermsHash: requireString(event, "offer_terms_hash"),
+    capturePolicy: requireCapturePolicyField(event, "payment_capture_policy"),
     arbitrationPolicyVersion: requireString(event, "arbitration_policy_version")
   };
   if (
     actual.offerRevision !== terms.offerRevision ||
     actual.sellerTermsHash !== terms.sellerTermsHash ||
     actual.offerTermsHash !== terms.offerTermsHash ||
+    actual.capturePolicy !== terms.capturePolicy ||
     actual.arbitrationPolicyVersion !== terms.arbitrationPolicyVersion
   ) {
     fail("PAYMENT_TERMS_MISMATCH", "order.accepted terms do not match order.created terms", {

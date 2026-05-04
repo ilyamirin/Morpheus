@@ -57,4 +57,44 @@ describe("arbitration policy and dispute flow", () => {
       ])
     ).toThrow(/refund/i);
   });
+
+  it("rejects dispute evidence refs that are not Matrix event ids", () => {
+    expect(() =>
+      validateArbitrationFlow([
+        {
+          type: "io.marketplace.dispute.evidence.submitted",
+          event_id: "ev_01",
+          room_id: validOrderCreated.room_id,
+          body: {
+            order_id: validOrderCreated.order_id,
+            dispute_id: "disp:arbiter.example:01JDISP",
+            evidence: {
+              kind: "customer_statement",
+              uri: "mxc://customer.example/evidence",
+              sha256: "sha256:" + "4".repeat(64)
+            }
+          }
+        },
+        {
+          type: "io.marketplace.dispute.ruling.issued",
+          event_id: "$ruling",
+          room_id: validOrderCreated.room_id,
+          body: {
+            order_id: validOrderCreated.order_id,
+            dispute_id: "disp:arbiter.example:01JDISP",
+            ruling: "refund_required",
+            remedy: { type: "full_refund" },
+            evidence_refs: ["ev_01"],
+            binding: true
+          }
+        },
+        {
+          type: "io.marketplace.payment.refunded",
+          event_id: "$refund",
+          room_id: validOrderCreated.room_id,
+          body: { order_id: validOrderCreated.order_id, payment_id: "pay:shop.example:01JPAY" }
+        }
+      ])
+    ).toThrow(/Matrix event/i);
+  });
 });
