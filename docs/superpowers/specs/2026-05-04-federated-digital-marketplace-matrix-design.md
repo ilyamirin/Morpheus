@@ -1,0 +1,873 @@
+# Federated Digital Marketplace over Matrix v0.1
+
+## Status
+
+Design approved for specification draft.
+
+This document defines a strict federated protocol for a digital-only marketplace built on top of Matrix. It connects marketplace instances, sellers, customers, payment adapters, entitlement providers, and arbiters through Matrix rooms and typed Matrix events.
+
+The protocol namespace is:
+
+```text
+io.marketplace.*
+```
+
+## Goals
+
+- Enable many marketplace instances to interoperate over Matrix federation.
+- Support digital products, services, bookings, subscriptions, licenses, and external entitlements.
+- Use a local allowlist trust model rather than open global discovery.
+- Define implementable room profiles, event schemas, state machines, and validation rules.
+- Keep search local to each instance.
+- Keep payments and digital artifacts outside Matrix while recording verifiable protocol state in Matrix.
+- Support contractual arbitration in each order room.
+
+## Non-Goals for v0.1
+
+- Physical fulfillment.
+- Federated search API.
+- Reviews and reputation.
+- Global web-of-trust or trust recommendations.
+- Trustless escrow as a protocol requirement.
+- Storing digital goods directly in Matrix.
+- Making Matrix users directly equal to sellers or customers.
+
+## Architecture
+
+The protocol runs on Matrix federation. A production marketplace instance MUST run as a Matrix Application Service.
+
+Each marketplace instance has:
+
+```text
+instance_id
+matrix_server_name
+application_service_id
+catalog_room_id
+allowlist
+supported_protocol_versions
+supported_payment_adapters
+supported_entitlement_types
+local_policy
+```
+
+There is no global discovery mechanism in v0.1. Each instance keeps a local allowlist and uses it to decide:
+
+- which catalog rooms to index;
+- which instances may create or accept order rooms;
+- which instances may issue valid marketplace events;
+- which arbiters may be accepted for orders;
+- which payment adapters and entitlement types are acceptable.
+
+The main entities are:
+
+```text
+Instance
+SellerActor
+CustomerActor
+Product
+Offer
+Order
+PaymentIntent
+Entitlement
+Dispute
+ArbitrationPolicy
+```
+
+Matrix users and Application Service users act on behalf of actors. They are not sellers or customers by themselves.
+
+## Room Profiles
+
+### Catalog Room
+
+Each marketplace instance has exactly one federated catalog room.
+
+Recommended Matrix settings:
+
+```text
+alias: #marketplace-catalog:<server>
+join_rule: public or restricted
+history_visibility: world_readable or shared
+encryption: off
+canonical owner: marketplace Application Service
+```
+
+The catalog room MUST NOT contain order data or personal data. It contains only indexable marketplace events.
+
+Required state events:
+
+```text
+io.marketplace.instance.profile
+io.marketplace.catalog.profile
+```
+
+Allowed timeline events:
+
+```text
+io.marketplace.catalog.snapshot.published
+io.marketplace.actor.seller.announced
+io.marketplace.actor.seller.suspended
+io.marketplace.product.upserted
+io.marketplace.product.withdrawn
+io.marketplace.offer.upserted
+io.marketplace.offer.withdrawn
+io.marketplace.inventory.updated
+```
+
+Catalog synchronization uses mandatory snapshots plus mandatory delta events.
+
+An indexer MUST:
+
+1. find the latest valid snapshot;
+2. verify its hash, schema, and issuer;
+3. apply delta events after the snapshot;
+4. reject events from invalid actors or unsupported protocol versions;
+5. rebuild from a later valid snapshot after mismatch or corruption.
+
+### Order Room
+
+Each order has exactly one private Matrix room.
+
+Recommended Matrix settings:
+
+```text
+join_rule: invite
+history_visibility: invited or shared
+encryption: hybrid
+```
+
+Required members:
+
+```text
+customer marketplace AS user
+seller marketplace AS user
+customer actor representatives
+seller actor representatives
+arbiter AS user or operator
+```
+
+An order room becomes protocol-valid only after a valid `io.marketplace.order.created` event has been accepted by the required parties.
+
+Required order lifecycle events:
+
+```text
+io.marketplace.order.created
+io.marketplace.order.accepted
+io.marketplace.payment.intent.created
+io.marketplace.payment.authorized
+io.marketplace.payment.captured
+io.marketplace.entitlement.granted
+io.marketplace.order.completed
+```
+
+Optional order lifecycle events:
+
+```text
+io.marketplace.order.cancelled
+io.marketplace.order.rejected
+io.marketplace.payment.failed
+io.marketplace.payment.cancelled
+io.marketplace.payment.refund.requested
+io.marketplace.payment.refunded
+io.marketplace.payment.chargeback.opened
+io.marketplace.entitlement.activated
+io.marketplace.entitlement.completed
+io.marketplace.entitlement.revoked
+io.marketplace.entitlement.expired
+io.marketplace.dispute.opened
+io.marketplace.dispute.evidence.submitted
+io.marketplace.dispute.ruling.issued
+io.marketplace.dispute.closed
+```
+
+An order room MUST NOT be reused for another order. `order_id` MUST be globally unique and bound to the Matrix `room_id`.
+
+### Actor Control Room
+
+Actor control is a required local mechanism. Federation of actor control rooms is optional in v0.1.
+
+External instances do not need access to internal actor-control permissions. They validate actors through catalog and order events:
+
+```text
+io.marketplace.actor.seller.announced
+io.marketplace.actor.customer.bound
+```
+
+Seller actors are announced in the catalog room. Customer actors are disclosed only inside order rooms.
+
+## Event Envelope
+
+Every marketplace Matrix event stores the protocol payload in Matrix `content`.
+
+```json
+{
+  "protocol": "io.marketplace",
+  "protocol_version": "0.1",
+  "event_id": "evt_01J...",
+  "created_at": "2026-05-04T10:00:00Z",
+  "issuer": {
+    "instance_id": "shop.example",
+    "actor_id": "seller:shop.example:01JABC...",
+    "matrix_user_id": "@market:shop.example"
+  },
+  "critical": [],
+  "body": {}
+}
+```
+
+Rules:
+
+- `event_id` MUST be globally unique. ULID or UUIDv7 is recommended.
+- `created_at` MUST be ISO-8601 UTC.
+- `issuer.instance_id` MUST match a trusted marketplace instance for the action.
+- `issuer.actor_id` is required for actor-bound events.
+- `critical` lists fields or extensions that MUST NOT be ignored.
+- `body` contains the typed payload for the event type.
+
+## Versioning and Compatibility
+
+Protocol versioning is strict.
+
+```json
+{
+  "protocol": "io.marketplace",
+  "version": "0.1",
+  "min_consumer_version": "0.1",
+  "extensions": []
+}
+```
+
+Compatibility rules:
+
+- unsupported `protocol_version`: reject;
+- unknown event type in catalog or order room: ignore unless referenced by `critical`;
+- unknown non-critical field: preserve when relaying, ignore for validation;
+- unknown critical field or extension: reject;
+- extension events MUST use reverse-DNS names outside `io.marketplace.*` unless standardized.
+
+## Core Event Types
+
+### `io.marketplace.instance.profile`
+
+State event in catalog room.
+
+```text
+state_key: <instance_id>
+```
+
+```json
+{
+  "body": {
+    "instance_id": "shop.example",
+    "matrix_server_name": "shop.example",
+    "application_service_id": "io.marketplace.shop",
+    "catalog_room_id": "!abc:shop.example",
+    "protocol_versions": ["0.1"],
+    "payment_adapters": ["stripe", "bank_transfer"],
+    "entitlement_types": [
+      "download_access",
+      "license_key",
+      "account_access",
+      "service_delivery",
+      "booking_slot",
+      "subscription_access",
+      "external_entitlement"
+    ],
+    "arbitration_policies": ["standard-digital-v1"]
+  }
+}
+```
+
+### `io.marketplace.actor.seller.announced`
+
+Timeline event in catalog room.
+
+```json
+{
+  "body": {
+    "seller_id": "seller:shop.example:01JSELLER",
+    "status": "active",
+    "display_name": "Acme Digital",
+    "legal_profile_ref": "https://shop.example/sellers/acme/legal.json",
+    "terms_ref": "https://shop.example/sellers/acme/terms",
+    "terms_hash": "sha256:...",
+    "supported_payment_adapters": ["stripe"],
+    "supported_entitlement_types": ["license_key", "booking_slot"]
+  }
+}
+```
+
+### `io.marketplace.catalog.snapshot.published`
+
+Timeline event in catalog room.
+
+```json
+{
+  "body": {
+    "snapshot_id": "snap_01J...",
+    "sequence": 42,
+    "format": "application/json+io.marketplace.catalog.v0",
+    "uri": "mxc://shop.example/...",
+    "sha256": "...",
+    "covers_events_until": "$matrix_event_id",
+    "product_count": 1200,
+    "offer_count": 3400,
+    "created_at": "2026-05-04T10:00:00Z"
+  }
+}
+```
+
+Snapshot records:
+
+```text
+sellers[]
+products[]
+offers[]
+tombstones[]
+```
+
+### `io.marketplace.product.upserted`
+
+Timeline event in catalog room.
+
+```json
+{
+  "body": {
+    "product_id": "prod:shop.example:01JPROD",
+    "seller_id": "seller:shop.example:01JSELLER",
+    "revision": 7,
+    "status": "active",
+    "kind": "digital_service",
+    "title": "Architecture consultation",
+    "description": "One-hour remote architecture review.",
+    "categories": ["software", "consulting"],
+    "tags": ["architecture", "backend"],
+    "media": [
+      {
+        "uri": "https://shop.example/media/prod.png",
+        "sha256": "..."
+      }
+    ],
+    "terms_hash": "sha256:..."
+  }
+}
+```
+
+Allowed product kinds:
+
+```text
+digital_file
+license
+account_access
+digital_service
+booking
+subscription
+external_entitlement
+```
+
+### `io.marketplace.offer.upserted`
+
+Timeline event in catalog room.
+
+```json
+{
+  "body": {
+    "offer_id": "offer:shop.example:01JOFFER",
+    "product_id": "prod:shop.example:01JPROD",
+    "seller_id": "seller:shop.example:01JSELLER",
+    "revision": 3,
+    "status": "active",
+    "price": {
+      "amount": "100.00",
+      "currency": "USD"
+    },
+    "payment_terms": {
+      "capture": "before_entitlement",
+      "adapter_policy": "seller_supported"
+    },
+    "entitlement": {
+      "type": "booking_slot",
+      "duration": "PT1H",
+      "delivery": "external"
+    },
+    "availability": {
+      "mode": "limited",
+      "quantity": 10,
+      "valid_until": "2026-06-01T00:00:00Z"
+    }
+  }
+}
+```
+
+### `io.marketplace.order.created`
+
+Timeline event in order room.
+
+Before or together with this event, the order room MUST contain a valid `io.marketplace.actor.customer.bound` event for the customer actor.
+
+```json
+{
+  "body": {
+    "order_id": "ord:customer.example:01JORDER",
+    "room_id": "!orderroom:customer.example",
+    "customer_id": "customer:customer.example:01JCUST",
+    "seller_id": "seller:shop.example:01JSELLER",
+    "offer_id": "offer:shop.example:01JOFFER",
+    "offer_revision": 3,
+    "catalog_snapshot_id": "snap_01J...",
+    "quantity": 1,
+    "price": {
+      "amount": "100.00",
+      "currency": "USD"
+    },
+    "payment_adapter": "stripe",
+    "entitlement_type": "booking_slot",
+    "arbiter_instance": "arbiter.example",
+    "arbiter_actor": "arbiter:arbiter.example:default",
+    "arbitration_policy_id": "standard-digital-v1",
+    "arbitration_window": "P14D",
+    "expires_at": "2026-05-04T10:30:00Z"
+  }
+}
+```
+
+### `io.marketplace.actor.customer.bound`
+
+Timeline event in order room.
+
+This event discloses the customer actor for a specific order. It is intentionally scoped to the order room and is not published to the catalog room.
+
+```json
+{
+  "body": {
+    "customer_id": "customer:customer.example:01JCUST",
+    "status": "active",
+    "display_name": "Acme Procurement",
+    "instance_id": "customer.example",
+    "authorized_representatives": [
+      "@buyer:customer.example"
+    ],
+    "accepted_payment_adapters": ["stripe"],
+    "accepted_arbitration_policies": ["standard-digital-v1"]
+  }
+}
+```
+
+### `io.marketplace.payment.intent.created`
+
+Timeline event in order room.
+
+```json
+{
+  "body": {
+    "order_id": "ord:customer.example:01JORDER",
+    "payment_id": "pay:shop.example:01JPAY",
+    "adapter": "stripe",
+    "amount": "100.00",
+    "currency": "USD",
+    "capture_policy": "before_entitlement",
+    "provider_ref": "pi_...",
+    "confirmation": {
+      "method": "redirect",
+      "uri": "https://pay.shop.example/confirm/pi_..."
+    },
+    "expires_at": "2026-05-04T10:30:00Z"
+  }
+}
+```
+
+### `io.marketplace.payment.captured`
+
+Timeline event in order room.
+
+```json
+{
+  "body": {
+    "order_id": "ord:customer.example:01JORDER",
+    "payment_id": "pay:shop.example:01JPAY",
+    "adapter": "stripe",
+    "amount": "100.00",
+    "currency": "USD",
+    "provider_ref": "ch_...",
+    "evidence": {
+      "kind": "provider_receipt",
+      "uri": "https://shop.example/payments/ch_...",
+      "sha256": "..."
+    }
+  }
+}
+```
+
+### `io.marketplace.entitlement.granted`
+
+Timeline event in order room.
+
+```json
+{
+  "body": {
+    "order_id": "ord:customer.example:01JORDER",
+    "payment_id": "pay:shop.example:01JPAY",
+    "entitlement_id": "ent:shop.example:01JENT",
+    "type": "booking_slot",
+    "external_ref": "bk_92381",
+    "valid_from": "2026-05-10T12:00:00Z",
+    "valid_until": "2026-05-10T13:00:00Z",
+    "evidence": {
+      "kind": "provider_receipt",
+      "uri": "https://shop.example/receipts/bk_92381",
+      "sha256": "..."
+    }
+  }
+}
+```
+
+### `io.marketplace.dispute.ruling.issued`
+
+Timeline event in order room.
+
+```json
+{
+  "body": {
+    "order_id": "ord:customer.example:01JORDER",
+    "dispute_id": "disp:arbiter.example:01JDISP",
+    "ruling": "refund_required",
+    "reason_code": "entitlement_not_delivered",
+    "remedy": {
+      "type": "full_refund",
+      "amount": "100.00",
+      "currency": "USD"
+    },
+    "evidence_refs": ["ev_01", "ev_02"],
+    "binding": true
+  }
+}
+```
+
+Allowed rulings:
+
+```text
+refund_required
+partial_refund_required
+entitlement_confirmed
+entitlement_reissue_required
+service_completion_required
+no_fault
+```
+
+## Product and Offer Model
+
+Product and Offer are separate.
+
+`Product` describes what is sold:
+
+```text
+digital file
+license
+account access
+digital service
+booking
+subscription
+external entitlement
+```
+
+`Offer` describes how the product is purchased:
+
+```text
+price
+currency
+payment terms
+availability
+entitlement type
+access duration
+delivery mode
+seller policy
+```
+
+One product can have multiple offers.
+
+## Order State Machine
+
+Nominal lifecycle:
+
+```text
+draft
+  -> created
+  -> accepted
+  -> payment_intent_created
+  -> payment_authorized
+  -> payment_captured
+  -> entitlement_granted
+  -> completed
+```
+
+Terminal states:
+
+```text
+completed
+cancelled
+rejected
+refunded
+dispute_resolved
+expired
+```
+
+Dispute branch:
+
+```text
+accepted/payment_captured/entitlement_granted
+  -> dispute_opened
+  -> ruling_issued
+  -> refund_required | partial_refund_required | entitlement_confirmed | entitlement_reissue_required | service_completion_required
+  -> dispute_resolved
+```
+
+## Payment Adapter Contract
+
+The protocol does not move money. It standardizes payment state and evidence.
+
+Required payment events:
+
+```text
+io.marketplace.payment.intent.created
+io.marketplace.payment.authorized
+io.marketplace.payment.captured
+```
+
+Optional payment events:
+
+```text
+io.marketplace.payment.failed
+io.marketplace.payment.cancelled
+io.marketplace.payment.refund.requested
+io.marketplace.payment.refunded
+io.marketplace.payment.chargeback.opened
+```
+
+Rules:
+
+- The adapter MUST be announced in the seller instance profile.
+- The customer instance MUST accept the adapter in `order.created`.
+- Payment events MAY be issued only by the seller marketplace AS or a payment AS bound to the seller instance.
+- Payment secrets MUST NOT be transmitted through Matrix marketplace events.
+- Payment evidence MAY be an external URI plus hash.
+- Refund events MUST reference a captured `payment_id`.
+
+## Entitlement Lifecycle
+
+Digital fulfillment is represented as entitlement state. Matrix records entitlement metadata and evidence, not the artifact or secret itself.
+
+Supported entitlement types:
+
+```text
+download_access
+license_key
+account_access
+service_delivery
+booking_slot
+subscription_access
+external_entitlement
+```
+
+Lifecycle:
+
+```text
+pending
+  -> granted
+  -> active
+  -> completed
+```
+
+Additional transitions:
+
+```text
+granted/active -> revoked
+granted/active -> expired
+granted/active -> disputed
+```
+
+Rules:
+
+- `entitlement.granted` MUST be issued by the seller AS.
+- `external_ref` MUST NOT contain a secret access credential.
+- Sensitive access tokens MUST be delivered outside Matrix marketplace events or as encrypted attachments.
+- Entitlements MUST reference `order_id`.
+- Entitlements MUST reference `payment_id` when the offer requires payment before delivery.
+- `valid_from` and `valid_until` are required for bookings and subscriptions.
+- Evidence is required for `service_delivery` and `external_entitlement`.
+
+## Arbitration and Disputes
+
+Each order fixes the arbiter and arbitration policy in `order.created`:
+
+```text
+arbiter_instance
+arbiter_actor
+arbitration_policy_id
+arbitration_window
+```
+
+The arbiter MUST be allowlisted by both customer and seller instances. Otherwise `order.created` is invalid.
+
+Dispute events:
+
+```text
+io.marketplace.dispute.opened
+io.marketplace.dispute.evidence.submitted
+io.marketplace.dispute.ruling.issued
+io.marketplace.dispute.closed
+```
+
+Rules:
+
+- `dispute.opened` MAY be issued by the customer, seller, or arbiter AS.
+- `evidence.submitted` MAY be issued by any order party.
+- `ruling.issued` MAY be issued only by the arbiter AS.
+- A binding ruling MUST be executed if the arbitration policy was accepted in `order.created`.
+- If a payment adapter cannot automate a refund, `refund_required` remains a protocol obligation and execution is confirmed by a later refund event.
+
+## Privacy Model
+
+Order rooms use a hybrid privacy profile.
+
+Structured protocol events readable by marketplace AS participants:
+
+```text
+order_id
+actor ids
+offer_id
+offer_revision
+price
+payment status
+entitlement status
+dispute status
+timestamps
+non-secret evidence hashes
+```
+
+Data that MUST NOT appear in open marketplace events:
+
+```text
+payment secrets
+access tokens
+private download URLs with bearer credentials
+personal documents
+unnecessary personal data
+free-form private conversation
+```
+
+Sensitive data MAY be transmitted through:
+
+```text
+out-of-band seller provider flow
+encrypted Matrix attachments
+E2EE room messages when clients support them
+short-TTL links, provided the link itself is not a bearer secret in an indexable event
+```
+
+## Validation Rules
+
+Every marketplace event MUST be validated against:
+
+```text
+Matrix sender
+room profile
+issuer.instance_id
+issuer.actor_id
+actor status
+local allowlist permission
+event type authority
+state machine transition
+referenced object revision/hash
+critical fields
+```
+
+An instance MUST reject an event when:
+
+- `protocol_version` is unsupported;
+- event type is not allowed for the room profile;
+- sender is outside the expected Matrix server or AS namespace;
+- `issuer.instance_id` is not allowlisted for the attempted action;
+- `actor_id` is unknown, inactive, or suspended;
+- object revision goes backwards;
+- required fields are missing;
+- unknown critical field or extension is present;
+- order transition violates the state machine;
+- price, currency, or offer revision differs from trusted catalog state;
+- payment, entitlement, or dispute event is issued by an unauthorized party.
+
+Cross-room references MUST include enough data to prevent replay and substitution:
+
+```json
+{
+  "ref": {
+    "room_id": "!catalog:shop.example",
+    "event_id": "$abc...",
+    "object_id": "offer:shop.example:01JOFFER",
+    "revision": 3,
+    "sha256": "..."
+  }
+}
+```
+
+## Threat Model
+
+v0.1 protects against:
+
+```text
+catalog spam from unknown instances
+forged seller/customer actors
+stale offer replay
+price substitution
+unauthorized order state transition
+fake payment captured event
+fake entitlement granted event
+arbiter impersonation
+snapshot/delta mismatch
+revision rollback
+unknown critical extension acceptance
+order room reuse
+cross-room event replay
+```
+
+v0.1 does not solve:
+
+```text
+global reputation
+review fraud
+Web-of-trust attacks
+trust recommendation attacks
+trustless escrow
+fraud by a locally allowlisted instance
+legal enforcement outside payment adapter and arbitration policy
+```
+
+## Minimal Test Vectors
+
+The protocol conformance suite SHOULD include:
+
+1. valid catalog snapshot accepted;
+2. valid product and offer delta after snapshot accepted;
+3. unknown instance catalog rejected;
+4. seller suspended, later offer rejected;
+5. stale offer revision in `order.created` rejected;
+6. price mismatch in `order.created` rejected;
+7. valid order lifecycle reaches completed;
+8. `payment.captured` from unauthorized sender rejected;
+9. `entitlement.granted` before `payment.captured` rejected when `capture_policy=before_entitlement`;
+10. arbiter not allowlisted by both sides, order rejected;
+11. `dispute.ruling.issued` from non-arbiter rejected;
+12. unknown critical extension rejected;
+13. order event replayed into different room rejected;
+14. snapshot hash mismatch rejected;
+15. revision rollback rejected.
+
+## Open Implementation Notes
+
+The implementation plan should define:
+
+- concrete JSON Schema files for each event;
+- canonical ID formats for instance, actor, product, offer, order, payment, entitlement, and dispute IDs;
+- Application Service namespace rules;
+- Matrix room creation and invitation flow;
+- catalog snapshot file format;
+- local allowlist storage format;
+- conformance test runner structure.
