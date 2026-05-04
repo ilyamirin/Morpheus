@@ -5,6 +5,7 @@ import { OrderStateMachine } from "../../src/order/order-state.js";
 import { validateOrderCreated } from "../../src/order/order-validator.js";
 import { validCatalog, validOrderCreated } from "../../src/conformance/fixtures.js";
 import { AllowlistPolicy } from "../../src/protocol/allowlist.js";
+import { MarketplaceValidationError } from "../../src/protocol/errors.js";
 import { assertEventAllowedInRoom } from "../../src/protocol/room-profile.js";
 import { marketplaceEventSchema } from "../../src/protocol/schemas.js";
 
@@ -78,11 +79,14 @@ describe("required conformance vectors", () => {
     ).toThrow();
   });
 
-  it("9 rejects entitlement before captured payment", () => {
+  it("9 rejects entitlement.granted before payment.captured when capture_policy=before_entitlement", () => {
     const machine = new OrderStateMachine();
     machine.apply("io.marketplace.order.created");
     machine.apply("io.marketplace.order.accepted");
+    machine.apply("io.marketplace.payment.intent.created");
+    machine.apply("io.marketplace.payment.authorized");
     expect(() => machine.apply("io.marketplace.entitlement.granted")).toThrow();
+    expect(machine.state).toBe("payment_authorized");
   });
 
   it("10 rejects non-allowlisted arbiter", () => {
@@ -129,10 +133,17 @@ describe("required conformance vectors", () => {
     expect(() => assertEventAllowedInRoom("catalog", "io.marketplace.order.created")).toThrow();
   });
 
-  it("14 rejects snapshot sequence rollback", () => {
+  it("14 rejects snapshot hash mismatch", () => {
     const catalog = new CatalogIndex("shop.example");
-    catalog.applySnapshot({ ...validCatalog.snapshot, sequence: 2 });
-    expect(() => catalog.applySnapshot({ ...validCatalog.snapshot, sequence: 1 })).toThrow();
+    catalog.applySnapshot({ ...validCatalog.snapshot, sequence: 2, sha256: "abc" });
+    try {
+      catalog.applySnapshot({ ...validCatalog.snapshot, sequence: 2, sha256: "def" });
+      throw new Error("Expected snapshot hash mismatch");
+    } catch (error) {
+      expect(error).toBeInstanceOf(MarketplaceValidationError);
+      expect((error as MarketplaceValidationError).code).toBe("CATALOG_REFERENCE_MISMATCH");
+      expect((error as MarketplaceValidationError).message).toBe("Snapshot hash mismatch");
+    }
   });
 
   it("15 rejects revision rollback", () => {

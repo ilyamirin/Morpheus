@@ -38,8 +38,19 @@ export class CatalogIndex {
   constructor(public readonly instanceId: string) {}
 
   applySnapshot(snapshot: SnapshotRecord): void {
-    if (this.snapshot && snapshot.sequence <= this.snapshot.sequence) {
-      throw new MarketplaceValidationError("REVISION_ROLLBACK", "Snapshot sequence rollback", { snapshot });
+    if (this.snapshot) {
+      if (snapshot.sequence === this.snapshot.sequence) {
+        if (snapshot.sha256 !== this.snapshot.sha256) {
+          throw new MarketplaceValidationError("CATALOG_REFERENCE_MISMATCH", "Snapshot hash mismatch", {
+            snapshot,
+            currentSnapshot: this.snapshot
+          });
+        }
+        return;
+      }
+      if (snapshot.sequence < this.snapshot.sequence) {
+        throw new MarketplaceValidationError("REVISION_ROLLBACK", "Snapshot sequence rollback", { snapshot });
+      }
     }
     this.snapshot = snapshot;
   }

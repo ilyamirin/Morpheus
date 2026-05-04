@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CatalogIndex } from "../../src/catalog/catalog-index.js";
+import { MarketplaceValidationError } from "../../src/protocol/errors.js";
 
 describe("CatalogIndex", () => {
   it("accepts snapshot then seller/product/offer deltas and retrieves offer revision", () => {
@@ -63,6 +64,31 @@ describe("CatalogIndex", () => {
     expect(() =>
       index.upsertProduct({ productId: "prod:shop.example:01JPROD", sellerId: "seller:shop.example:01JSELLER", revision: 1 })
     ).toThrow(/rollback/);
+  });
+
+  it("rejects a same-sequence snapshot with a different hash", () => {
+    const index = new CatalogIndex("shop.example");
+    index.applySnapshot({ snapshotId: "snap_01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
+
+    let error: unknown;
+    try {
+      index.applySnapshot({ snapshotId: "snap_01J_ALT", sequence: 1, sha256: "def", coversEventsUntil: "$snap" });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(MarketplaceValidationError);
+    expect((error as MarketplaceValidationError).code).toBe("CATALOG_REFERENCE_MISMATCH");
+    expect((error as MarketplaceValidationError).message).toBe("Snapshot hash mismatch");
+  });
+
+  it("treats a same-sequence snapshot with the same hash as idempotent", () => {
+    const index = new CatalogIndex("shop.example");
+    index.applySnapshot({ snapshotId: "snap_01J", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" });
+
+    expect(() =>
+      index.applySnapshot({ snapshotId: "snap_01J_REPLAY", sequence: 1, sha256: "abc", coversEventsUntil: "$snap" })
+    ).not.toThrow();
   });
 
   it("rejects a seller from a different catalog instance", () => {
