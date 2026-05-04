@@ -41,6 +41,11 @@ export function validateOrderCreated(
   allowlist: AllowlistPolicy,
   customer: CustomerBinding
 ): void {
+  if (order.quantity !== 1) {
+    throw new MarketplaceValidationError("PAYMENT_TERMS_MISMATCH", "Order quantity is limited to one in v0.1", {
+      quantity: order.quantity
+    });
+  }
   if (!customer) {
     throw new MarketplaceValidationError("CATALOG_REFERENCE_MISMATCH", "Customer binding is required", {
       customerId: order.customer_id

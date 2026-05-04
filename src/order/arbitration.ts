@@ -28,8 +28,8 @@ export function validateArbitrationFlow(events: ArbitrationFlowEvent[]): void {
   for (const event of events) {
     if (event.type === "io.marketplace.dispute.ruling.issued") {
       const evidenceRefs = event.body.evidence_refs;
-      if (!Array.isArray(evidenceRefs) || evidenceRefs.some((ref) => typeof ref !== "string" || !eventIds.has(ref))) {
-        throw new MarketplaceValidationError("CATALOG_REFERENCE_MISMATCH", "Dispute ruling evidence_refs must point to order room events", {
+      if (!Array.isArray(evidenceRefs) || evidenceRefs.some((ref) => typeof ref !== "string" || !ref.startsWith("$") || !eventIds.has(ref))) {
+        throw new MarketplaceValidationError("CATALOG_REFERENCE_MISMATCH", "Dispute ruling evidence_refs must point to Matrix events in the order room", {
           eventId: event.event_id,
           evidenceRefs
         });

@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: morpheus
+      POSTGRES_USER: morpheus
+      POSTGRES_PASSWORD: morpheus
+    ports:
+      - "5432:5432"
+    volumes:
+      - morpheus-postgres:/var/lib/postgresql/data
+
+  synapse:
+    image: matrixdotorg/synapse:latest
+    ports:
+      - "8008:8008"
+    volumes:
+      - ./.local/synapse:/data
+    depends_on:
+      - postgres
+
+  pgweb:
+    image: sosedoff/pgweb:latest
+    ports:
+      - "8081:8081"
+    environment:
+      DATABASE_URL: postgres://morpheus:morpheus@postgres:5432/morpheus?sslmode=disable
+    depends_on:
+      - postgres
+
+volumes:
+  morpheus-postgres:

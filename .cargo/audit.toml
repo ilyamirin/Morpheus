@@ -1,0 +1,6 @@
+[advisories]
+ignore = [
+  # Pulled into Cargo.lock by sqlx's optional MySQL dependency graph.
+  # Morpheus enables only Postgres and SQLite SQLx features.
+  "RUSTSEC-2023-0071",
+]

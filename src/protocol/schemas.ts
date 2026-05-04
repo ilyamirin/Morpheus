@@ -34,6 +34,11 @@ const actorIdSchema = z
   );
 const snapshotIdSchema = z.string().refine((id) => isProtocolObjectId(id, "snap"), "Invalid snapshot id");
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const evidenceSchema = z.object({
+  kind: z.string().min(1),
+  uri: z.string().url().or(z.string().startsWith("mxc://")),
+  sha256: sha256Schema
+});
 
 export const moneySchema = z.object({
   amount: moneyAmountSchema,
@@ -151,7 +156,9 @@ export const offerUpsertedBodySchema = z.object({
     mode: z.enum(["unlimited", "limited"]),
     quantity: z.number().int().nonnegative().optional(),
     valid_until: isoDateSchema.optional()
-  })
+  }),
+  seller_terms_hash: sha256Schema,
+  offer_terms_hash: sha256Schema
 });
 
 export const offerWithdrawnBodySchema = z.object({
@@ -173,7 +180,7 @@ export const orderCreatedBodySchema = z.object({
   offer_id: offerIdSchema,
   offer_revision: z.number().int().positive(),
   catalog_snapshot_id: snapshotIdSchema,
-  quantity: z.number().int().positive(),
+  quantity: z.number().int().positive().max(1, "quantity is limited to one in v0.1"),
   price: moneySchema,
   payment_adapter: z.string().min(1),
   payment_capture_policy: z.enum(["before_entitlement", "after_entitlement"]),
@@ -190,6 +197,15 @@ export const orderCreatedBodySchema = z.object({
 
 export const orderLifecycleBodySchema = z.object({
   order_id: orderIdSchema
+});
+
+export const orderAcceptedBodySchema = z.object({
+  order_id: orderIdSchema,
+  offer_revision: z.number().int().positive(),
+  seller_terms_hash: sha256Schema,
+  offer_terms_hash: sha256Schema,
+  payment_capture_policy: z.enum(["before_entitlement", "after_entitlement"]),
+  arbitration_policy_version: z.string().min(1)
 });
 
 export const paymentIntentCreatedBodySchema = z.object({
@@ -220,11 +236,7 @@ export const paymentRefundBodySchema = z.object({
   amount: moneyAmountSchema,
   currency: z.string().regex(/^[A-Z]{3}$/),
   provider_ref: z.string().min(1),
-  evidence: z.object({
-    kind: z.literal("provider_receipt"),
-    uri: z.string().url(),
-    sha256: z.string().min(1)
-  })
+  evidence: evidenceSchema
 });
 
 export const paymentCapturedBodySchema = z.object({
@@ -234,11 +246,7 @@ export const paymentCapturedBodySchema = z.object({
   amount: moneyAmountSchema,
   currency: z.string().regex(/^[A-Z]{3}$/),
   provider_ref: z.string().min(1),
-  evidence: z.object({
-    kind: z.literal("provider_receipt"),
-    uri: z.string().url(),
-    sha256: z.string().min(1)
-  })
+  evidence: evidenceSchema
 });
 
 export const entitlementGrantedBodySchema = z.object({
@@ -249,11 +257,7 @@ export const entitlementGrantedBodySchema = z.object({
   external_ref: z.string().min(1),
   valid_from: isoDateSchema.optional(),
   valid_until: isoDateSchema.optional(),
-  evidence: z.object({
-    kind: z.literal("provider_receipt"),
-    uri: z.string().url(),
-    sha256: z.string().min(1)
-  }).optional()
+  evidence: evidenceSchema.optional()
 }).superRefine((body, ctx) => {
   if ((body.type === "booking_slot" || body.type === "subscription_access") && (!body.valid_from || !body.valid_until)) {
     ctx.addIssue({
@@ -281,17 +285,23 @@ export const disputeLifecycleBodySchema = z.object({
   dispute_id: disputeIdSchema
 });
 
+export const disputeEvidenceBodySchema = z.object({
+  order_id: orderIdSchema,
+  dispute_id: disputeIdSchema,
+  evidence: evidenceSchema
+});
+
 export const disputeRulingBodySchema = z.object({
   order_id: orderIdSchema,
   dispute_id: disputeIdSchema,
   ruling: z.enum(DISPUTE_RULINGS),
   reason_code: z.string().min(1),
   remedy: z.object({
-    type: z.string().min(1),
-    amount: z.string().optional(),
+    type: z.enum(["full_refund", "partial_refund", "entitlement_reissue", "service_completion", "no_fault"]),
+    amount: moneyAmountSchema.optional(),
     currency: z.string().regex(/^[A-Z]{3}$/).optional()
   }),
-  evidence_refs: z.array(z.string().min(1)),
+  evidence_refs: z.array(z.string().startsWith("$")),
   binding: z.boolean()
 });
 
@@ -313,7 +323,7 @@ const bodySchemas: Record<KnownEventType, z.ZodTypeAny> = {
   "io.marketplace.inventory.updated": inventoryUpdatedBodySchema,
   "io.marketplace.actor.customer.bound": customerBoundBodySchema,
   "io.marketplace.order.created": orderCreatedBodySchema,
-  "io.marketplace.order.accepted": orderLifecycleBodySchema,
+  "io.marketplace.order.accepted": orderAcceptedBodySchema,
   "io.marketplace.order.cancelled": orderLifecycleBodySchema,
   "io.marketplace.order.rejected": orderLifecycleBodySchema,
   "io.marketplace.order.completed": orderLifecycleBodySchema,
@@ -331,7 +341,7 @@ const bodySchemas: Record<KnownEventType, z.ZodTypeAny> = {
   "io.marketplace.entitlement.revoked": entitlementLifecycleBodySchema,
   "io.marketplace.entitlement.expired": entitlementLifecycleBodySchema,
   "io.marketplace.dispute.opened": disputeLifecycleBodySchema,
-  "io.marketplace.dispute.evidence.submitted": disputeLifecycleBodySchema,
+  "io.marketplace.dispute.evidence.submitted": disputeEvidenceBodySchema,
   "io.marketplace.dispute.ruling.issued": disputeRulingBodySchema,
   "io.marketplace.dispute.closed": disputeLifecycleBodySchema
 };

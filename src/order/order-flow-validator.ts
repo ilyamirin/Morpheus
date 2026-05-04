@@ -29,6 +29,10 @@ interface OrderTerms {
   amount: string;
   currency: string;
   arbitrationPolicyId: string;
+  offerRevision: number;
+  sellerTermsHash: string;
+  offerTermsHash: string;
+  arbitrationPolicyVersion: string;
 }
 
 interface OrderFlowContext {
@@ -42,6 +46,7 @@ interface OrderFlowContext {
   capturedCurrency?: string;
   entitlementId?: string;
   disputeId?: string;
+  refundConstraint?: { amount: string; currency: string };
 }
 
 export function validateOrderEventSequence(events: OrderFlowEvent[]): void {
@@ -92,6 +97,9 @@ function validateEventReferences(event: OrderFlowEvent, context: OrderFlowContex
   }
 
   switch (event.type) {
+    case "io.marketplace.order.accepted":
+      validateOrderAccepted(event, context);
+      break;
     case "io.marketplace.payment.intent.created":
       validatePaymentIntent(event, context);
       break;
@@ -123,9 +131,12 @@ function validateEventReferences(event: OrderFlowEvent, context: OrderFlowContex
       context.disputeId = requireString(event, "dispute_id");
       break;
     case "io.marketplace.dispute.evidence.submitted":
-    case "io.marketplace.dispute.ruling.issued":
     case "io.marketplace.dispute.closed":
       validateDisputeLifecycle(event, context);
+      break;
+    case "io.marketplace.dispute.ruling.issued":
+      validateDisputeLifecycle(event, context);
+      captureRulingRemedy(event, context);
       break;
   }
 }
@@ -189,8 +200,43 @@ function validateCreatedOrderTerms(event: OrderFlowEvent, context: OrderFlowCont
     capturePolicy,
     amount: price.amount,
     currency: price.currency,
-    arbitrationPolicyId
+    arbitrationPolicyId,
+    offerRevision: requireNumber(event, "offer_revision"),
+    sellerTermsHash: requireString(event, "seller_terms_hash"),
+    offerTermsHash: requireString(event, "offer_terms_hash"),
+    arbitrationPolicyVersion: requireString(event, "arbitration_policy_version")
   };
+}
+
+function validateOrderAccepted(event: OrderFlowEvent, context: OrderFlowContext): void {
+  const terms = requireOrderTerms(context);
+  const body = event.body as Record<string, unknown>;
+  const confirmationKeys = [
+    "offer_revision",
+    "seller_terms_hash",
+    "offer_terms_hash",
+    "arbitration_policy_version"
+  ];
+  if (!confirmationKeys.some((key) => body[key] !== undefined)) {
+    return;
+  }
+  const actual = {
+    offerRevision: requireNumber(event, "offer_revision"),
+    sellerTermsHash: requireString(event, "seller_terms_hash"),
+    offerTermsHash: requireString(event, "offer_terms_hash"),
+    arbitrationPolicyVersion: requireString(event, "arbitration_policy_version")
+  };
+  if (
+    actual.offerRevision !== terms.offerRevision ||
+    actual.sellerTermsHash !== terms.sellerTermsHash ||
+    actual.offerTermsHash !== terms.offerTermsHash ||
+    actual.arbitrationPolicyVersion !== terms.arbitrationPolicyVersion
+  ) {
+    fail("PAYMENT_TERMS_MISMATCH", "order.accepted terms do not match order.created terms", {
+      expected: terms,
+      actual
+    });
+  }
 }
 
 function validatePaymentIntent(event: OrderFlowEvent, context: OrderFlowContext): void {
@@ -325,14 +371,31 @@ function requireCapturedPaymentId(event: OrderFlowEvent, context: OrderFlowConte
   requireString(event, "refund_id");
   requireString(event, "provider_ref");
   requireEvidence(event);
-  assertMoneyEqual(
-    context.capturedAmount ?? "",
-    context.capturedCurrency ?? "",
-    amount,
-    currency,
-    `${event.type} refund amount does not match captured payment`
-  );
+  const expected = context.refundConstraint ?? {
+    amount: context.capturedAmount ?? "",
+    currency: context.capturedCurrency ?? ""
+  };
+  assertMoneyEqual(expected.amount, expected.currency, amount, currency, `${event.type} refund amount does not match required refund amount`);
   return paymentId;
+}
+
+function captureRulingRemedy(event: OrderFlowEvent, context: OrderFlowContext): void {
+  const body = event.body as Record<string, unknown>;
+  if (body.ruling !== "partial_refund_required") {
+    return;
+  }
+  const remedy = body.remedy;
+  if (!remedy || typeof remedy !== "object") {
+    fail("MISSING_REQUIRED_FIELD", "partial_refund_required ruling must include remedy", { eventType: event.type });
+  }
+  const amount = (remedy as Record<string, unknown>).amount;
+  const currency = (remedy as Record<string, unknown>).currency;
+  if (typeof amount !== "string" || typeof currency !== "string") {
+    fail("MISSING_REQUIRED_FIELD", "partial_refund_required ruling must include remedy amount and currency", {
+      eventType: event.type
+    });
+  }
+  context.refundConstraint = { amount, currency };
 }
 
 function requirePaymentIntent(context: OrderFlowContext): PaymentIntent {
@@ -401,6 +464,14 @@ function requireMoney(event: OrderFlowEvent, key: string): { amount: string; cur
     });
   }
   return { amount, currency };
+}
+
+function requireNumber(event: OrderFlowEvent, key: string): number {
+  const value = (event.body as Record<string, unknown>)[key];
+  if (typeof value !== "number") {
+    fail("MISSING_REQUIRED_FIELD", `${event.type} must include numeric ${key}`, { eventType: event.type, key });
+  }
+  return value;
 }
 
 function getOptionalString(body: object, key: string): string | undefined {

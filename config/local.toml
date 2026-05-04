@@ -1,0 +1,32 @@
+[instance]
+instance_id = "shop.example"
+matrix_server_name = "shop.example"
+application_service_id = "io.marketplace.shop"
+catalog_room_id = "!catalog:shop.example"
+protocol_versions = ["0.1"]
+payment_adapters = ["mock"]
+entitlement_types = ["booking_slot", "license_key", "external_entitlement"]
+
+[appservice]
+homeserver_url = "http://localhost:8008"
+sender_localpart = "market"
+namespace_prefix = "market_"
+homeserver_token = "dev-homeserver-token"
+appservice_token = "dev-appservice-token"
+
+[database]
+url = "postgres://morpheus:morpheus@localhost:5432/morpheus"
+
+[admin]
+bind = "127.0.0.1:8080"
+bearer_token_env = "MORPHEUS_ADMIN_TOKEN"
+
+[[allowlist.instances]]
+instance_id = "shop.example"
+capabilities = ["catalog", "orders", "indexing"]
+status = "active"
+
+[[allowlist.instances]]
+instance_id = "arbiter.example"
+capabilities = ["arbitration"]
+status = "active"

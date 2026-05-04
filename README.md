@@ -1,10 +1,10 @@
 # Federated Marketplace Protocol
 
-Reference validator and conformance suite for `io.marketplace` v0.1, a strict federated digital marketplace protocol over Matrix.
+Reference validator, conformance suite, and Rust server skeleton for `io.marketplace` v0.1, a strict federated digital marketplace protocol over Matrix.
 
 ## Current Scope
 
-This package validates protocol events, catalog sync, order-room replay, federation policy, and conformance vectors. It does not run a Matrix Application Service, homeserver, database, HTTP server, or federated search service.
+This package validates protocol events, catalog sync, order-room replay, federation policy, and conformance vectors. The Rust workspace adds the first runnable server milestone: protocol/core crates, in-memory event store, Synapse-compatible Application Service transaction endpoint, CLI config validation, migrations, and local Docker Compose scaffolding.
 
 For order-room replay validation, use `validateOrderRoomTimeline` for Matrix envelopes and room authority, or `validateOrderEventSequence` for payload-aware lifecycle replay. They enforce `customer.bound` before `order.created`, locked order terms, payment intent/capture/refund references, entitlement references, and dispute references. `OrderStateMachine` is intentionally only the capture-policy-agnostic transition graph and is not sufficient by itself for strict protocol acceptance.
 
@@ -28,6 +28,23 @@ Low-level schemas, ID parsers, `OrderStateMachine`, room-profile helpers, and in
 ```bash
 npm install
 npm run check
+```
+
+Rust toolchain:
+
+```bash
+brew install rust
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+PATH="$HOME/.cargo/bin:$PATH" cargo nextest run --workspace
+```
+
+Local server bootstrap:
+
+```bash
+cargo run -p morpheus-cli -- config validate --config config/local.toml
+cargo run -p morpheus-cli -- synapse registration --config config/local.toml --out .local/synapse/morpheus-registration.yaml
+docker compose up -d postgres synapse
 ```
 
 ## Documents

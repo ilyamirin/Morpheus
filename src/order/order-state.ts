@@ -156,3 +156,5 @@ export class OrderStateMachine {
     this.state = next;
   }
 }
+
+export class OrderTransitionGraph extends OrderStateMachine {}

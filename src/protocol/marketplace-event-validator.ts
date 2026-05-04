@@ -4,10 +4,12 @@ import { assertEventAllowedInRoom } from "./room-profile.js";
 import { marketplaceEventSchema } from "./schemas.js";
 import type { MatrixMarketplaceEvent, RoomProfile } from "./types.js";
 import { isProtocolObjectId, isValidInstanceId } from "./ids.js";
+import { sha256Canonical } from "./canonical-json.js";
 
 export interface MarketplaceEventValidationContext {
   roomProfile: RoomProfile;
   supportedCritical?: string[];
+  seenProtocolEvents?: Map<string, { matrixEventId: string; bodyHash: string }>;
 }
 
 export type MarketplaceEventValidationResult =
@@ -78,9 +80,33 @@ export function validateMarketplaceEvent(
   }
 
   assertSupportedCritical(generic.content.critical, context.supportedCritical ?? []);
+  assertProtocolEventNotReplayed(generic, context.seenProtocolEvents);
 
   assertEventAllowedInRoom(context.roomProfile, known.data.type);
   return { status: "accepted", event: known.data as MatrixMarketplaceEvent };
+}
+
+function assertProtocolEventNotReplayed(
+  event: z.infer<typeof genericMarketplaceEventSchema>,
+  seenProtocolEvents?: Map<string, { matrixEventId: string; bodyHash: string }>
+): void {
+  if (!seenProtocolEvents) {
+    return;
+  }
+  const protocolEventId = event.content.protocol_event_id;
+  const bodyHash = sha256Canonical(event.content.body);
+  const previous = seenProtocolEvents.get(protocolEventId);
+  if (!previous) {
+    seenProtocolEvents.set(protocolEventId, { matrixEventId: event.event_id, bodyHash });
+    return;
+  }
+  if (previous.matrixEventId !== event.event_id || previous.bodyHash !== bodyHash) {
+    throw new MarketplaceValidationError("DUPLICATE_EVENT", "protocol_event_id replay with different Matrix event or body hash", {
+      protocolEventId,
+      previous,
+      actual: { matrixEventId: event.event_id, bodyHash }
+    });
+  }
 }
 
 function assertSupportedCritical(critical: string[], supported: string[]): void {
