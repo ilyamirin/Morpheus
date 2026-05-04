@@ -308,5 +308,13 @@ export const marketplaceEventSchema = z.object({
     for (const issue of parsed.error.issues) {
       ctx.addIssue(issue);
     }
+    return;
+  }
+  if (event.type === "io.marketplace.order.created" && parsed.data.room_id !== event.room_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["content", "body", "room_id"],
+      message: "Order room mismatch between event room_id and content.body.room_id"
+    });
   }
 });

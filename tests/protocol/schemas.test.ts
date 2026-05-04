@@ -78,6 +78,13 @@ describe("marketplaceEventSchema", () => {
     expect(() => marketplaceEventSchema.parse(invalid)).toThrow();
   });
 
+  it("rejects order.created when event room and body room mismatch", () => {
+    const invalid = structuredClone(baseEvent);
+    invalid.room_id = "!other-order:customer.example";
+
+    expect(() => marketplaceEventSchema.parse(invalid)).toThrow(/room.*mismatch/i);
+  });
+
   it("rejects unknown critical extensions", () => {
     const invalid = structuredClone(baseEvent);
     invalid.content.critical = ["com.example.unknown"];

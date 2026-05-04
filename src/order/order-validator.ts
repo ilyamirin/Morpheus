@@ -24,11 +24,61 @@ export interface OrderCreatedBody {
   expires_at: string;
 }
 
+export interface CustomerBinding {
+  customer_id: string;
+  status: "active" | "suspended";
+  accepted_payment_adapters: string[];
+  accepted_arbitration_policies: string[];
+}
+
 export function validateOrderCreated(
   order: OrderCreatedBody,
   catalog: CatalogIndex,
-  allowlist: AllowlistPolicy
+  allowlist: AllowlistPolicy,
+  customer: CustomerBinding
 ): void {
+  if (!customer) {
+    throw new MarketplaceValidationError("CATALOG_REFERENCE_MISMATCH", "Customer binding is required", {
+      customerId: order.customer_id
+    });
+  }
+  if (customer.customer_id !== order.customer_id) {
+    throw new MarketplaceValidationError(
+      "CATALOG_REFERENCE_MISMATCH",
+      "Order customer does not match customer binding",
+      {
+        expected: customer.customer_id,
+        actual: order.customer_id
+      }
+    );
+  }
+  if (customer.status !== "active") {
+    throw new MarketplaceValidationError("ACTOR_NOT_ACTIVE", `Customer ${order.customer_id} is not active`, {
+      customerId: order.customer_id,
+      status: customer.status
+    });
+  }
+  if (!customer.accepted_payment_adapters.includes(order.payment_adapter)) {
+    throw new MarketplaceValidationError(
+      "CATALOG_REFERENCE_MISMATCH",
+      "Order payment adapter is not accepted by customer binding",
+      {
+        paymentAdapter: order.payment_adapter,
+        acceptedPaymentAdapters: customer.accepted_payment_adapters
+      }
+    );
+  }
+  if (!customer.accepted_arbitration_policies.includes(order.arbitration_policy_id)) {
+    throw new MarketplaceValidationError(
+      "CATALOG_REFERENCE_MISMATCH",
+      "Order arbitration policy is not accepted by customer binding",
+      {
+        arbitrationPolicyId: order.arbitration_policy_id,
+        acceptedArbitrationPolicies: customer.accepted_arbitration_policies
+      }
+    );
+  }
+
   const sellerInstance = parseObjectInstance(order.offer_id);
   if (!allowlist.can(sellerInstance, "orders")) {
     throw new MarketplaceValidationError(

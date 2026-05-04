@@ -3,10 +3,9 @@ import { CatalogIndex } from "../../src/catalog/catalog-index.js";
 import { assertEventAuthority } from "../../src/order/authority.js";
 import { OrderStateMachine } from "../../src/order/order-state.js";
 import { validateOrderCreated } from "../../src/order/order-validator.js";
-import { validCatalog, validOrderCreated } from "../../src/conformance/fixtures.js";
+import { validCatalog, validCustomerBinding, validOrderCreated } from "../../src/conformance/fixtures.js";
 import { AllowlistPolicy } from "../../src/protocol/allowlist.js";
 import { MarketplaceValidationError } from "../../src/protocol/errors.js";
-import { assertEventAllowedInRoom } from "../../src/protocol/room-profile.js";
 import { marketplaceEventSchema } from "../../src/protocol/schemas.js";
 
 function orderAllowlist(): AllowlistPolicy {
@@ -39,7 +38,12 @@ describe("required conformance vectors", () => {
 
   it("5 rejects stale offer revision in order.created", () => {
     expect(() =>
-      validateOrderCreated({ ...validOrderCreated, offer_revision: 1 }, validCatalog.build(), orderAllowlist())
+      validateOrderCreated(
+        { ...validOrderCreated, offer_revision: 1 },
+        validCatalog.build(),
+        orderAllowlist(),
+        validCustomerBinding
+      )
     ).toThrow();
   });
 
@@ -48,7 +52,8 @@ describe("required conformance vectors", () => {
       validateOrderCreated(
         { ...validOrderCreated, price: { amount: "1.00", currency: "USD" } },
         validCatalog.build(),
-        orderAllowlist()
+        orderAllowlist(),
+        validCustomerBinding
       )
     ).toThrow();
   });
@@ -91,7 +96,9 @@ describe("required conformance vectors", () => {
 
   it("10 rejects non-allowlisted arbiter", () => {
     const allowlist = new AllowlistPolicy({ "shop.example": ["orders"] });
-    expect(() => validateOrderCreated(validOrderCreated, validCatalog.build(), allowlist)).toThrow();
+    expect(() =>
+      validateOrderCreated(validOrderCreated, validCatalog.build(), allowlist, validCustomerBinding)
+    ).toThrow();
   });
 
   it("11 rejects dispute ruling from non-arbiter", () => {
@@ -129,8 +136,29 @@ describe("required conformance vectors", () => {
     ).toThrow();
   });
 
-  it("13 rejects order event replayed into catalog room", () => {
-    expect(() => assertEventAllowedInRoom("catalog", "io.marketplace.order.created")).toThrow();
+  it("13 rejects order.created replayed into a different order room", () => {
+    expect(() =>
+      marketplaceEventSchema.parse({
+        type: "io.marketplace.order.created",
+        room_id: "!other-order:customer.example",
+        event_id: "$order-created-replay",
+        sender: "@market:customer.example",
+        origin_server_ts: 1_777_888_000_000,
+        content: {
+          protocol: "io.marketplace",
+          protocol_version: "0.1",
+          event_id: "evt:customer.example:01JORDER",
+          created_at: "2026-05-04T10:00:00Z",
+          issuer: {
+            instance_id: "customer.example",
+            actor_id: validOrderCreated.customer_id,
+            matrix_user_id: "@market:customer.example"
+          },
+          critical: [],
+          body: validOrderCreated
+        }
+      })
+    ).toThrow(/room.*mismatch/i);
   });
 
   it("14 rejects snapshot hash mismatch", () => {

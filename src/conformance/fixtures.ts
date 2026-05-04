@@ -5,7 +5,7 @@ import {
   type SellerRecord,
   type SnapshotRecord
 } from "../catalog/catalog-index.js";
-import type { OrderCreatedBody } from "../order/order-validator.js";
+import type { CustomerBinding, OrderCreatedBody } from "../order/order-validator.js";
 
 const snapshot: SnapshotRecord = {
   snapshotId: "snap_01J",
@@ -66,4 +66,11 @@ export const validOrderCreated: OrderCreatedBody = {
   arbitration_policy_id: "standard-digital-v1",
   arbitration_window: "P14D",
   expires_at: "2026-05-04T10:30:00Z"
+};
+
+export const validCustomerBinding: CustomerBinding = {
+  customer_id: validOrderCreated.customer_id,
+  status: "active",
+  accepted_payment_adapters: [validOrderCreated.payment_adapter],
+  accepted_arbitration_policies: [validOrderCreated.arbitration_policy_id]
 };

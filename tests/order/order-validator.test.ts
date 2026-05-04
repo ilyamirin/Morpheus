@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CatalogIndex } from "../../src/catalog/catalog-index.js";
 import { validateOrderCreated } from "../../src/order/order-validator.js";
-import type { OrderCreatedBody } from "../../src/order/order-validator.js";
+import type { CustomerBinding, OrderCreatedBody } from "../../src/order/order-validator.js";
 import { AllowlistPolicy } from "../../src/protocol/allowlist.js";
 import { MarketplaceValidationError } from "../../src/protocol/errors.js";
 import type { ValidationCode } from "../../src/protocol/errors.js";
@@ -48,6 +48,16 @@ function allowlist(): AllowlistPolicy {
   });
 }
 
+function customerBinding(overrides: Partial<CustomerBinding> = {}): CustomerBinding {
+  return {
+    customer_id: body.customer_id,
+    status: "active",
+    accepted_payment_adapters: [body.payment_adapter],
+    accepted_arbitration_policies: [body.arbitration_policy_id],
+    ...overrides
+  };
+}
+
 function expectValidationCode(fn: () => void, code: ValidationCode): void {
   expect(fn).toThrow(MarketplaceValidationError);
   try {
@@ -60,16 +70,23 @@ function expectValidationCode(fn: () => void, code: ValidationCode): void {
 
 describe("validateOrderCreated", () => {
   it("accepts a matching trusted offer", () => {
-    expect(() => validateOrderCreated(body, catalog(), allowlist())).not.toThrow();
+    expect(() => validateOrderCreated(body, catalog(), allowlist(), customerBinding())).not.toThrow();
   });
 
   it("rejects stale offer revisions", () => {
-    expect(() => validateOrderCreated({ ...body, offer_revision: 2 }, catalog(), allowlist())).toThrow(/revision/);
+    expect(() =>
+      validateOrderCreated({ ...body, offer_revision: 2 }, catalog(), allowlist(), customerBinding())
+    ).toThrow(/revision/);
   });
 
   it("rejects price substitution", () => {
     expect(() =>
-      validateOrderCreated({ ...body, price: { amount: "1.00", currency: "USD" } }, catalog(), allowlist())
+      validateOrderCreated(
+        { ...body, price: { amount: "1.00", currency: "USD" } },
+        catalog(),
+        allowlist(),
+        customerBinding()
+      )
     ).toThrow(/price/);
   });
 
@@ -79,7 +96,8 @@ describe("validateOrderCreated", () => {
         validateOrderCreated(
           { ...body, seller_id: "seller:shop.example:01JOTHER" },
           catalog(),
-          allowlist()
+          allowlist(),
+          customerBinding()
         ),
       "CATALOG_REFERENCE_MISMATCH"
     );
@@ -91,7 +109,8 @@ describe("validateOrderCreated", () => {
         validateOrderCreated(
           { ...body, arbiter_instance: "arbiter.example", arbiter_actor: "arbiter:other-arbiter.example:default" },
           catalog(),
-          allowlist()
+          allowlist(),
+          customerBinding()
         ),
       "CATALOG_REFERENCE_MISMATCH"
     );
@@ -99,20 +118,87 @@ describe("validateOrderCreated", () => {
 
   it("rejects currency mismatch", () => {
     expectValidationCode(
-      () => validateOrderCreated({ ...body, price: { amount: "100.00", currency: "EUR" } }, catalog(), allowlist()),
+      () =>
+        validateOrderCreated(
+          { ...body, price: { amount: "100.00", currency: "EUR" } },
+          catalog(),
+          allowlist(),
+          customerBinding()
+        ),
       "PAYMENT_TERMS_MISMATCH"
     );
   });
 
   it("rejects entitlement mismatch", () => {
     expectValidationCode(
-      () => validateOrderCreated({ ...body, entitlement_type: "download_access" }, catalog(), allowlist()),
+      () =>
+        validateOrderCreated(
+          { ...body, entitlement_type: "download_access" },
+          catalog(),
+          allowlist(),
+          customerBinding()
+        ),
       "CATALOG_REFERENCE_MISMATCH"
     );
   });
 
   it("rejects non-allowlisted arbiters", () => {
     const policy = new AllowlistPolicy({ "shop.example": ["catalog", "orders"] });
-    expect(() => validateOrderCreated(body, catalog(), policy)).toThrow(/arbiter/);
+    expect(() => validateOrderCreated(body, catalog(), policy, customerBinding())).toThrow(/arbiter/);
+  });
+
+  it("rejects a missing customer binding at runtime", () => {
+    const validate = validateOrderCreated as (
+      order: OrderCreatedBody,
+      catalog: CatalogIndex,
+      allowlist: AllowlistPolicy
+    ) => void;
+    expectValidationCode(() => validate(body, catalog(), allowlist()), "CATALOG_REFERENCE_MISMATCH");
+  });
+
+  it("rejects a mismatched customer binding", () => {
+    expectValidationCode(
+      () =>
+        validateOrderCreated(
+          body,
+          catalog(),
+          allowlist(),
+          customerBinding({ customer_id: "customer:customer.example:01JOTHER" })
+        ),
+      "CATALOG_REFERENCE_MISMATCH"
+    );
+  });
+
+  it("rejects an inactive customer binding", () => {
+    expectValidationCode(
+      () => validateOrderCreated(body, catalog(), allowlist(), customerBinding({ status: "suspended" })),
+      "ACTOR_NOT_ACTIVE"
+    );
+  });
+
+  it("rejects an unaccepted payment adapter", () => {
+    expectValidationCode(
+      () =>
+        validateOrderCreated(
+          body,
+          catalog(),
+          allowlist(),
+          customerBinding({ accepted_payment_adapters: ["paypal"] })
+        ),
+      "CATALOG_REFERENCE_MISMATCH"
+    );
+  });
+
+  it("rejects an unaccepted arbitration policy", () => {
+    expectValidationCode(
+      () =>
+        validateOrderCreated(
+          body,
+          catalog(),
+          allowlist(),
+          customerBinding({ accepted_arbitration_policies: ["premium-digital-v1"] })
+        ),
+      "CATALOG_REFERENCE_MISMATCH"
+    );
   });
 });
