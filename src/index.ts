@@ -1,1 +1,2 @@
-export const protocolName = "io.marketplace";
+export * from "./protocol/constants.js";
+export * from "./protocol/types.js";
