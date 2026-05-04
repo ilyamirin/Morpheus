@@ -872,6 +872,61 @@ The implementation plan should define:
 - local allowlist storage format;
 - conformance test runner structure.
 
+## v0.1 Completion Clarifications
+
+The TypeScript reference implementation is a Spec+Validator package. It intentionally does not run a Matrix Application Service, homeserver integration, database, HTTP API, or federated search service.
+
+Normative validation entrypoints:
+
+```text
+validateMarketplaceEvent(event, context)
+validateCatalogSnapshot(snapshot, context)
+replayCatalogTimeline(events, snapshot, context)
+validateOrderRoomTimeline(events, context)
+validateAllowlistPolicy(policy, now)
+ConformanceRunner
+```
+
+Low-level exports remain building blocks and MUST NOT be treated as complete protocol acceptance on their own. In particular, `OrderStateMachine` validates only transition shape; strict order acceptance requires order-room timeline validation.
+
+### Canonical Event and Hash Rules
+
+- Matrix events MUST include `type`, `room_id`, `event_id`, `sender`, `origin_server_ts`, and `content`.
+- `content.event_id` MUST match the Matrix `event_id`.
+- Redacted marketplace events are not protocol-valid.
+- Known `io.marketplace.*` events MUST pass the registered body schema and room-profile rules.
+- Unknown non-critical marketplace events MAY be ignored by routing code.
+- Unknown critical events or extensions MUST be rejected.
+- Canonical JSON uses sorted object keys and UTF-8 JSON serialization.
+- Hashes use `sha256:<64 lowercase hex>`.
+
+### Local Trust and Operational Rules
+
+- Allowlist entries support `catalog`, `orders`, `payments`, `arbitration`, and `indexing` capabilities.
+- Revoked or expired entries MUST NOT authorize new orders or indexing.
+- Existing order-room replay remains possible after revoke for audit and dispute resolution.
+- Appservice transactions MUST be idempotent by transaction id and event id list.
+- Backfill pages MUST NOT contain duplicate Matrix event ids.
+- Snapshot cache entries MUST NOT change hash for the same sequence.
+
+### Federation Policy Rules
+
+- Catalog events MUST NOT contain order, customer, payment, entitlement, dispute, or unnecessary PII fields.
+- Order events MUST NOT contain bearer tokens, payment secrets, artifact secrets, passwords, or private credentials.
+- Local search indexes only allowlisted catalog rooms with both `catalog` and `indexing` capabilities.
+- Withdrawn offers and suspended seller content MUST be removed from local search results.
+- Extension names outside the standard protocol MUST use non-`io.marketplace.*` reverse-DNS namespaces.
+- Instance compatibility is discovered only from allowlisted catalog rooms and requires the negotiated protocol version and minimum Matrix room version.
+
+### Arbitration, Retention, and Security Rules
+
+- Arbitration policies include policy id, version, arbitration window, accepted remedies, and binding flag.
+- Dispute ruling evidence refs MUST point to events in the same order-room timeline.
+- A binding refund ruling creates a protocol obligation to emit a later refund event.
+- Retention windows for catalog tombstones, archived orders, completed entitlements, and suspended actors MUST be positive.
+- Downgrade attempts below `min_consumer_version` MUST be rejected.
+- Sender server and issuer instance mismatches MUST be rejected as confused-deputy risks.
+
 ## Implementation Status
 
-The first implementation milestone is a TypeScript reference validator and conformance suite. It covers event schemas, local allowlist checks, catalog snapshot/delta rules, order state transitions, payment/entitlement/dispute authority checks, and the required v0.1 test vectors.
+The first implementation milestone is a TypeScript reference validator and conformance suite. It covers event schemas, canonical hashes, Matrix event routing, local allowlist checks, catalog snapshot/delta rules, order state transitions, payment/entitlement/dispute authority checks, privacy/indexing policy, appservice idempotency, security/retention/compatibility validators, and 24 required v0.1 conformance vectors.

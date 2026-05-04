@@ -1,12 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { CatalogIndex } from "../../src/catalog/catalog-index.js";
+import { LocalSearchIndex } from "../../src/catalog/indexing-policy.js";
+import { validateCatalogSnapshot } from "../../src/catalog/catalog-replay.js";
 import { assertEventAuthority } from "../../src/order/authority.js";
+import { validateArbitrationFlow } from "../../src/order/arbitration.js";
 import { validateOrderEventSequence } from "../../src/order/order-flow-validator.js";
 import { OrderStateMachine } from "../../src/order/order-state.js";
 import { validateOrderCreated } from "../../src/order/order-validator.js";
 import { validCatalog, validCustomerBinding, validOrderCreated } from "../../src/conformance/fixtures.js";
 import { AllowlistPolicy } from "../../src/protocol/allowlist.js";
 import { MarketplaceValidationError } from "../../src/protocol/errors.js";
+import { validateMarketplaceEvent } from "../../src/protocol/marketplace-event-validator.js";
+import { validateMarketplacePrivacy } from "../../src/protocol/privacy-policy.js";
+import { validateAppserviceTransaction } from "../../src/protocol/appservice.js";
+import { validateSecurityEnvelope } from "../../src/protocol/security.js";
+import { validateRetentionPolicy } from "../../src/protocol/retention.js";
+import { validateInstanceCompatibility } from "../../src/protocol/compatibility.js";
 import { marketplaceEventSchema } from "../../src/protocol/schemas.js";
 
 function orderAllowlist(): AllowlistPolicy {
@@ -214,5 +223,131 @@ describe("required conformance vectors", () => {
   it("15 rejects revision rollback", () => {
     const catalog = validCatalog.build();
     expect(() => catalog.upsertOffer({ ...validCatalog.offer, revision: 2 })).toThrow();
+  });
+
+  it("16 rejects canonical catalog snapshot hash mismatch", () => {
+    expect(() =>
+      validateCatalogSnapshot(
+        {
+          snapshot_id: "snap_01JVALID",
+          sequence: 1,
+          covers_events_until: "$snapshot",
+          sellers: [validCatalog.seller],
+          products: [validCatalog.product],
+          offers: [validCatalog.offer],
+          tombstones: []
+        },
+        { expectedSha256: "sha256:" + "0".repeat(64) }
+      )
+    ).toThrow(/hash/i);
+  });
+
+  it("17 rejects redacted marketplace events", () => {
+    expect(() =>
+      validateMarketplaceEvent(
+        {
+          type: "io.marketplace.order.created",
+          room_id: validOrderCreated.room_id,
+          event_id: "$order-created",
+          sender: "@market:customer.example",
+          origin_server_ts: 1_777_888_000_000,
+          unsigned: { redacted_because: { event_id: "$redaction" } },
+          content: {
+            protocol: "io.marketplace",
+            protocol_version: "0.1",
+            event_id: "$order-created",
+            created_at: "2026-05-04T10:00:00Z",
+            issuer: {
+              instance_id: "customer.example",
+              actor_id: validOrderCreated.customer_id,
+              matrix_user_id: "@market:customer.example"
+            },
+            critical: [],
+            body: validOrderCreated
+          }
+        },
+        { roomProfile: "order" }
+      )
+    ).toThrow(/redacted/i);
+  });
+
+  it("18 rejects catalog privacy leakage", () => {
+    expect(() =>
+      validateMarketplacePrivacy(
+        { type: "io.marketplace.offer.upserted", content: { body: { offer_id: validCatalog.offer.offerId, customer_id: validOrderCreated.customer_id } } },
+        "catalog"
+      )
+    ).toThrow(/catalog/i);
+  });
+
+  it("19 rejects non-idempotent duplicate appservice transactions", () => {
+    const seen = new Map<string, string[]>();
+    validateAppserviceTransaction({ txnId: "txn1", eventIds: ["$a"] }, seen);
+    expect(() => validateAppserviceTransaction({ txnId: "txn1", eventIds: ["$b"] }, seen)).toThrow(/idempotent/i);
+  });
+
+  it("20 rejects dispute evidence refs outside the order room timeline", () => {
+    expect(() =>
+      validateArbitrationFlow([
+        { type: "io.marketplace.dispute.opened", event_id: "$disp", room_id: validOrderCreated.room_id, body: { order_id: validOrderCreated.order_id, dispute_id: "disp:arbiter.example:1" } },
+        {
+          type: "io.marketplace.dispute.ruling.issued",
+          event_id: "$ruling",
+          room_id: validOrderCreated.room_id,
+          body: {
+            order_id: validOrderCreated.order_id,
+            dispute_id: "disp:arbiter.example:1",
+            ruling: "refund_required",
+            remedy: { type: "full_refund" },
+            evidence_refs: ["$missing"],
+            binding: true
+          }
+        }
+      ])
+    ).toThrow(/evidence/i);
+  });
+
+  it("21 removes withdrawn offers from local search index", () => {
+    const index = new LocalSearchIndex();
+    index.apply({ type: "io.marketplace.offer.upserted", body: { ...validCatalog.offer, status: "active" } });
+    index.apply({ type: "io.marketplace.offer.withdrawn", body: { offer_id: validCatalog.offer.offerId, revision: 4 } });
+    expect(index.hasOffer(validCatalog.offer.offerId)).toBe(false);
+  });
+
+  it("22 rejects protocol downgrade attempts", () => {
+    expect(() =>
+      validateSecurityEnvelope({ protocol_version: "0.1", min_consumer_version: "0.2" }, { supportedVersion: "0.1" })
+    ).toThrow(/downgrade/i);
+  });
+
+  it("23 rejects zero-day retention policy", () => {
+    expect(() =>
+      validateRetentionPolicy({
+        catalogTombstoneDays: 0,
+        orderArchiveDays: 365,
+        completedEntitlementDays: 365,
+        suspendedActorDays: 90
+      })
+    ).toThrow(/retention/i);
+  });
+
+  it("24 rejects compatibility profiles from non-allowlisted instances", () => {
+    expect(() =>
+      validateInstanceCompatibility(
+        {
+          instance_id: "shop.example",
+          catalog_room_id: "!catalog:shop.example",
+          protocol_versions: ["0.1"],
+          matrix_room_version: "10",
+          payment_adapters: ["stripe"],
+          arbitration_policies: ["standard-digital-v1"]
+        },
+        {
+          allowlist: new AllowlistPolicy({}),
+          minimumRoomVersion: "9",
+          requiredProtocolVersion: "0.1"
+        }
+      )
+    ).toThrow(/allowlist/i);
   });
 });
