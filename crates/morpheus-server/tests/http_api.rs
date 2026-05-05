@@ -142,6 +142,12 @@ fn assert_contains_all(body: &str, expected: &[&str]) {
     }
 }
 
+fn assert_contains_none(body: &str, unexpected: &[&str]) {
+    for text in unexpected {
+        assert!(!body.contains(text), "unexpected {text:?}");
+    }
+}
+
 async fn store_with_admin_projection_data() -> InMemoryEventStore {
     let store = InMemoryEventStore::default();
     store
@@ -219,6 +225,36 @@ async fn ui_html_routes_return_ok_without_auth() {
 
         assert_eq!(status, StatusCode::OK, "{uri}");
     }
+}
+
+#[tokio::test]
+async fn admin_ui_uses_auto_refresh_instead_of_per_metric_refresh_buttons() {
+    let (status, content_type, body) = send_ui_body_request("/ui/admin").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("text/html; charset=utf-8"));
+    assert_contains_all(
+        &body,
+        &[
+            "Control plane",
+            "Auto refresh pending",
+            r#"data-text="admin-auto-refresh""#,
+            r#"data-action="admin-rebuild""#,
+            r#"data-form="admin-replay""#,
+        ],
+    );
+    assert_contains_none(
+        &body,
+        &[
+            r#"data-refresh="admin""#,
+            r#"data-action="admin-health""#,
+            r#"data-action="admin-ready""#,
+            r#"data-action="admin-config""#,
+            r#"data-action="admin-allowlist""#,
+            r#"data-action="admin-summary""#,
+            r#"data-action="admin-events""#,
+        ],
+    );
 }
 
 #[tokio::test]

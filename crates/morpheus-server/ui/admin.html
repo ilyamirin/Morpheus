@@ -28,15 +28,9 @@
             <p class="eyebrow">Operations</p>
             <h2>Control plane</h2>
           </div>
-          <button class="btn btn-primary" data-refresh="admin">Refresh all</button>
+          <span class="status-pill accent-cyan" data-text="admin-auto-refresh">Auto refresh pending</span>
         </div>
         <div class="action-grid">
-          <button class="btn" data-action="admin-health">Healthz</button>
-          <button class="btn" data-action="admin-ready">Readyz</button>
-          <button class="btn" data-action="admin-config">Config</button>
-          <button class="btn" data-action="admin-allowlist">Allowlist</button>
-          <button class="btn" data-action="admin-summary">Projection summary</button>
-          <button class="btn" data-action="admin-events">Projection events</button>
           <button class="btn btn-warn" data-action="admin-rebuild">Rebuild catalog</button>
         </div>
         <form class="inline-form" data-form="admin-replay">
@@ -80,7 +74,7 @@
             </div>
           </div>
           <div class="metric-strip" id="admin-summary-cards">
-            <div class="empty-state">No projection summary loaded. Use Refresh all or Projection summary.</div>
+            <div class="empty-state">Projection summary will load automatically.</div>
           </div>
         </article>
 
@@ -92,7 +86,7 @@
             </div>
           </div>
           <div id="admin-allowlist-view" class="list-panel">
-            <div class="empty-state">No allowlist loaded. Query the policy to confirm server configuration.</div>
+            <div class="empty-state">Allowlist will load automatically.</div>
           </div>
         </article>
 
@@ -109,7 +103,7 @@
                 <tr><th>Code</th><th>Message</th><th>Event</th></tr>
               </thead>
               <tbody id="admin-events-rows">
-                <tr><td colspan="3" class="empty-cell">No projection events loaded.</td></tr>
+                <tr><td colspan="3" class="empty-cell">Projection events will load automatically.</td></tr>
               </tbody>
             </table>
           </div>

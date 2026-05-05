@@ -128,7 +128,7 @@
     window.setTimeout(() => item.remove(), 5200);
   }
 
-  async function api(path, { method = "GET", tokenRole, body, action } = {}) {
+  async function api(path, { method = "GET", tokenRole, body, action, silent = false, result = true } = {}) {
     const headers = {};
     const label = action || `${method} ${path}`;
     if (body !== undefined) headers["content-type"] = "application/json";
@@ -151,13 +151,13 @@
       } else if (!text) {
         responseBody = null;
       }
-      showResult(label, response.status, responseBody);
-      toast(label, response.ok ? "success" : "error", `${response.status} ${response.statusText}`);
+      if (result) showResult(label, response.status, responseBody);
+      if (!silent) toast(label, response.ok ? "success" : "error", `${response.status} ${response.statusText}`);
       return { ok: response.ok, status: response.status, body: responseBody };
     } catch (error) {
       const responseBody = { error: error.message, hint: "Server route may not be mounted yet." };
-      showResult(label, "network-error", responseBody);
-      toast(label, "error", error.message);
+      if (result) showResult(label, "network-error", responseBody);
+      if (!silent) toast(label, "error", error.message);
       return { ok: false, status: "network-error", body: responseBody };
     }
   }
@@ -494,18 +494,21 @@
     }).join("");
   }
 
-  async function refreshAdmin() {
-    const health = await api("/healthz", { action: "GET /healthz" });
+  async function refreshAdmin({ silent = true } = {}) {
+    const requestOptions = { silent, result: !silent };
+    const health = await api("/healthz", { action: "GET /healthz", ...requestOptions });
     setText("admin-health-status", health.ok ? ((health.body && health.body.status) || "ok") : "error");
-    const ready = await api("/readyz", { action: "GET /readyz" });
+    const ready = await api("/readyz", { action: "GET /readyz", ...requestOptions });
     setText("admin-ready-status", ready.ok ? ((ready.body && ready.body.status) || "ready") : "error");
-    await api("/admin/config", { tokenRole: "admin", action: "GET /admin/config" });
-    const allowlist = await api("/admin/allowlist", { tokenRole: "admin", action: "GET /admin/allowlist" });
+    await api("/admin/config", { tokenRole: "admin", action: "GET /admin/config", ...requestOptions });
+    const allowlist = await api("/admin/allowlist", { tokenRole: "admin", action: "GET /admin/allowlist", ...requestOptions });
     if (allowlist.ok) renderAdminAllowlist(allowlist.body);
-    const summary = await api("/admin/projections/summary", { tokenRole: "admin", action: "GET /admin/projections/summary" });
+    const summary = await api("/admin/projections/summary", { tokenRole: "admin", action: "GET /admin/projections/summary", ...requestOptions });
     if (summary.ok) renderAdminSummary(summary.body);
-    const events = await api("/admin/events", { tokenRole: "admin", action: "GET /admin/events" });
+    const events = await api("/admin/events", { tokenRole: "admin", action: "GET /admin/events", ...requestOptions });
     if (events.ok) renderAdminEvents(events.body);
+    const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setText("admin-auto-refresh", `Auto refresh ${stamp}`);
   }
 
   async function refreshCatalog() {
@@ -541,7 +544,7 @@
     document.addEventListener("click", async (event) => {
       const button = event.target.closest("[data-action], [data-refresh]");
       if (!button) return;
-      if (button.dataset.refresh === "admin") return refreshAdmin();
+      if (button.dataset.refresh === "admin") return refreshAdmin({ silent: false });
       if (button.dataset.action === "admin-health") {
         const result = await api("/healthz", { action: "GET /healthz" });
         return setText("admin-health-status", result.ok ? ((result.body && result.body.status) || "ok") : "error");
@@ -574,6 +577,10 @@
       const data = form(replay);
       api(`/admin/orders/${encodeURIComponent(data.order_id || DEMO.orderId)}/replay`, { method: "POST", tokenRole: "admin", body: {}, action: "POST /admin/orders/{order_id}/replay" });
     });
+    refreshAdmin();
+    window.setInterval(() => {
+      if (document.visibilityState !== "hidden") refreshAdmin();
+    }, 10000);
   }
 
   function bindSeller() {
