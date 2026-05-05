@@ -6,3 +6,12 @@ target/
 .worktrees/
 .venv/
 docs/superpowers/
+
+# Local agent/skill workspaces
+.codex/
+.agents/
+agents/
+.skills/
+skills/
+.superpowers/
+.mcp/
