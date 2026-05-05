@@ -37,7 +37,9 @@ fn synapse_registration_matches_configured_namespace() {
     assert_eq!(registration.namespaces.users.len(), 1);
     assert!(registration.namespaces.users[0].exclusive);
     assert_eq!(registration.namespaces.users[0].regex, "@market.*");
-    assert!(registration.namespaces.aliases.is_empty());
+    assert_eq!(registration.namespaces.aliases.len(), 1);
+    assert!(registration.namespaces.aliases[0].exclusive);
+    assert_eq!(registration.namespaces.aliases[0].regex, "#marketplace-.*");
     assert!(registration.namespaces.rooms.is_empty());
 }
 

@@ -173,6 +173,32 @@ fn admin_health_uses_server_url_and_token() {
 }
 
 #[test]
+fn admin_rooms_bootstrap_uses_admin_token_and_post() {
+    let output = Command::new(env!("CARGO_BIN_EXE_morpheus"))
+        .env("MORPHEUS_CLI_DRY_RUN_REQUEST", "1")
+        .env("MORPHEUS_ADMIN_TOKEN", "admin-token")
+        .args([
+            "--server-url",
+            "http://127.0.0.1:18080",
+            "admin",
+            "rooms",
+            "bootstrap",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let request: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(request["method"], "POST");
+    assert_eq!(request["path"], "/admin/rooms/bootstrap");
+    assert_eq!(request["authorization"], "Bearer admin-token");
+}
+
+#[test]
 fn seller_offer_upsert_uses_seller_token_env_and_json_body() {
     let body = r#"{"seller_id":"seller:shop.example:01JSELLER","product_id":"prod:shop.example:01JPROD","offer_id":"offer:shop.example:01JOFFER","revision":1,"price":{"amount":"10.00","currency":"USD"},"payment_capture_policy":"before_entitlement","seller_terms_hash":"sha256:1111111111111111111111111111111111111111111111111111111111111111","offer_terms_hash":"sha256:2222222222222222222222222222222222222222222222222222222222222222","entitlement_type":"external_entitlement","availability_mode":"unlimited"}"#;
     let output = Command::new(env!("CARGO_BIN_EXE_morpheus"))

@@ -113,7 +113,10 @@ pub fn generate_synapse_registration(
                 exclusive: true,
                 regex: format!("@{}.*", namespace_prefix),
             }],
-            aliases: vec![],
+            aliases: vec![SynapseNamespaceRule {
+                exclusive: true,
+                regex: "#marketplace-.*".into(),
+            }],
             rooms: vec![],
         },
         rate_limited: false,

@@ -1174,6 +1174,7 @@ dependencies = [
  "morpheus-matrix",
  "morpheus-protocol",
  "morpheus-store",
+ "reqwest",
  "serde",
  "serde_json",
  "sqlx",

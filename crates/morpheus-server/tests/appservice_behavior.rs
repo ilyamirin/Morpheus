@@ -235,6 +235,8 @@ async fn send_transaction_to_store(
             instance_id: "shop.example".into(),
             matrix_server_name: "customer.example".into(),
             catalog_room_id: "!catalog:shop.example".into(),
+            catalog_room_alias: Some("#marketplace-catalog:shop.example".into()),
+            order_room_alias_prefix: Some("#marketplace-order-".into()),
             appservice_sender_localpart: "market".into(),
             homeserver_token: "hs-token".into(),
             admin_token: "admin-token".into(),

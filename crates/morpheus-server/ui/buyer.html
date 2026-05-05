@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Morpheus Buyer Marketplace</title>
+    <link rel="stylesheet" href="/ui/assets/app.css">
+  </head>
+  <body data-page="buyer" class="app-shell light-theme">
+    <header class="topbar light-topbar">
+      <div class="page-wrap topbar-grid">
+        <div>
+          <p class="eyebrow">Buyer marketplace</p>
+          <h1 class="page-title">Discover catalog and track orders</h1>
+        </div>
+        <label class="token-field" title="Stored locally only">
+          <span>Buyer bearer token</span>
+          <input class="input" data-token="buyer" placeholder="buyer-token" autocomplete="off">
+        </label>
+      </div>
+    </header>
+
+    <main class="page-wrap workspace-grid">
+      <section class="surface light-surface panel-span">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Catalog discovery</p>
+            <h2>Marketplace catalog</h2>
+          </div>
+          <div class="button-row">
+            <button class="btn" data-action="buyer-catalog">Refresh catalog</button>
+            <button class="btn" data-action="buyer-orders">Refresh orders</button>
+          </div>
+        </div>
+        <div class="catalog-grid">
+          <div>
+            <h3>Sellers</h3>
+            <div id="buyer-sellers" class="list-panel">
+              <div class="empty-state">No sellers loaded. Ask a seller to announce, then refresh catalog.</div>
+            </div>
+          </div>
+          <div>
+            <h3>Products</h3>
+            <div id="buyer-products" class="list-panel">
+              <div class="empty-state">No products loaded. Product upserts appear here after projection.</div>
+            </div>
+          </div>
+          <div>
+            <h3>Offers</h3>
+            <div id="buyer-offers" class="list-panel">
+              <div class="empty-state">No offers loaded. Offer terms will populate the create-order form.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="surface light-surface">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Order creation</p>
+            <h2>Create order</h2>
+          </div>
+        </div>
+        <form class="stack-form" data-form="buyer-create-order">
+          <label class="field"><span class="label">Customer id</span><input class="input" name="customer_id" value="customer:shop.example:01JCUST"></label>
+          <label class="field"><span class="label">Order id</span><input class="input" name="order_id" value="ord:shop.example:01JORDER2"></label>
+          <label class="field"><span class="label">Room id</span><input class="input" name="room_id" value="!order2:shop.example"></label>
+          <label class="field"><span class="label">Offer id</span><input class="input" name="offer_id" value="offer:shop.example:01JOFFER"></label>
+          <div class="two-col">
+            <label class="field"><span class="label">Amount</span><input class="input" name="amount" value="100.00"></label>
+            <label class="field"><span class="label">Currency</span><input class="input" name="currency" value="USD"></label>
+          </div>
+          <button class="btn btn-primary" type="submit">Create order</button>
+        </form>
+      </section>
+
+      <section class="surface light-surface">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Tracking</p>
+            <h2>Order status</h2>
+          </div>
+          <span class="status-pill accent-emerald" id="buyer-order-count">0 orders</span>
+        </div>
+        <form class="stack-form" data-form="buyer-order-tools">
+          <label class="field"><span class="label">Order id</span><input class="input" name="order_id" value="ord:shop.example:01JORDER2"></label>
+          <div class="button-row stretch">
+            <button class="btn" type="submit" data-step="show">Show</button>
+            <button class="btn btn-danger" type="submit" data-step="cancel">Cancel</button>
+          </div>
+        </form>
+        <div class="table-wrap">
+          <table class="data-table light-table compact-table">
+            <thead>
+              <tr><th>Order</th><th>Status</th><th>Offer</th></tr>
+            </thead>
+            <tbody id="buyer-orders-rows">
+              <tr><td colspan="3" class="empty-cell">No buyer orders loaded. Create an order or refresh tracking.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="surface light-surface panel-span">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">API response</p>
+            <h2>Last result</h2>
+          </div>
+        </div>
+        <pre class="json-panel light-json" id="result-panel">{ "status": "idle" }</pre>
+      </section>
+    </main>
+
+    <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+    <script src="/ui/assets/app.js" defer></script>
+  </body>
+</html>

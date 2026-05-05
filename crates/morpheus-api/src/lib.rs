@@ -12,6 +12,7 @@ pub struct ErrorResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublishedEventsResponse {
     pub status: String,
+    pub room_id: String,
     pub event_ids: Vec<String>,
 }
 

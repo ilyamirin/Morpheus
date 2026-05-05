@@ -2,7 +2,7 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{Html, IntoResponse},
     routing::{get, post, put},
 };
 use chrono::Utc;
@@ -14,7 +14,8 @@ use morpheus_api::{
 use morpheus_matrix::{AppServiceTransaction, validate_transaction_event_ids};
 use morpheus_protocol::{ValidationCode, ValidationError, parse_actor_id, validate_event_envelope};
 use morpheus_store::{
-    AppServiceTransactionRecord, EventStore, ProjectionErrorRecord, RawMatrixEventRecord,
+    AppServiceTransactionRecord, CatalogOfferProjectionRecord, CatalogProductRecord,
+    CatalogSellerRecord, EventStore, ProjectionErrorRecord, RawMatrixEventRecord,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -28,6 +29,8 @@ pub struct ServerConfig {
     pub instance_id: String,
     pub matrix_server_name: String,
     pub catalog_room_id: String,
+    pub catalog_room_alias: Option<String>,
+    pub order_room_alias_prefix: Option<String>,
     pub appservice_sender_localpart: String,
     pub homeserver_token: String,
     pub admin_token: String,
@@ -45,6 +48,10 @@ struct AppState<S, P> {
 #[async_trait::async_trait]
 pub trait MatrixPublisher: Clone + Send + Sync + 'static {
     async fn publish(&self, events: Vec<Value>) -> Result<Vec<Value>, ValidationError>;
+
+    fn ingest_after_publish(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -55,6 +62,331 @@ impl MatrixPublisher for InProcessMatrixPublisher {
     async fn publish(&self, events: Vec<Value>) -> Result<Vec<Value>, ValidationError> {
         Ok(events)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct SynapseMatrixPublisher {
+    homeserver_url: String,
+    appservice_token: String,
+    sender_user_id: String,
+    client: reqwest::Client,
+}
+
+impl SynapseMatrixPublisher {
+    pub fn new(homeserver_url: String, appservice_token: String, sender_user_id: String) -> Self {
+        Self {
+            homeserver_url,
+            appservice_token,
+            sender_user_id,
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+pub async fn ensure_catalog_room(
+    homeserver_url: &str,
+    appservice_token: &str,
+    sender_user_id: &str,
+    catalog_room_alias: &str,
+    instance_id: &str,
+) -> Result<String, ValidationError> {
+    let client = reqwest::Client::new();
+    let create_url = matrix_create_room_url(homeserver_url, appservice_token, sender_user_id)?;
+    let create_body = matrix_create_room_body(catalog_room_alias, instance_id)?;
+    let mut last_error = None;
+    let mut response = None;
+    for _ in 0..60 {
+        match client
+            .post(create_url.clone())
+            .json(&create_body)
+            .send()
+            .await
+        {
+            Ok(ok) => {
+                response = Some(ok);
+                break;
+            }
+            Err(err) => {
+                last_error = Some(err);
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            }
+        }
+    }
+    let response = response.ok_or_else(|| {
+        publisher_error(&format!(
+            "creating catalog room failed: {}",
+            last_error
+                .map(|err| err.to_string())
+                .unwrap_or_else(|| "request was not attempted".into())
+        ))
+    })?;
+    let status = response.status();
+    let value = response
+        .json::<Value>()
+        .await
+        .map_err(|err| publisher_error(&format!("reading createRoom response failed: {err}")))?;
+    if status.is_success() {
+        return value
+            .get("room_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| publisher_error("createRoom response is missing room_id"));
+    }
+    if value.get("errcode").and_then(Value::as_str) != Some("M_ROOM_IN_USE") {
+        return Err(publisher_error(&format!(
+            "createRoom returned {status}: {value}"
+        )));
+    }
+    let alias_url = matrix_room_alias_url(
+        homeserver_url,
+        catalog_room_alias,
+        appservice_token,
+        sender_user_id,
+    )?;
+    let response =
+        client.get(alias_url).send().await.map_err(|err| {
+            publisher_error(&format!("resolving catalog room alias failed: {err}"))
+        })?;
+    let status = response.status();
+    let value = response.json::<Value>().await.map_err(|err| {
+        publisher_error(&format!(
+            "reading room alias resolution response failed: {err}"
+        ))
+    })?;
+    if !status.is_success() {
+        return Err(publisher_error(&format!(
+            "room alias resolution returned {status}: {value}"
+        )));
+    }
+    value
+        .get("room_id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| publisher_error("room alias response is missing room_id"))
+}
+
+#[async_trait::async_trait]
+impl MatrixPublisher for SynapseMatrixPublisher {
+    async fn publish(&self, events: Vec<Value>) -> Result<Vec<Value>, ValidationError> {
+        let mut published = Vec::with_capacity(events.len());
+        for mut event in events {
+            let room_id = event
+                .get("room_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| publisher_error("Matrix event is missing room_id"))?;
+            let event_type = event
+                .get("type")
+                .and_then(Value::as_str)
+                .ok_or_else(|| publisher_error("Matrix event is missing type"))?;
+            let txn_id = format!("api-{}", Ulid::new());
+            let url = matrix_send_url(
+                &self.homeserver_url,
+                room_id,
+                event_type,
+                &txn_id,
+                &self.appservice_token,
+                &self.sender_user_id,
+            )?;
+            let body = matrix_send_body(&event)?;
+            let response = self
+                .client
+                .put(url)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|err| publisher_error(&format!("sending Matrix event failed: {err}")))?;
+            let status = response.status();
+            let value = response.json::<Value>().await.map_err(|err| {
+                publisher_error(&format!("reading Matrix send response failed: {err}"))
+            })?;
+            if !status.is_success() {
+                return Err(publisher_error(&format!(
+                    "Matrix send returned {status}: {value}"
+                )));
+            }
+            let event_id = value
+                .get("event_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| publisher_error("Matrix send response is missing event_id"))?;
+            event["event_id"] = Value::String(event_id.to_string());
+            published.push(event);
+        }
+        Ok(published)
+    }
+
+    fn ingest_after_publish(&self) -> bool {
+        false
+    }
+}
+
+pub fn matrix_send_body(event: &Value) -> Result<Value, ValidationError> {
+    event
+        .get("content")
+        .cloned()
+        .ok_or_else(|| publisher_error("Matrix event is missing content"))
+}
+
+pub fn matrix_send_url(
+    homeserver_url: &str,
+    room_id: &str,
+    event_type: &str,
+    txn_id: &str,
+    appservice_token: &str,
+    sender_user_id: &str,
+) -> Result<reqwest::Url, ValidationError> {
+    let base = homeserver_url.trim_end_matches('/');
+    let mut url = reqwest::Url::parse(&format!(
+        "{base}/_matrix/client/v3/rooms/{room_id}/send/{event_type}/{txn_id}"
+    ))
+    .map_err(|err| publisher_error(&format!("invalid Matrix send URL: {err}")))?;
+    url.query_pairs_mut()
+        .append_pair("access_token", appservice_token)
+        .append_pair("user_id", sender_user_id);
+    Ok(url)
+}
+
+pub fn catalog_alias_localpart(alias: &str) -> Result<String, ValidationError> {
+    alias
+        .strip_prefix('#')
+        .and_then(|without_hash| without_hash.split_once(':').map(|(local, _)| local))
+        .filter(|local| !local.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| publisher_error("catalog room alias must look like #local:server"))
+}
+
+pub fn matrix_create_room_body(alias: &str, instance_id: &str) -> Result<Value, ValidationError> {
+    Ok(json!({
+        "visibility": "public",
+        "preset": "public_chat",
+        "room_alias_name": catalog_alias_localpart(alias)?,
+        "name": format!("Morpheus catalog {instance_id}"),
+        "topic": format!("Morpheus marketplace catalog for {instance_id}"),
+        "creation_content": {"m.federate": true},
+    }))
+}
+
+pub fn matrix_create_room_url(
+    homeserver_url: &str,
+    appservice_token: &str,
+    sender_user_id: &str,
+) -> Result<reqwest::Url, ValidationError> {
+    let base = homeserver_url.trim_end_matches('/');
+    let mut url = reqwest::Url::parse(&format!("{base}/_matrix/client/v3/createRoom"))
+        .map_err(|err| publisher_error(&format!("invalid Matrix createRoom URL: {err}")))?;
+    url.query_pairs_mut()
+        .append_pair("access_token", appservice_token)
+        .append_pair("user_id", sender_user_id);
+    Ok(url)
+}
+
+pub fn matrix_room_alias_url(
+    homeserver_url: &str,
+    alias: &str,
+    appservice_token: &str,
+    sender_user_id: &str,
+) -> Result<reqwest::Url, ValidationError> {
+    let base = homeserver_url.trim_end_matches('/');
+    let encoded_alias = alias.replacen('#', "%23", 1);
+    let mut url = reqwest::Url::parse(&format!(
+        "{base}/_matrix/client/v3/directory/room/{encoded_alias}"
+    ))
+    .map_err(|err| publisher_error(&format!("invalid Matrix room alias URL: {err}")))?;
+    url.query_pairs_mut()
+        .append_pair("access_token", appservice_token)
+        .append_pair("user_id", sender_user_id);
+    Ok(url)
+}
+
+fn publisher_error(message: &str) -> ValidationError {
+    ValidationError::new(ValidationCode::PolicyViolation, message)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteCatalogSource {
+    pub instance_id: String,
+    pub morpheus_url: String,
+}
+
+pub async fn sync_remote_catalog_once<S>(
+    store: &S,
+    source: &RemoteCatalogSource,
+) -> Result<(), ValidationError>
+where
+    S: EventStore,
+{
+    let client = reqwest::Client::new();
+    let sellers = fetch_catalog_items::<CatalogSellerRecord>(
+        &client,
+        &source.morpheus_url,
+        "/api/v1/catalog/sellers",
+    )
+    .await?;
+    for seller in sellers {
+        store
+            .upsert_catalog_seller(
+                &seller.seller_id,
+                &seller.issuer_instance,
+                &seller.status,
+                seller.body,
+            )
+            .await?;
+    }
+
+    let products = fetch_catalog_items::<CatalogProductRecord>(
+        &client,
+        &source.morpheus_url,
+        "/api/v1/catalog/products",
+    )
+    .await?;
+    for product in products {
+        store
+            .upsert_catalog_product(
+                &product.product_id,
+                &product.seller_id,
+                product.revision,
+                product.body,
+            )
+            .await?;
+    }
+
+    let offers = fetch_catalog_items::<CatalogOfferProjectionRecord>(
+        &client,
+        &source.morpheus_url,
+        "/api/v1/catalog/offers",
+    )
+    .await?;
+    for offer in offers {
+        store.upsert_catalog_offer(offer).await?;
+    }
+    Ok(())
+}
+
+async fn fetch_catalog_items<T>(
+    client: &reqwest::Client,
+    base_url: &str,
+    path: &str,
+) -> Result<Vec<T>, ValidationError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let url = format!("{}{}", base_url.trim_end_matches('/'), path);
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| publisher_error(&format!("fetching remote catalog failed: {err}")))?;
+    let status = response.status();
+    let body = response
+        .json::<Value>()
+        .await
+        .map_err(|err| publisher_error(&format!("reading remote catalog failed: {err}")))?;
+    if !status.is_success() {
+        return Err(publisher_error(&format!(
+            "remote catalog returned {status}: {body}"
+        )));
+    }
+    serde_json::from_value(body.get("items").cloned().unwrap_or_else(|| json!([])))
+        .map_err(|err| publisher_error(&format!("decoding remote catalog failed: {err}")))
 }
 
 pub fn build_router<S>(config: ServerConfig, store: S) -> Router
@@ -78,6 +410,11 @@ where
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics))
+        .route("/ui/admin", get(ui_admin))
+        .route("/ui/seller", get(ui_seller))
+        .route("/ui/buyer", get(ui_buyer))
+        .route("/ui/assets/app.css", get(ui_app_css))
+        .route("/ui/assets/app.js", get(ui_app_js))
         .route("/admin/health", get(healthz))
         .route(
             "/_matrix/app/v1/transactions/{txn_id}",
@@ -93,6 +430,10 @@ where
         .route(
             "/admin/catalog/rebuild",
             post(admin_catalog_rebuild::<S, P>),
+        )
+        .route(
+            "/admin/rooms/bootstrap",
+            post(admin_rooms_bootstrap::<S, P>),
         )
         .route(
             "/admin/orders/{order_id}/replay",
@@ -165,6 +506,32 @@ async fn readyz() -> impl IntoResponse {
 
 async fn metrics() -> impl IntoResponse {
     "morpheus_server_info 1\n"
+}
+
+async fn ui_admin() -> impl IntoResponse {
+    Html(include_str!("../ui/admin.html"))
+}
+
+async fn ui_seller() -> impl IntoResponse {
+    Html(include_str!("../ui/seller.html"))
+}
+
+async fn ui_buyer() -> impl IntoResponse {
+    Html(include_str!("../ui/buyer.html"))
+}
+
+async fn ui_app_css() -> impl IntoResponse {
+    (
+        [("content-type", "text/css")],
+        include_str!("../ui/assets/app.css"),
+    )
+}
+
+async fn ui_app_js() -> impl IntoResponse {
+    (
+        [("content-type", "application/javascript")],
+        include_str!("../ui/assets/app.js"),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -469,6 +836,29 @@ where
         Json(json!({
             "status": "scheduled",
             "catalog": catalog,
+        })),
+    )
+        .into_response()
+}
+
+async fn admin_rooms_bootstrap<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if !admin_authorized(&headers, &state.config.admin_token) {
+        return admin_unauthorized();
+    }
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "ready",
+            "catalog_room_id": state.config.catalog_room_id,
+            "catalog_room_alias": state.config.catalog_room_alias,
+            "order_room_alias_prefix": state.config.order_room_alias_prefix,
         })),
     )
         .into_response()
@@ -1176,20 +1566,35 @@ where
         })
         .collect::<Vec<_>>();
     let txn_id = format!("api-{}", Ulid::new());
-    match ingest_transaction(
-        &state.store,
-        txn_id,
-        AppServiceTransaction { events: published },
-    )
-    .await
-    {
-        Ok(()) => (
+    if state.publisher.ingest_after_publish() {
+        match ingest_transaction(
+            &state.store,
+            txn_id,
+            AppServiceTransaction {
+                events: published.clone(),
+            },
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(response) => return response,
+        }
+        return (
             StatusCode::ACCEPTED,
             Json(json!({ "status": "accepted", "event_ids": event_ids })),
         )
-            .into_response(),
-        Err(response) => response,
+            .into_response();
     }
+    let room_id = published
+        .first()
+        .and_then(|event| event.get("room_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({ "status": "submitted", "room_id": room_id, "event_ids": event_ids })),
+    )
+        .into_response()
 }
 
 fn marketplace_event(

@@ -1,17 +1,35 @@
+use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use http::{Request, StatusCode};
-use morpheus_server::{ServerConfig, build_router};
+use morpheus_protocol::ValidationError;
+use morpheus_server::{MatrixPublisher, ServerConfig, build_router, build_router_with_publisher};
 use morpheus_store::{
     CatalogOfferProjectionRecord, EventStore, InMemoryEventStore, OrderProjectionRecord,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+#[derive(Clone)]
+struct SubmittedOnlyPublisher;
+
+#[async_trait]
+impl MatrixPublisher for SubmittedOnlyPublisher {
+    async fn publish(&self, events: Vec<Value>) -> Result<Vec<Value>, ValidationError> {
+        Ok(events)
+    }
+
+    fn ingest_after_publish(&self) -> bool {
+        false
+    }
+}
+
 fn server_config() -> ServerConfig {
     ServerConfig {
         instance_id: "shop.example".into(),
         matrix_server_name: "shop.example".into(),
         catalog_room_id: "!catalog:shop.example".into(),
+        catalog_room_alias: Some("#marketplace-catalog:shop.example".into()),
+        order_room_alias_prefix: Some("#marketplace-order-".into()),
         appservice_sender_localpart: "market".into(),
         homeserver_token: "hs-token".into(),
         admin_token: "admin-token".into(),
@@ -64,6 +82,28 @@ async fn send_json_request(
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({}));
     (status, body)
+}
+
+async fn send_ui_request(uri: &str) -> (StatusCode, Option<String>) {
+    let app = build_router(server_config(), InMemoryEventStore::default());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+
+    (status, content_type)
 }
 
 async fn store_with_admin_projection_data() -> InMemoryEventStore {
@@ -134,6 +174,36 @@ async fn store_with_admin_projection_data() -> InMemoryEventStore {
         .await
         .unwrap();
     store
+}
+
+#[tokio::test]
+async fn ui_html_routes_return_ok_without_auth() {
+    for uri in ["/ui/admin", "/ui/seller", "/ui/buyer"] {
+        let (status, _) = send_ui_request(uri).await;
+
+        assert_eq!(status, StatusCode::OK, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn ui_css_asset_returns_text_css_without_auth() {
+    let (status, content_type) = send_ui_request("/ui/assets/app.css").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("text/css"));
+}
+
+#[tokio::test]
+async fn ui_js_asset_returns_javascript_without_auth() {
+    let (status, content_type) = send_ui_request("/ui/assets/app.js").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("javascript")),
+        "{content_type:?}"
+    );
 }
 
 #[tokio::test]
@@ -251,6 +321,28 @@ async fn admin_allowlist_accepts_bearer_auth_and_returns_deterministic_empty_pol
 }
 
 #[tokio::test]
+async fn admin_rooms_bootstrap_reports_configured_runtime_rooms() {
+    let (status, body) = send_admin_request(
+        InMemoryEventStore::default(),
+        "POST",
+        "/admin/rooms/bootstrap",
+        Some("Bearer admin-token"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({
+            "status": "ready",
+            "catalog_room_id": "!catalog:shop.example",
+            "catalog_room_alias": "#marketplace-catalog:shop.example",
+            "order_room_alias_prefix": "#marketplace-order-",
+        })
+    );
+}
+
+#[tokio::test]
 async fn admin_catalog_rebuild_accepts_bearer_auth_and_reports_projection_counts() {
     let store = store_with_admin_projection_data().await;
     let (status, body) = send_admin_request(
@@ -350,6 +442,43 @@ async fn seller_announce_requires_seller_token_and_local_seller_actor() {
     assert_eq!(unauthorized, StatusCode::UNAUTHORIZED);
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     assert_eq!(store.catalog_sellers().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn public_write_submits_without_local_projection_when_publisher_uses_synapse_loop() {
+    let store = InMemoryEventStore::default();
+    let app = build_router_with_publisher(server_config(), store.clone(), SubmittedOnlyPublisher);
+    let request = json!({
+        "seller_id": "seller:shop.example:01JSELLER",
+        "display_name": "Fixture Seller",
+        "legal_profile_ref": "https://shop.example/legal",
+        "terms_ref": "https://shop.example/terms",
+        "terms_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "supported_payment_adapters": ["mock"],
+        "supported_entitlement_types": ["external_entitlement"]
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/seller/announce")
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["status"], "submitted");
+    assert_eq!(body["room_id"], "!catalog:shop.example");
+    assert_eq!(body["event_ids"].as_array().unwrap().len(), 1);
+    assert!(store.catalog_sellers().await.unwrap().is_empty());
 }
 
 #[tokio::test]

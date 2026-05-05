@@ -7,7 +7,7 @@ cd "$ROOT"
 COMPOSE=(docker compose -f docker-compose.e2e.yml)
 
 scripts/e2e/bootstrap-synapse.sh
-"${COMPOSE[@]}" up -d --build
+"${COMPOSE[@]}" up -d --build --force-recreate
 
 wait_http() {
   local url="$1"
@@ -47,22 +47,26 @@ assert_count() {
   local table="$2"
   local expected="$3"
   local actual
-  actual="$(catalog_count "$service" "$table")"
-  if [[ "$actual" != "$expected" ]]; then
-    echo "${service}.${table}: expected ${expected}, got ${actual}" >&2
-    return 1
-  fi
+  for _ in $(seq 1 60); do
+    actual="$(catalog_count "$service" "$table")"
+    if [[ "$actual" == "$expected" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "${service}.${table}: expected ${expected}, got ${actual}" >&2
+  return 1
 }
 
-assert_count postgres-books catalog_sellers 5
-assert_count postgres-books catalog_products 10
-assert_count postgres-books catalog_offers 10
-assert_count postgres-cases catalog_sellers 4
-assert_count postgres-cases catalog_products 8
-assert_count postgres-cases catalog_offers 8
-assert_count postgres-fashion catalog_sellers 5
-assert_count postgres-fashion catalog_products 10
-assert_count postgres-fashion catalog_offers 10
+assert_count postgres-books catalog_sellers 14
+assert_count postgres-books catalog_products 28
+assert_count postgres-books catalog_offers 28
+assert_count postgres-cases catalog_sellers 14
+assert_count postgres-cases catalog_products 28
+assert_count postgres-cases catalog_offers 28
+assert_count postgres-fashion catalog_sellers 14
+assert_count postgres-fashion catalog_products 28
+assert_count postgres-fashion catalog_offers 28
 assert_count postgres-fashion orders 1
 assert_count postgres-fashion payments 1
 assert_count postgres-fashion entitlements 1

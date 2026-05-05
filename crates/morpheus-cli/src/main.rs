@@ -125,6 +125,10 @@ enum AdminCommand {
     Allowlist,
     Projections,
     Events,
+    Rooms {
+        #[command(subcommand)]
+        command: AdminRoomsCommand,
+    },
     Catalog {
         #[command(subcommand)]
         command: AdminCatalogCommand,
@@ -138,6 +142,11 @@ enum AdminCommand {
 #[derive(Debug, Subcommand)]
 enum AdminCatalogCommand {
     Rebuild,
+}
+
+#[derive(Debug, Subcommand)]
+enum AdminRoomsCommand {
+    Bootstrap,
 }
 
 #[derive(Debug, Subcommand)]
@@ -390,6 +399,9 @@ async fn run_admin_command(cli: &Cli, command: &AdminCommand) -> Result<()> {
         AdminCommand::Allowlist => get(cli, "/admin/allowlist", Role::Admin).await,
         AdminCommand::Projections => get(cli, "/admin/projections/summary", Role::Admin).await,
         AdminCommand::Events => get(cli, "/admin/events", Role::Admin).await,
+        AdminCommand::Rooms {
+            command: AdminRoomsCommand::Bootstrap,
+        } => post(cli, "/admin/rooms/bootstrap", Role::Admin, json!({})).await,
         AdminCommand::Catalog {
             command: AdminCatalogCommand::Rebuild,
         } => post(cli, "/admin/catalog/rebuild", Role::Admin, json!({})).await,

@@ -383,6 +383,23 @@ def send_transaction(base_url: str, token: str, txn_id: str, events: list[dict],
         raise RuntimeError(f"{txn_id}: expected {expected}, got {status}: {body}")
 
 
+def catalog_items(base_url: str, kind: str) -> list[dict]:
+    with urllib.request.urlopen(f"{base_url}/api/v1/catalog/{kind}", timeout=20) as response:
+        return json.loads(response.read().decode()).get("items", [])
+
+
+def wait_local_catalog(server_url: str, domain: str, sellers: int, products: int, offers: int) -> None:
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        seller_count = sum(1 for item in catalog_items(server_url, "sellers") if item.get("issuer_instance") == domain)
+        product_count = sum(1 for item in catalog_items(server_url, "products") if f":{domain}:" in item.get("product_id", ""))
+        offer_count = sum(1 for item in catalog_items(server_url, "offers") if f":{domain}:" in item.get("offer_id", ""))
+        if (seller_count, product_count, offer_count) == (sellers, products, offers):
+            return
+        time.sleep(1)
+    raise RuntimeError(f"{domain} catalog did not project expected local counts")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-dir", required=True)
@@ -394,6 +411,7 @@ def main() -> int:
         domain = meta["domain"]
         url = os.environ.get(meta["url_env"], meta["default_url"])
         seed_catalog_with_cli(name, domain, meta["sellers"], url)
+        wait_local_catalog(url, domain, len(meta["sellers"]), len(meta["sellers"]) * 2, len(meta["sellers"]) * 2)
 
     fashion_url = os.environ.get("MORPHEUS_FASHION_URL", INSTANCES["fashion"]["default_url"])
     fashion_token = configs["fashion"]["appservice"]["homeserver_token"]

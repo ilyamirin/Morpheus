@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Morpheus Admin Command Center</title>
+    <link rel="stylesheet" href="/ui/assets/app.css">
+  </head>
+  <body data-page="admin" class="app-shell admin-theme">
+    <header class="topbar admin-topbar">
+      <div class="page-wrap topbar-grid">
+        <div>
+          <p class="eyebrow">Morpheus UI PoC</p>
+          <h1 class="page-title">Operator command center</h1>
+        </div>
+        <label class="token-field" title="Stored locally only">
+          <span>Admin bearer token</span>
+          <input class="input" data-token="admin" placeholder="admin-token" autocomplete="off">
+        </label>
+      </div>
+    </header>
+
+    <main class="page-wrap admin-layout">
+      <section class="command-rail surface admin-surface" aria-label="Admin actions">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Operations</p>
+            <h2>Control plane</h2>
+          </div>
+          <button class="btn btn-primary" data-refresh="admin">Refresh all</button>
+        </div>
+        <div class="action-grid">
+          <button class="btn" data-action="admin-health">Healthz</button>
+          <button class="btn" data-action="admin-ready">Readyz</button>
+          <button class="btn" data-action="admin-config">Config</button>
+          <button class="btn" data-action="admin-allowlist">Allowlist</button>
+          <button class="btn" data-action="admin-summary">Projection summary</button>
+          <button class="btn" data-action="admin-events">Projection events</button>
+          <button class="btn btn-warn" data-action="admin-rebuild">Rebuild catalog</button>
+        </div>
+        <form class="inline-form" data-form="admin-replay">
+          <label class="field grow">
+            <span class="label">Order id</span>
+            <input class="input" name="order_id" value="ord:shop.example:01JORDER2">
+          </label>
+          <button class="btn btn-danger" type="submit">Replay order</button>
+        </form>
+      </section>
+
+      <section class="kpi-grid" aria-label="Runtime summary">
+        <article class="kpi-card surface admin-surface">
+          <span class="status-pill accent-emerald" id="admin-health-pill">HEALTHZ</span>
+          <strong data-text="admin-health-status">Not checked</strong>
+          <small>Server liveness endpoint.</small>
+        </article>
+        <article class="kpi-card surface admin-surface">
+          <span class="status-pill accent-cyan" id="admin-ready-pill">READYZ</span>
+          <strong data-text="admin-ready-status">Not checked</strong>
+          <small>Readiness gate for serving traffic.</small>
+        </article>
+        <article class="kpi-card surface admin-surface">
+          <span class="status-pill accent-amber">CATALOG</span>
+          <strong data-text="admin-catalog-counts">0 / 0 / 0</strong>
+          <small>Sellers, products, and offers in projection.</small>
+        </article>
+        <article class="kpi-card surface admin-surface">
+          <span class="status-pill accent-crimson">ORDERS</span>
+          <strong data-text="admin-order-counts">0 orders</strong>
+          <small>Payments, entitlements, disputes, rulings tracked.</small>
+        </article>
+      </section>
+
+      <section class="main-grid">
+        <article class="surface admin-surface panel-span">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Projection</p>
+              <h2>Runtime counters</h2>
+            </div>
+          </div>
+          <div class="metric-strip" id="admin-summary-cards">
+            <div class="empty-state">No projection summary loaded. Use Refresh all or Projection summary.</div>
+          </div>
+        </article>
+
+        <article class="surface admin-surface">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Policy</p>
+              <h2>Allowlist</h2>
+            </div>
+          </div>
+          <div id="admin-allowlist-view" class="list-panel">
+            <div class="empty-state">No allowlist loaded. Query the policy to confirm server configuration.</div>
+          </div>
+        </article>
+
+        <article class="surface admin-surface">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Validation</p>
+              <h2>Projection errors</h2>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table admin-table">
+              <thead>
+                <tr><th>Code</th><th>Message</th><th>Event</th></tr>
+              </thead>
+              <tbody id="admin-events-rows">
+                <tr><td colspan="3" class="empty-cell">No projection events loaded.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="surface admin-surface panel-span">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">API response</p>
+              <h2>Last result</h2>
+            </div>
+          </div>
+          <pre class="json-panel admin-json" id="result-panel">{ "status": "idle" }</pre>
+        </article>
+      </section>
+    </main>
+
+    <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+    <script src="/ui/assets/app.js" defer></script>
+  </body>
+</html>

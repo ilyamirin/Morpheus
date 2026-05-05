@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Morpheus Seller Workspace</title>
+    <link rel="stylesheet" href="/ui/assets/app.css">
+  </head>
+  <body data-page="seller" class="app-shell light-theme">
+    <header class="topbar light-topbar">
+      <div class="page-wrap topbar-grid">
+        <div>
+          <p class="eyebrow">Seller workspace</p>
+          <h1 class="page-title">Publish catalog and operate orders</h1>
+        </div>
+        <label class="token-field" title="Stored locally only">
+          <span>Seller bearer token</span>
+          <input class="input" data-token="seller" placeholder="seller-token" autocomplete="off">
+        </label>
+      </div>
+    </header>
+
+    <main class="page-wrap workspace-grid">
+      <section class="surface light-surface panel-span">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Catalog setup</p>
+            <h2>Announce seller</h2>
+          </div>
+          <button class="btn" data-action="seller-orders">Refresh orders</button>
+        </div>
+        <form class="form-grid" data-form="seller-announce">
+          <label class="field">
+            <span class="label">Seller id</span>
+            <input class="input" name="seller_id" value="seller:shop.example:01JSELLER">
+          </label>
+          <label class="field">
+            <span class="label">Display name</span>
+            <input class="input" name="display_name" value="Fixture Seller">
+          </label>
+          <label class="field">
+            <span class="label">Legal profile</span>
+            <input class="input" name="legal_profile_ref" value="https://shop.example/legal">
+          </label>
+          <label class="field">
+            <span class="label">Terms ref</span>
+            <input class="input" name="terms_ref" value="https://shop.example/terms">
+          </label>
+          <button class="btn btn-primary" type="submit">Announce seller</button>
+        </form>
+      </section>
+
+      <section class="surface light-surface">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Product</p>
+            <h2>Upsert product</h2>
+          </div>
+        </div>
+        <form class="stack-form" data-form="seller-product">
+          <label class="field"><span class="label">Product id</span><input class="input" name="product_id" value="prod:shop.example:01JPROD"></label>
+          <label class="field"><span class="label">Title</span><input class="input" name="title" value="Morpheus Operations Seat"></label>
+          <label class="field"><span class="label">Description</span><textarea class="textarea" name="description">Operator workspace with marketplace workflow controls.</textarea></label>
+          <div class="two-col">
+            <label class="field"><span class="label">Revision</span><input class="input" name="revision" type="number" value="1"></label>
+            <label class="field"><span class="label">Kind</span><input class="input" name="kind" value="digital_service"></label>
+          </div>
+          <button class="btn btn-primary" type="submit">Upsert product</button>
+        </form>
+      </section>
+
+      <section class="surface light-surface">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Offer</p>
+            <h2>Upsert offer</h2>
+          </div>
+        </div>
+        <form class="stack-form" data-form="seller-offer">
+          <label class="field"><span class="label">Offer id</span><input class="input" name="offer_id" value="offer:shop.example:01JOFFER"></label>
+          <label class="field"><span class="label">Product id</span><input class="input" name="product_id" value="prod:shop.example:01JPROD"></label>
+          <div class="three-col">
+            <label class="field"><span class="label">Revision</span><input class="input" name="revision" type="number" value="1"></label>
+            <label class="field"><span class="label">Amount</span><input class="input" name="amount" value="100.00"></label>
+            <label class="field"><span class="label">Currency</span><input class="input" name="currency" value="USD"></label>
+          </div>
+          <label class="field"><span class="label">Capture policy</span><input class="input" name="payment_capture_policy" value="before_entitlement"></label>
+          <button class="btn btn-primary" type="submit">Upsert offer</button>
+        </form>
+      </section>
+
+      <section class="surface light-surface panel-span">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Order queue</p>
+            <h2>Lifecycle actions</h2>
+          </div>
+          <span class="status-pill accent-cyan" id="seller-order-count">0 orders</span>
+        </div>
+        <form class="inline-form" data-form="seller-order-action">
+          <label class="field grow">
+            <span class="label">Order id</span>
+            <input class="input" name="order_id" value="ord:shop.example:01JORDER2">
+          </label>
+          <button class="btn" type="submit" data-step="accept">Accept</button>
+          <button class="btn" type="submit" data-step="payment-intent">Payment intent</button>
+          <button class="btn" type="submit" data-step="payment-capture">Capture</button>
+          <button class="btn" type="submit" data-step="entitlement-grant">Grant</button>
+          <button class="btn btn-primary" type="submit" data-step="complete">Complete</button>
+        </form>
+        <div class="table-wrap">
+          <table class="data-table light-table">
+            <thead>
+              <tr><th>Order</th><th>Status</th><th>Customer</th><th>Offer</th><th>Room</th></tr>
+            </thead>
+            <tbody id="seller-orders-rows">
+              <tr><td colspan="5" class="empty-cell">No seller orders loaded. Refresh after a buyer creates an order.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="surface light-surface panel-span">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">API response</p>
+            <h2>Last result</h2>
+          </div>
+        </div>
+        <pre class="json-panel light-json" id="result-panel">{ "status": "idle" }</pre>
+      </section>
+    </main>
+
+    <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+    <script src="/ui/assets/app.js" defer></script>
+  </body>
+</html>

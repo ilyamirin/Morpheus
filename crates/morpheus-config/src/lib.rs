@@ -19,6 +19,8 @@ pub struct InstanceConfig {
     pub matrix_server_name: String,
     pub application_service_id: String,
     pub catalog_room_id: String,
+    pub catalog_room_alias: Option<String>,
+    pub order_room_alias_prefix: Option<String>,
     pub protocol_versions: Vec<String>,
     pub payment_adapters: Vec<String>,
     pub entitlement_types: Vec<String>,
@@ -32,6 +34,8 @@ pub struct AppServiceConfig {
     pub namespace_prefix: String,
     pub homeserver_token: String,
     pub appservice_token: String,
+    #[serde(default)]
+    pub bootstrap_rooms: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +65,9 @@ pub struct AllowlistInstance {
     pub instance_id: String,
     pub capabilities: Vec<String>,
     pub status: String,
+    pub catalog_room_alias: Option<String>,
+    pub homeserver_url: Option<String>,
+    pub morpheus_url: Option<String>,
 }
 
 pub fn load_config(path: impl AsRef<Path>) -> Result<MorpheusConfig> {
@@ -88,6 +95,18 @@ pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
         config.instance.catalog_room_id.starts_with('!'),
         "catalog_room_id must be a Matrix room id"
     );
+    if let Some(alias) = &config.instance.catalog_room_alias {
+        anyhow::ensure!(
+            alias.starts_with('#') && alias.contains(':'),
+            "catalog_room_alias must be a Matrix room alias"
+        );
+    }
+    if config.appservice.bootstrap_rooms {
+        anyhow::ensure!(
+            config.instance.catalog_room_alias.is_some(),
+            "catalog_room_alias is required when bootstrap_rooms is true"
+        );
+    }
     anyhow::ensure!(
         config
             .instance
@@ -156,6 +175,12 @@ pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
                 entry.status == "active" || entry.status == "revoked",
                 "allowlist status must be active or revoked"
             );
+            if let Some(alias) = &entry.catalog_room_alias {
+                anyhow::ensure!(
+                    alias.starts_with('#') && alias.contains(':'),
+                    "allowlist catalog_room_alias must be a Matrix room alias"
+                );
+            }
         }
     }
     Ok(())
@@ -172,6 +197,8 @@ mod tests {
                 matrix_server_name: "shop.example".into(),
                 application_service_id: "io.marketplace.shop".into(),
                 catalog_room_id: "!catalog:shop.example".into(),
+                catalog_room_alias: Some("#marketplace-catalog:shop.example".into()),
+                order_room_alias_prefix: Some("#marketplace-order-".into()),
                 protocol_versions: vec!["0.1".into()],
                 payment_adapters: vec!["mock".into()],
                 entitlement_types: vec!["external_entitlement".into()],
@@ -183,6 +210,7 @@ mod tests {
                 namespace_prefix: "market_".into(),
                 homeserver_token: "hs-token".into(),
                 appservice_token: "as-token".into(),
+                bootstrap_rooms: true,
             },
             database: DatabaseConfig {
                 url: "sqlite::memory:".into(),
@@ -200,6 +228,9 @@ mod tests {
                     instance_id: "shop.example".into(),
                     capabilities: vec!["catalog".into()],
                     status: "active".into(),
+                    catalog_room_alias: Some("#marketplace-catalog:shop.example".into()),
+                    homeserver_url: Some("http://localhost:8008".into()),
+                    morpheus_url: Some("http://localhost:8080".into()),
                 }],
             }),
         }
@@ -221,6 +252,13 @@ mod tests {
         assert_eq!(
             validate_config(&config).unwrap_err().to_string(),
             "auth seller_token_env is required"
+        );
+
+        let mut config = valid_config();
+        config.instance.catalog_room_alias = None;
+        assert_eq!(
+            validate_config(&config).unwrap_err().to_string(),
+            "catalog_room_alias is required when bootstrap_rooms is true"
         );
     }
 
