@@ -13,6 +13,12 @@
     paymentId: "pay:shop.example:01JPAY",
     entitlementId: "ent:shop.example:01JENT"
   };
+  const PRODUCT_IMAGES = {
+    books: "/ui/assets/products/books.png",
+    cases: "/ui/assets/products/cases.png",
+    sneakers: "/ui/assets/products/sneakers.png",
+    clothing: "/ui/assets/products/clothing.png"
+  };
   const state = { sellers: [], products: [], offers: [], orders: [], selectedOffer: null };
   let resultPanel = null;
 
@@ -182,14 +188,15 @@
 
   function sellerProduct(formEl) {
     const data = form(formEl);
+    const kind = data.kind || "digital_service";
     return {
       seller_id: currentSellerId(),
       product_id: data.product_id || DEMO.productId,
       revision: int(data.revision, 1),
-      title: data.title || "Morpheus Operations Seat",
+      title: data.title || "Soft Runner",
       description: data.description || "Operator workspace with marketplace workflow controls.",
-      kind: data.kind || "digital_service",
-      categories: ["operations", "marketplace"],
+      kind,
+      categories: [kind, "marketplace"],
       tags: ["morpheus", "operator", "poc"],
       terms_hash: HASH_A
     };
@@ -327,6 +334,62 @@
     return text || fallback;
   }
 
+  function productForOffer(offer) {
+    return closestNamedItem(state.products, "product_id", offer && offer.product_id) || {};
+  }
+
+  function productKind(item) {
+    const text = [
+      pick(item, ["body", "kind"], ""),
+      pick(item, ["body", "title"], ""),
+      item && item.product_id,
+      item && item.offer_id
+    ].join(" ").toLowerCase();
+    if (/book|rust|system/.test(text)) return "books";
+    if (/case|phone|iphone|android|shield/.test(text)) return "cases";
+    if (/shoe|sneaker|runner/.test(text)) return "sneakers";
+    if (/cloth|jacket|shirt|fashion/.test(text)) return "clothing";
+    return "sneakers";
+  }
+
+  function productImage(item) {
+    return PRODUCT_IMAGES[productKind(item)] || PRODUCT_IMAGES.sneakers;
+  }
+
+  function offerImage(offer) {
+    const directImage = offer && (offer.image_src || pick(offer, ["body", "image_src"], ""));
+    if (directImage) return directImage;
+    const product = productForOffer(offer);
+    return productImage(product.product_id ? product : offer);
+  }
+
+  function offerFromProductCard(card, offerId) {
+    if (!card) return null;
+    const title = ($("h3", card) || {}).textContent || "Marketplace offer";
+    const meta = (($(".product-meta", card) || {}).textContent || "shop.example · Seller").split("·").map((part) => part.trim());
+    const priceText = (($(".product-card-footer strong", card) || {}).textContent || "100.00 USD").trim().split(/\s+/);
+    const image = $("img", card);
+    const instance = meta[0] || "shop.example";
+    const sellerLabel = meta[1] || "Seller";
+    const amount = priceText[0] || "100.00";
+    const currency = priceText[1] || "USD";
+    const slug = normalizeTitle(title).toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "") || "OFFER";
+    const localId = `DEMO_${slug}`.slice(0, 64);
+    return {
+      offer_id: offerId || `offer:${instance}:${localId}`,
+      product_id: `prod:${instance}:${localId}`,
+      seller_id: `seller:${instance}:${localId}`,
+      price: { amount, currency },
+      image_src: image ? image.getAttribute("src") : "",
+      body: {
+        title,
+        description: (($("p", card) || {}).textContent || "").trim(),
+        seller_display_name: sellerLabel,
+        image_src: image ? image.getAttribute("src") : ""
+      }
+    };
+  }
+
   function itemInstance(item) {
     const id = item && (item.seller_id || item.product_id || item.offer_id || item.order_id || item.id);
     const parts = String(id || "").split(":");
@@ -334,7 +397,7 @@
   }
 
   function offerTitle(offer) {
-    const product = closestNamedItem(state.products, "product_id", offer && offer.product_id);
+    const product = productForOffer(offer);
     return pick(product, ["body", "title"], pick(offer, ["body", "title"], offer && offer.offer_id || "Marketplace offer"));
   }
 
@@ -343,29 +406,65 @@
     return (seller && (seller.display_name || pick(seller, ["body", "display_name"], ""))) || sellerId || "Seller";
   }
 
+  function offerSellerLabel(offer) {
+    return pick(offer, ["body", "seller_display_name"], sellerName(offer && offer.seller_id));
+  }
+
   function updateSelectedOfferDetail() {
     const offer = state.selectedOffer;
     const drawer = $(".detail-drawer");
-    if (!drawer) return;
-    const title = $("h3", drawer);
-    const copy = $(".muted-copy", drawer);
-    const details = $$("dd", drawer);
-    if (!offer) {
-      if (title) title.textContent = "Choose an offer";
-      if (copy) copy.textContent = "Select an offer card from Discover to prepare checkout details.";
-      if (details[0]) details[0].textContent = "No seller selected";
-      if (details[1]) details[1].textContent = "No category selected";
-      if (details[2]) details[2].textContent = "No instance selected";
-      return;
+    if (drawer) {
+      const title = $("h3", drawer);
+      const copy = $(".muted-copy", drawer);
+      const details = $$("dd", drawer);
+      if (!offer) {
+        if (title) title.textContent = "Choose an offer";
+        if (copy) copy.textContent = "Select an offer card from Discover to prepare checkout details.";
+        if (details[0]) details[0].textContent = "No seller selected";
+        if (details[1]) details[1].textContent = "No category selected";
+        if (details[2]) details[2].textContent = "No instance selected";
+      } else {
+        const product = productForOffer(offer);
+        const categories = pick(product, ["body", "categories"], pick(offer, ["body", "categories"], []));
+        const categoryText = Array.isArray(categories) && categories.length ? categories.join(", ") : normalizeTitle(pick(product, ["body", "kind"], "digital_service"));
+        if (title) title.textContent = offerTitle(offer);
+        if (copy) copy.textContent = `${offerPrice(offer)} from ${offerSellerLabel(offer)}. Checkout uses this projected offer and keeps protocol ids in Advanced.`;
+        if (details[0]) details[0].textContent = offerSellerLabel(offer);
+        if (details[1]) details[1].textContent = categoryText;
+        if (details[2]) details[2].textContent = itemInstance(offer);
+      }
     }
-    const product = closestNamedItem(state.products, "product_id", offer.product_id);
-    const categories = pick(product, ["body", "categories"], pick(offer, ["body", "categories"], []));
-    const categoryText = Array.isArray(categories) && categories.length ? categories.join(", ") : normalizeTitle(pick(product, ["body", "kind"], "digital_service"));
-    if (title) title.textContent = offerTitle(offer);
-    if (copy) copy.textContent = `${offerPrice(offer)} from ${sellerName(offer.seller_id)}. Checkout uses this projected offer and keeps protocol ids in Advanced.`;
-    if (details[0]) details[0].textContent = sellerName(offer.seller_id);
-    if (details[1]) details[1].textContent = categoryText;
-    if (details[2]) details[2].textContent = itemInstance(offer);
+    updateCheckout(offer);
+  }
+
+  function updateCheckout(offer) {
+    const title = $("[data-checkout-title]");
+    const seller = $("[data-checkout-seller]");
+    const price = $("[data-checkout-price]");
+    const image = $("[data-checkout-image]");
+    if (!title || !seller || !price || !image) return;
+    const selected = offer || state.selectedOffer || {};
+    title.textContent = offerTitle(selected);
+    seller.textContent = `${offerSellerLabel(selected)} · ${itemInstance(selected)}`;
+    price.textContent = offerPrice(selected);
+    image.src = offerImage(selected);
+    image.alt = offerTitle(selected);
+  }
+
+  function setCheckoutOpen(open) {
+    const sheet = $("[data-checkout-sheet]");
+    const overlay = $("[data-checkout-overlay]");
+    if (!sheet || !overlay) return;
+    sheet.hidden = !open;
+    overlay.hidden = !open;
+    document.body.classList.toggle("checkout-open", open);
+  }
+
+  function setBuyerOrderFormFromOffer(create, offer) {
+    if (!create || !offer) return;
+    if (create.elements.offer_id) create.elements.offer_id.value = offer.offer_id || DEMO.offerId;
+    if (create.elements.amount) create.elements.amount.value = pick(offer, ["price", "amount"], "100.00");
+    if (create.elements.currency) create.elements.currency.value = pick(offer, ["price", "currency"], "USD");
   }
 
   function renderAdminSummary(body) {
@@ -424,6 +523,27 @@
       target.innerHTML = `<div class="empty-state">No ${esc(kind)} found. Refresh after projection data exists.</div>`;
       return;
     }
+    if (kind === "offers") {
+      target.innerHTML = items.map((item) => {
+        const title = offerTitle(item);
+        const seller = sellerName(item.seller_id);
+        const selected = state.selectedOffer && state.selectedOffer.offer_id === item.offer_id ? " is-selected" : "";
+        const description = pick(productForOffer(item), ["body", "description"], "Trusted marketplace offer ready for checkout.");
+        return `<article class="product-card${selected}" data-catalog-kind="offers" data-catalog-id="${esc(item.offer_id || "")}">
+          <img src="${esc(offerImage(item))}" alt="${esc(title)}">
+          <div class="product-card-body">
+            <span class="product-meta">${esc(itemInstance(item))} · ${esc(seller)}</span>
+            <h3>${esc(title)}</h3>
+            <p>${esc(description)}</p>
+            <div class="product-card-footer">
+              <strong>${esc(offerPrice(item))}</strong>
+              <button class="btn btn-primary" data-select-offer="${esc(item.offer_id || "")}" data-open-checkout>Buy</button>
+            </div>
+          </div>
+        </article>`;
+      }).join("");
+      return;
+    }
     target.innerHTML = items.map((item) => {
       const id = item.seller_id || item.product_id || item.offer_id || item.id || "item";
       const seller = sellerName(item.seller_id);
@@ -456,6 +576,10 @@
   }
 
   function ensureOrderCards(rows, rowsId) {
+    if (rowsId === "buyer-orders-rows") {
+      const existing = document.getElementById("buyer-order-cards");
+      if (existing) return existing;
+    }
     const id = `${rowsId}-cards`;
     let cards = document.getElementById(id);
     if (cards) return cards;
@@ -622,7 +746,10 @@
     create && create.addEventListener("submit", async (event) => {
       event.preventDefault();
       const result = await api("/api/v1/buyer/orders", { method: "POST", tokenRole: "buyer", body: buyerOrder(create), action: "POST /api/v1/buyer/orders" });
-      if (result.ok) await refreshOrders("buyer");
+      if (result.ok) {
+        setCheckoutOpen(false);
+        await refreshOrders("buyer");
+      }
     });
     tools && tools.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -638,24 +765,50 @@
       api(`/api/v1/buyer/orders/${orderId}`, { tokenRole: "buyer", action: "GET /api/v1/buyer/orders/{order_id}" });
     });
     document.addEventListener("click", (event) => {
+      if (event.target.closest("[data-checkout-close]") || event.target.closest("[data-checkout-overlay]")) {
+        setCheckoutOpen(false);
+        return;
+      }
       const offerButton = event.target.closest("[data-select-offer]");
       if (offerButton) {
-        const offer = state.offers.find((item) => item.offer_id === offerButton.dataset.selectOffer);
+        const offer = state.offers.find((item) => item.offer_id === offerButton.dataset.selectOffer) || offerFromProductCard(offerButton.closest(".product-card"), offerButton.dataset.selectOffer) || {
+          offer_id: offerButton.dataset.selectOffer || DEMO.offerId,
+          product_id: DEMO.productId,
+          seller_id: DEMO.sellerId,
+          price: { amount: "100.00", currency: "USD" },
+          body: { title: "Soft Runner" }
+        };
         if (offer && create) {
           state.selectedOffer = offer;
-          if (create.elements.offer_id) create.elements.offer_id.value = offer.offer_id || DEMO.offerId;
-          if (create.elements.amount) create.elements.amount.value = pick(offer, ["price", "amount"], "100.00");
-          if (create.elements.currency) create.elements.currency.value = pick(offer, ["price", "currency"], "USD");
+          setBuyerOrderFormFromOffer(create, offer);
           updateSelectedOfferDetail();
           renderCatalog("offers", state.offers);
-          toast("Offer selected", "success", offer.offer_id);
+          if (offerButton.hasAttribute("data-open-checkout")) setCheckoutOpen(true);
+          else toast("Offer selected", "success", offer.offer_id);
         }
+        return;
+      }
+      const demoBuy = event.target.closest("[data-demo-buy]");
+      if (demoBuy) {
+        state.selectedOffer = offerFromProductCard(demoBuy.closest(".product-card")) || {
+          offer_id: DEMO.offerId,
+          product_id: DEMO.productId,
+          seller_id: DEMO.sellerId,
+          price: { amount: "100.00", currency: "USD" },
+          body: { title: "Soft Runner" }
+        };
+        setBuyerOrderFormFromOffer(create, state.selectedOffer);
+        updateSelectedOfferDetail();
+        setCheckoutOpen(true);
         return;
       }
       const button = event.target.closest("[data-action]");
       if (!button) return;
       if (button.dataset.action === "buyer-catalog") refreshCatalog();
       if (button.dataset.action === "buyer-orders") refreshOrders("buyer");
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") setCheckoutOpen(false);
     });
   }
 

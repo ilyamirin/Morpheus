@@ -639,6 +639,16 @@ where
         .route("/ui/assets/favicon.svg", get(ui_favicon_svg))
         .route("/ui/assets/app.css", get(ui_app_css))
         .route("/ui/assets/app.js", get(ui_app_js))
+        .route("/ui/assets/products/books.png", get(ui_product_books_png))
+        .route("/ui/assets/products/cases.png", get(ui_product_cases_png))
+        .route(
+            "/ui/assets/products/sneakers.png",
+            get(ui_product_sneakers_png),
+        )
+        .route(
+            "/ui/assets/products/clothing.png",
+            get(ui_product_clothing_png),
+        )
         .route("/admin/health", get(healthz))
         .route(
             "/_matrix/app/v1/transactions/{txn_id}",
@@ -762,6 +772,34 @@ async fn ui_app_js() -> impl IntoResponse {
     (
         [("content-type", "application/javascript")],
         include_str!("../ui/assets/app.js"),
+    )
+}
+
+async fn ui_product_books_png() -> impl IntoResponse {
+    (
+        [("content-type", "image/png")],
+        include_bytes!("../ui/assets/products/books.png").as_slice(),
+    )
+}
+
+async fn ui_product_cases_png() -> impl IntoResponse {
+    (
+        [("content-type", "image/png")],
+        include_bytes!("../ui/assets/products/cases.png").as_slice(),
+    )
+}
+
+async fn ui_product_sneakers_png() -> impl IntoResponse {
+    (
+        [("content-type", "image/png")],
+        include_bytes!("../ui/assets/products/sneakers.png").as_slice(),
+    )
+}
+
+async fn ui_product_clothing_png() -> impl IntoResponse {
+    (
+        [("content-type", "image/png")],
+        include_bytes!("../ui/assets/products/clothing.png").as_slice(),
     )
 }
 

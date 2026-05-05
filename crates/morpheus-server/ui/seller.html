@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Morpheus Seller Studio</title>
+    <title>Morpheus Seller Store</title>
     <link rel="icon" type="image/svg+xml" href="/ui/assets/favicon.svg">
     <link rel="stylesheet" href="/ui/assets/app.css">
   </head>
@@ -11,8 +11,8 @@
     <header class="topbar light-topbar">
       <div class="page-wrap topbar-grid">
         <div>
-          <p class="eyebrow">Seller Studio</p>
-          <h1 class="page-title">Build listings, publish offers, and operate orders</h1>
+          <p class="eyebrow">Seller storefront</p>
+          <h1 class="page-title">My Store</h1>
         </div>
         <label class="token-field" title="Stored locally only">
           <span>Seller bearer token</span>
@@ -21,210 +21,164 @@
       </div>
     </header>
 
-    <main class="page-wrap role-shell">
-      <nav class="role-tabs" aria-label="Seller Studio sections">
-        <a class="role-tab" href="#home">Home</a>
-        <a class="role-tab" href="#listings">Listings</a>
+    <main class="page-wrap role-shell storefront-shell">
+      <nav class="role-tabs" aria-label="Seller sections">
+        <a class="role-tab" href="#store">Store</a>
         <a class="role-tab" href="#orders">Orders</a>
         <a class="role-tab" href="#advanced">Advanced</a>
       </nav>
 
-      <section class="hero-band" id="home">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Hybrid Studio + Marketplace</p>
-            <h2>Seller Studio is ready for a clean publish path.</h2>
+      <section class="store-layout" id="store" aria-labelledby="store-title">
+        <div class="storefront-main">
+          <div class="store-head">
+            <div>
+              <p class="eyebrow">Storefront</p>
+              <h2 id="store-title">My Store</h2>
+              <p>Manage listings as product cards. Keep protocol details in Advanced.</p>
+            </div>
+            <button class="btn" data-action="seller-orders">Refresh orders</button>
           </div>
-          <button class="btn" data-action="seller-orders">Refresh orders</button>
+
+          <div class="seller-product-grid" aria-label="Seller product cards">
+            <article class="seller-product-card is-live">
+              <img src="/ui/assets/products/sneakers.png" alt="Soft Runner sneakers">
+              <div class="seller-card-body">
+                <span class="status-pill accent-emerald">Published</span>
+                <h3>Soft Runner</h3>
+                <p>fashion.example · external entitlement</p>
+                <div class="seller-card-footer">
+                  <strong>100.00 USD</strong>
+                  <span id="seller-order-count">0 orders</span>
+                </div>
+              </div>
+            </article>
+            <article class="seller-product-card">
+              <img src="/ui/assets/products/books.png" alt="Technical books">
+              <div class="seller-card-body">
+                <span class="status-pill accent-amber">Draft</span>
+                <h3>Rust Systems Set</h3>
+                <p>books.example · ready to publish</p>
+                <div class="seller-card-footer">
+                  <strong>84.00 USD</strong>
+                  <span>No orders</span>
+                </div>
+              </div>
+            </article>
+            <article class="seller-product-card">
+              <img src="/ui/assets/products/cases.png" alt="Smartphone cases">
+              <div class="seller-card-body">
+                <span class="status-pill accent-emerald">Published</span>
+                <h3>Shield Case</h3>
+                <p>cases.example · unlimited inventory</p>
+                <div class="seller-card-footer">
+                  <strong>32.00 USD</strong>
+                  <span>1 order</span>
+                </div>
+              </div>
+            </article>
+          </div>
         </div>
-        <div class="summary-strip">
-          <article class="metric-card">
-            <span class="status-pill accent-cyan">Seller status</span>
-            <strong>Draft</strong>
-            <span>Announce profile before publishing.</span>
-          </article>
-          <article class="metric-card">
-            <span class="status-pill accent-emerald">Active offers</span>
-            <strong>1</strong>
-            <span>Fixture offer staged for listing.</span>
-          </article>
-          <article class="metric-card">
-            <span class="status-pill accent-amber">Pending orders</span>
-            <strong id="seller-order-count">0 orders</strong>
-            <span>Refresh after buyer checkout.</span>
-          </article>
-          <article class="metric-card">
-            <span class="status-pill accent-violet">Projection</span>
-            <strong>Publish-ready</strong>
-            <span>Catalog events flow through API responses.</span>
-          </article>
-        </div>
+
+        <aside class="quick-add-panel" aria-labelledby="quick-add-title">
+          <p class="eyebrow">Quick Add</p>
+          <h2 id="quick-add-title">Create a listing</h2>
+          <p class="quick-add-copy">One product card, one price, one publish action.</p>
+
+          <form class="stack-form compact-form" data-form="seller-announce">
+            <input type="hidden" name="seller_id" value="seller:shop.example:01JSELLER">
+            <input type="hidden" name="legal_profile_ref" value="https://shop.example/legal">
+            <input type="hidden" name="terms_ref" value="https://shop.example/terms">
+            <label class="field">
+              <span class="label">Seller name</span>
+              <input class="input" name="display_name" value="Fixture Seller">
+            </label>
+            <button class="btn" type="submit">Activate seller</button>
+          </form>
+
+          <form class="stack-form compact-form" data-form="seller-product">
+            <label class="field">
+              <span class="label">Product title</span>
+              <input class="input" name="title" value="Soft Runner">
+            </label>
+            <label class="field">
+              <span class="label">Category</span>
+              <input class="input" name="kind" value="fashion">
+            </label>
+            <input type="hidden" name="description" value="Lightweight everyday product from Morpheus seller UI.">
+            <details class="advanced-panel mini-advanced">
+              <summary>Advanced product fields</summary>
+              <label class="field">
+                <span class="label">Product id</span>
+                <input class="input" name="product_id" value="prod:shop.example:01JPROD">
+              </label>
+              <label class="field">
+                <span class="label">Revision</span>
+                <input class="input" name="revision" type="number" value="1">
+              </label>
+            </details>
+            <button class="btn" type="submit">Save product</button>
+          </form>
+
+          <form class="stack-form compact-form" data-form="seller-offer">
+            <div class="two-col">
+              <label class="field">
+                <span class="label">Price</span>
+                <input class="input" name="amount" value="100.00">
+              </label>
+              <label class="field">
+                <span class="label">Currency</span>
+                <input class="input" name="currency" value="USD">
+              </label>
+            </div>
+            <input type="hidden" name="payment_capture_policy" value="before_entitlement">
+            <details class="advanced-panel mini-advanced">
+              <summary>Advanced offer fields</summary>
+              <label class="field">
+                <span class="label">Offer id</span>
+                <input class="input" name="offer_id" value="offer:shop.example:01JOFFER">
+              </label>
+              <label class="field">
+                <span class="label">Product id</span>
+                <input class="input" name="product_id" value="prod:shop.example:01JPROD">
+              </label>
+              <label class="field">
+                <span class="label">Revision</span>
+                <input class="input" name="revision" type="number" value="1">
+              </label>
+            </details>
+            <button class="btn btn-primary" type="submit">Publish listing</button>
+          </form>
+        </aside>
       </section>
 
-      <section class="flow-panel" id="listings" aria-labelledby="listing-flow-title">
+      <section class="flow-panel quiet-panel" id="orders" aria-labelledby="orders-title">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Listing flow</p>
-            <h2 id="listing-flow-title">Profile -> Product -> Offer -> Publish</h2>
+            <p class="eyebrow">Orders</p>
+            <h2 id="orders-title">Orders that need seller action</h2>
           </div>
         </div>
 
-        <div class="catalog-grid">
-          <article class="catalog-card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Step 1</p>
-                <h3>Seller profile</h3>
-              </div>
-              <span class="status-pill accent-cyan">Identity</span>
-            </div>
-            <form class="stack-form" data-form="seller-announce">
-              <label class="field">
-                <span class="label">Display name</span>
-                <input class="input" name="display_name" value="Fixture Seller">
-              </label>
-              <details class="advanced-panel">
-                <summary>Advanced seller fields</summary>
-                <label class="field">
-                  <span class="label">Seller id</span>
-                  <input class="input" name="seller_id" value="seller:shop.example:01JSELLER">
-                </label>
-                <label class="field">
-                  <span class="label">Legal profile ref</span>
-                  <input class="input" name="legal_profile_ref" value="https://shop.example/legal">
-                </label>
-                <label class="field">
-                  <span class="label">Terms ref</span>
-                  <input class="input" name="terms_ref" value="https://shop.example/terms">
-                </label>
-              </details>
-              <button class="btn btn-primary" type="submit">Announce seller</button>
-            </form>
-          </article>
-
-          <article class="catalog-card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Step 2</p>
-                <h3>Product</h3>
-              </div>
-              <span class="status-pill accent-emerald">Catalog</span>
-            </div>
-            <form class="stack-form" data-form="seller-product">
-              <label class="field">
-                <span class="label">Title</span>
-                <input class="input" name="title" value="Morpheus Operations Seat">
-              </label>
-              <label class="field">
-                <span class="label">Description</span>
-                <textarea class="textarea" name="description">Operator workspace with marketplace workflow controls.</textarea>
-              </label>
-              <label class="field">
-                <span class="label">Kind</span>
-                <input class="input" name="kind" value="digital_service">
-              </label>
-              <details class="advanced-panel">
-                <summary>Advanced product fields</summary>
-                <label class="field">
-                  <span class="label">Product id</span>
-                  <input class="input" name="product_id" value="prod:shop.example:01JPROD">
-                </label>
-                <label class="field">
-                  <span class="label">Revision</span>
-                  <input class="input" name="revision" type="number" value="1">
-                </label>
-              </details>
-              <button class="btn btn-primary" type="submit">Save product</button>
-            </form>
-          </article>
-
-          <article class="catalog-card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Step 3</p>
-                <h3>Offer</h3>
-              </div>
-              <span class="status-pill accent-amber">Commerce</span>
-            </div>
-            <form class="stack-form" data-form="seller-offer">
-              <div class="two-col">
-                <label class="field">
-                  <span class="label">Amount</span>
-                  <input class="input" name="amount" value="100.00">
-                </label>
-                <label class="field">
-                  <span class="label">Currency</span>
-                  <input class="input" name="currency" value="USD">
-                </label>
-              </div>
-              <label class="field">
-                <span class="label">Capture policy</span>
-                <input class="input" name="payment_capture_policy" value="before_entitlement">
-              </label>
-              <details class="advanced-panel">
-                <summary>Advanced offer fields</summary>
-                <label class="field">
-                  <span class="label">Offer id</span>
-                  <input class="input" name="offer_id" value="offer:shop.example:01JOFFER">
-                </label>
-                <label class="field">
-                  <span class="label">Product id</span>
-                  <input class="input" name="product_id" value="prod:shop.example:01JPROD">
-                </label>
-                <label class="field">
-                  <span class="label">Revision</span>
-                  <input class="input" name="revision" type="number" value="1">
-                </label>
-              </details>
-              <button class="btn btn-primary" type="submit">Publish offer</button>
-            </form>
-          </article>
-        </div>
-      </section>
-
-      <section class="flow-panel" id="orders" aria-labelledby="orders-title">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Order inbox</p>
-            <h2 id="orders-title">Move each order through the seller lifecycle.</h2>
-          </div>
-        </div>
-
-        <article class="order-card">
+        <article class="order-card seller-order-action-card">
           <form class="inline-form" data-form="seller-order-action">
             <label class="field grow">
               <span class="label">Order id</span>
               <input class="input" name="order_id" value="ord:shop.example:01JORDER2">
             </label>
             <button class="btn" type="submit" data-step="accept">Accept</button>
-            <button class="btn" type="submit" data-step="payment-intent">Payment intent</button>
+            <button class="btn" type="submit" data-step="payment-intent">Intent</button>
             <button class="btn" type="submit" data-step="payment-capture">Capture</button>
             <button class="btn" type="submit" data-step="entitlement-grant">Grant</button>
             <button class="btn btn-primary" type="submit" data-step="complete">Complete</button>
           </form>
 
-          <ol class="timeline-list">
-            <li class="timeline-step">
-              <span class="status-pill accent-cyan">Accept</span>
-              <span>Confirm terms, revision, and arbitration policy.</span>
-            </li>
-            <li class="timeline-step">
-              <span class="status-pill accent-amber">Payment</span>
-              <span>Create intent, capture funds, then preserve provider evidence.</span>
-            </li>
-            <li class="timeline-step">
-              <span class="status-pill accent-emerald">Entitlement</span>
-              <span>Grant access and complete the marketplace order.</span>
-            </li>
-          </ol>
-
-          <div class="table-wrap">
+          <div class="table-wrap advanced-table">
             <table class="data-table light-table">
               <thead>
                 <tr><th>Order</th><th>Status</th><th>Customer</th><th>Offer</th><th>Room</th></tr>
               </thead>
               <tbody id="seller-orders-rows">
-                <tr><td colspan="5" class="empty-cell">No seller orders loaded. Refresh after a buyer creates an order.</td></tr>
+                <tr><td colspan="5" class="empty-cell">No seller orders loaded.</td></tr>
               </tbody>
             </table>
           </div>
@@ -235,7 +189,7 @@
         <div class="section-head">
           <div>
             <p class="eyebrow">Advanced</p>
-            <h2 id="advanced-title">API response</h2>
+            <h2 id="advanced-title">Protocol and API response</h2>
           </div>
         </div>
         <pre class="json-panel light-json" id="result-panel">{ "status": "idle" }</pre>

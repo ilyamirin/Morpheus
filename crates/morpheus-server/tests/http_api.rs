@@ -107,7 +107,24 @@ async fn send_json_request(
 }
 
 async fn send_ui_request(uri: &str) -> (StatusCode, Option<String>) {
-    let (status, content_type, _) = send_ui_body_request(uri).await;
+    let app = build_router(server_config(), InMemoryEventStore::default());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let _ = to_bytes(response.into_body(), usize::MAX).await.unwrap();
 
     (status, content_type)
 }
@@ -258,7 +275,7 @@ async fn admin_ui_uses_auto_refresh_instead_of_per_metric_refresh_buttons() {
 }
 
 #[tokio::test]
-async fn seller_ui_contains_studio_anchors_and_hooks() {
+async fn seller_ui_contains_storefront_anchors_and_hooks() {
     let (status, content_type, body) = send_ui_body_request("/ui/seller").await;
 
     assert_eq!(status, StatusCode::OK);
@@ -266,12 +283,13 @@ async fn seller_ui_contains_studio_anchors_and_hooks() {
     assert_contains_all(
         &body,
         &[
-            "Seller Studio",
-            "Home",
-            "Listings",
+            "My Store",
+            "Quick Add",
+            "Store",
             "Orders",
             "Advanced",
             "advanced-panel",
+            "seller-product-card",
             r#"data-page="seller""#,
             r#"data-token="seller""#,
             r#"data-form="seller-announce""#,
@@ -284,10 +302,11 @@ async fn seller_ui_contains_studio_anchors_and_hooks() {
             r#"id="result-panel""#,
         ],
     );
+    assert_contains_none(&body, &["Profile -&gt; Product -&gt; Offer -&gt; Publish"]);
 }
 
 #[tokio::test]
-async fn buyer_ui_contains_marketplace_anchors_and_hooks() {
+async fn buyer_ui_contains_gallery_checkout_anchors_and_hooks() {
     let (status, content_type, body) = send_ui_body_request("/ui/buyer").await;
 
     assert_eq!(status, StatusCode::OK);
@@ -296,11 +315,12 @@ async fn buyer_ui_contains_marketplace_anchors_and_hooks() {
         &body,
         &[
             "Marketplace",
+            "Gallery",
+            "Buy",
+            "checkout-sheet",
             "Discover",
-            "Offer",
-            "My orders",
+            "Orders",
             "Advanced",
-            "detail-drawer",
             "advanced-panel",
             r#"data-page="buyer""#,
             r#"data-token="buyer""#,
@@ -316,6 +336,7 @@ async fn buyer_ui_contains_marketplace_anchors_and_hooks() {
             r#"id="result-panel""#,
         ],
     );
+    assert_contains_none(&body, &["Selected offer"]);
 }
 
 #[tokio::test]
@@ -332,6 +353,14 @@ async fn ui_favicon_asset_returns_svg_without_auth() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content_type.as_deref(), Some("image/svg+xml"));
+}
+
+#[tokio::test]
+async fn ui_product_image_asset_returns_png_without_auth() {
+    let (status, content_type) = send_ui_request("/ui/assets/products/sneakers.png").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("image/png"));
 }
 
 #[tokio::test]
