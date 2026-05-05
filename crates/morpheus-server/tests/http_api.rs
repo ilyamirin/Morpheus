@@ -364,6 +364,35 @@ async fn ui_product_image_asset_returns_png_without_auth() {
 }
 
 #[tokio::test]
+async fn ui_seed_product_image_asset_returns_jpeg_without_auth() {
+    let (status, content_type) =
+        send_ui_request("/ui/assets/products/seed/fashionprod0101.jpg").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("image/jpeg"));
+}
+
+#[tokio::test]
+async fn ui_javascript_maps_seeded_products_to_exact_images() {
+    let (status, content_type, body) = send_ui_body_request("/ui/assets/app.js").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("javascript")),
+        "{content_type:?}"
+    );
+    assert_contains_all(
+        &body,
+        &[
+            "prod:fashion.example:FASHIONPROD0101",
+            "/ui/assets/products/seed/fashionprod0101.jpg",
+        ],
+    );
+}
+
+#[tokio::test]
 async fn ui_js_asset_returns_javascript_without_auth() {
     let (status, content_type) = send_ui_request("/ui/assets/app.js").await;
 

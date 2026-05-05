@@ -649,6 +649,7 @@ where
             "/ui/assets/products/clothing.png",
             get(ui_product_clothing_png),
         )
+        .route("/ui/assets/products/seed/{file}", get(ui_seed_product_jpg))
         .route("/admin/health", get(healthz))
         .route(
             "/_matrix/app/v1/transactions/{txn_id}",
@@ -801,6 +802,103 @@ async fn ui_product_clothing_png() -> impl IntoResponse {
         [("content-type", "image/png")],
         include_bytes!("../ui/assets/products/clothing.png").as_slice(),
     )
+}
+
+async fn ui_seed_product_jpg(Path(file): Path<String>) -> impl IntoResponse {
+    match seed_product_image(&file) {
+        Some(bytes) => ([("content-type", "image/jpeg")], bytes).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn seed_product_image(file: &str) -> Option<&'static [u8]> {
+    match file {
+        "booksprod0101.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/booksprod0101.jpg").as_slice())
+        }
+        "booksprod0102.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/booksprod0102.jpg").as_slice())
+        }
+        "booksprod0201.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/booksprod0201.jpg").as_slice())
+        }
+        "booksprod0202.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/booksprod0202.jpg").as_slice())
+        }
+        "booksprod0301.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/booksprod0301.jpg").as_slice())
+        }
+        "booksprod0302.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/booksprod0302.jpg").as_slice())
+        }
+        "booksprod0401.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/booksprod0401.jpg").as_slice())
+        }
+        "booksprod0402.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/booksprod0402.jpg").as_slice())
+        }
+        "booksprod0501.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/booksprod0501.jpg").as_slice())
+        }
+        "booksprod0502.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/booksprod0502.jpg").as_slice())
+        }
+        "casesprod0101.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/casesprod0101.jpg").as_slice())
+        }
+        "casesprod0102.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/casesprod0102.jpg").as_slice())
+        }
+        "casesprod0201.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/casesprod0201.jpg").as_slice())
+        }
+        "casesprod0202.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/casesprod0202.jpg").as_slice())
+        }
+        "casesprod0301.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/casesprod0301.jpg").as_slice())
+        }
+        "casesprod0302.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/casesprod0302.jpg").as_slice())
+        }
+        "casesprod0401.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/casesprod0401.jpg").as_slice())
+        }
+        "casesprod0402.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/casesprod0402.jpg").as_slice())
+        }
+        "fashionprod0101.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/fashionprod0101.jpg").as_slice())
+        }
+        "fashionprod0102.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/fashionprod0102.jpg").as_slice())
+        }
+        "fashionprod0201.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/fashionprod0201.jpg").as_slice())
+        }
+        "fashionprod0202.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/fashionprod0202.jpg").as_slice())
+        }
+        "fashionprod0301.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/fashionprod0301.jpg").as_slice())
+        }
+        "fashionprod0302.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/fashionprod0302.jpg").as_slice())
+        }
+        "fashionprod0401.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/fashionprod0401.jpg").as_slice())
+        }
+        "fashionprod0402.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/fashionprod0402.jpg").as_slice())
+        }
+        "fashionprod0501.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/fashionprod0501.jpg").as_slice())
+        }
+        "fashionprod0502.jpg" => {
+            Some(include_bytes!("../ui/assets/products/seed/fashionprod0502.jpg").as_slice())
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]

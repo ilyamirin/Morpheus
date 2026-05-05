@@ -19,6 +19,36 @@
     sneakers: "/ui/assets/products/sneakers.png",
     clothing: "/ui/assets/products/clothing.png"
   };
+  const SEEDED_PRODUCT_IMAGES = {
+    "prod:books.example:BOOKSPROD0101": "/ui/assets/products/seed/booksprod0101.jpg",
+    "prod:books.example:BOOKSPROD0102": "/ui/assets/products/seed/booksprod0102.jpg",
+    "prod:books.example:BOOKSPROD0201": "/ui/assets/products/seed/booksprod0201.jpg",
+    "prod:books.example:BOOKSPROD0202": "/ui/assets/products/seed/booksprod0202.jpg",
+    "prod:books.example:BOOKSPROD0301": "/ui/assets/products/seed/booksprod0301.jpg",
+    "prod:books.example:BOOKSPROD0302": "/ui/assets/products/seed/booksprod0302.jpg",
+    "prod:books.example:BOOKSPROD0401": "/ui/assets/products/seed/booksprod0401.jpg",
+    "prod:books.example:BOOKSPROD0402": "/ui/assets/products/seed/booksprod0402.jpg",
+    "prod:books.example:BOOKSPROD0501": "/ui/assets/products/seed/booksprod0501.jpg",
+    "prod:books.example:BOOKSPROD0502": "/ui/assets/products/seed/booksprod0502.jpg",
+    "prod:cases.example:CASESPROD0101": "/ui/assets/products/seed/casesprod0101.jpg",
+    "prod:cases.example:CASESPROD0102": "/ui/assets/products/seed/casesprod0102.jpg",
+    "prod:cases.example:CASESPROD0201": "/ui/assets/products/seed/casesprod0201.jpg",
+    "prod:cases.example:CASESPROD0202": "/ui/assets/products/seed/casesprod0202.jpg",
+    "prod:cases.example:CASESPROD0301": "/ui/assets/products/seed/casesprod0301.jpg",
+    "prod:cases.example:CASESPROD0302": "/ui/assets/products/seed/casesprod0302.jpg",
+    "prod:cases.example:CASESPROD0401": "/ui/assets/products/seed/casesprod0401.jpg",
+    "prod:cases.example:CASESPROD0402": "/ui/assets/products/seed/casesprod0402.jpg",
+    "prod:fashion.example:FASHIONPROD0101": "/ui/assets/products/seed/fashionprod0101.jpg",
+    "prod:fashion.example:FASHIONPROD0102": "/ui/assets/products/seed/fashionprod0102.jpg",
+    "prod:fashion.example:FASHIONPROD0201": "/ui/assets/products/seed/fashionprod0201.jpg",
+    "prod:fashion.example:FASHIONPROD0202": "/ui/assets/products/seed/fashionprod0202.jpg",
+    "prod:fashion.example:FASHIONPROD0301": "/ui/assets/products/seed/fashionprod0301.jpg",
+    "prod:fashion.example:FASHIONPROD0302": "/ui/assets/products/seed/fashionprod0302.jpg",
+    "prod:fashion.example:FASHIONPROD0401": "/ui/assets/products/seed/fashionprod0401.jpg",
+    "prod:fashion.example:FASHIONPROD0402": "/ui/assets/products/seed/fashionprod0402.jpg",
+    "prod:fashion.example:FASHIONPROD0501": "/ui/assets/products/seed/fashionprod0501.jpg",
+    "prod:fashion.example:FASHIONPROD0502": "/ui/assets/products/seed/fashionprod0502.jpg"
+  };
   const state = { sellers: [], products: [], offers: [], orders: [], selectedOffer: null };
   let resultPanel = null;
 
@@ -353,6 +383,8 @@
   }
 
   function productImage(item) {
+    const productId = item && item.product_id;
+    if (productId && SEEDED_PRODUCT_IMAGES[productId]) return SEEDED_PRODUCT_IMAGES[productId];
     return PRODUCT_IMAGES[productKind(item)] || PRODUCT_IMAGES.sneakers;
   }
 
