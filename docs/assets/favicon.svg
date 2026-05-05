@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Morpheus">
+  <rect width="64" height="64" rx="12" fill="#07111f"/>
+  <path d="M16 46V18h8l8 15 8-15h8v28h-7V30L34 42h-4l-7-12v16z" fill="#66e0c0"/>
+  <path d="M48 18v28h-7V30l-7 12h-4l-7-12v16h-7" fill="none" stroke="#06b6d4" stroke-width="2" stroke-linejoin="round"/>
+</svg>

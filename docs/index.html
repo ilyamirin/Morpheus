@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>Morpheus Docs | Federated Marketplace Runtime</title>
+    <meta
+      name="description"
+      content="Morpheus documentation: principles, architecture, installation, configuration, and local/federated server launch."
+    >
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <link rel="preload" href="assets/morpheus-hero.jpeg" as="image">
+    <link rel="stylesheet" href="assets/docs.css">
+  </head>
+  <body>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="#top" aria-label="Morpheus documentation home">
+          <span class="brand-mark">M</span>
+          <span>
+            <strong>Morpheus</strong>
+            <small>Federated marketplace docs</small>
+          </span>
+        </a>
+        <nav class="topnav" aria-label="Main documentation navigation">
+          <a href="#principles">Принципы</a>
+          <a href="#install">Установка</a>
+          <a href="#config">Настройка</a>
+          <a href="#run">Запуск</a>
+          <a href="#e2e">Federation E2E</a>
+        </nav>
+      </header>
+
+      <main id="top">
+        <section class="hero-section">
+          <div class="hero-copy">
+            <p class="eyebrow">Matrix · Rust · Federated Commerce</p>
+            <h1>Morpheus превращает независимые marketplace-серверы в доверенную федерацию.</h1>
+            <p class="lead">
+              Каждый instance владеет своим каталогом, allowlist, политиками, Postgres-хранилищем и API.
+              Matrix/Synapse доставляет проверяемые события, Morpheus валидирует протокол,
+              сохраняет raw timeline и строит локальные projections для admin, seller и buyer UI.
+            </p>
+            <div class="hero-actions">
+              <a class="btn primary" href="#install">Быстрый старт</a>
+              <a class="btn ghost" href="protocol.md">Protocol spec</a>
+            </div>
+          </div>
+
+          <div class="hero-panel" aria-label="Morpheus runtime flow">
+            <img src="assets/morpheus-hero.jpeg" alt="Morpheus protocol illustration">
+            <div class="flow-card">
+              <span>Runtime flow</span>
+              <ol>
+                <li>Seller / Buyer / Admin API</li>
+                <li>Morpheus protocol event</li>
+                <li>Synapse Application Service</li>
+                <li>Postgres projections</li>
+              </ol>
+            </div>
+          </div>
+        </section>
+
+        <section class="status-strip" aria-label="Current implementation state">
+          <article>
+            <span class="dot emerald"></span>
+            <strong>Rust-only runtime</strong>
+            <p>Validator, server, CLI, storage and conformance tests live in Rust crates.</p>
+          </article>
+          <article>
+            <span class="dot cyan"></span>
+            <strong>Synapse order federation</strong>
+            <p>E2E order rooms are created by backend and federated through TLS proxies.</p>
+          </article>
+          <article>
+            <span class="dot amber"></span>
+            <strong>Trusted catalog indexing</strong>
+            <p>Remote catalog visibility is currently indexed from trusted peer Morpheus APIs.</p>
+          </article>
+        </section>
+
+        <div class="content-grid">
+          <aside class="sidebar" aria-label="Documentation outline">
+            <nav>
+              <a href="#principles">1. Принципы работы</a>
+              <a href="#architecture">2. Архитектура</a>
+              <a href="#journeys">3. Customer journeys</a>
+              <a href="#install">4. Установка</a>
+              <a href="#config">5. Настройка</a>
+              <a href="#run">6. Запуск одного сервера</a>
+              <a href="#e2e">7. Три federated сервера</a>
+              <a href="#ui">8. UI и API</a>
+              <a href="#ops">9. Операции</a>
+              <a href="#troubleshooting">10. Troubleshooting</a>
+            </nav>
+          </aside>
+
+          <div class="docs-flow">
+            <section id="principles" class="doc-section">
+              <div class="section-heading">
+                <p class="eyebrow">Protocol principles</p>
+                <h2>1. Принципы работы</h2>
+              </div>
+              <div class="principle-grid">
+                <article class="info-card">
+                  <h3>Локальная автономия</h3>
+                  <p>
+                    Morpheus не требует центрального marketplace. Каждый сервер сам решает,
+                    каким instance доверять, какие политики принимать и какие projections показывать пользователям.
+                  </p>
+                </article>
+                <article class="info-card">
+                  <h3>Allowlist вместо глобального поиска</h3>
+                  <p>
+                    Federation строится вокруг локального allowlist. Если `fashion.example`
+                    доверен на `books.example`, books может принимать и индексировать его catalog/order события.
+                  </p>
+                </article>
+                <article class="info-card">
+                  <h3>Matrix как транспорт</h3>
+                  <p>
+                    Matrix/Synapse отвечает за room membership, federation transport и timeline.
+                    Morpheus определяет только marketplace namespace, validation rules и state machines.
+                  </p>
+                </article>
+                <article class="info-card">
+                  <h3>Replayable state</h3>
+                  <p>
+                    Raw Matrix events сохраняются, accepted events становятся источником projections.
+                    Order lifecycle можно переиграть и проверить заново без доверия к текущей таблице projection.
+                  </p>
+                </article>
+                <article class="info-card">
+                  <h3>Секреты вне Matrix</h3>
+                  <p>
+                    Payment secrets, bearer URLs, license keys, credentials, файлы и delivery artifacts
+                    не передаются в `io.marketplace.*`. В событиях остаются только ссылки и evidence metadata.
+                  </p>
+                </article>
+                <article class="info-card">
+                  <h3>Strict protocol envelope</h3>
+                  <p>
+                    Все события несут `protocol`, `protocol_version`, `protocol_event_id`,
+                    `created_at`, `issuer` и typed `body`. Unknown critical fields отклоняются.
+                  </p>
+                </article>
+              </div>
+            </section>
+
+            <section id="architecture" class="doc-section split-section">
+              <div>
+                <div class="section-heading">
+                  <p class="eyebrow">Runtime architecture</p>
+                  <h2>2. Архитектура сервера</h2>
+                </div>
+                <p>
+                  Production surface состоит из Axum backend, Matrix Application Service integration,
+                  Postgres projections и CLI/operator tooling. Внутри workspace протокол и state machines
+                  вынесены в pure Rust crates, чтобы HTTP, SQL и Matrix не смешивались с правилами валидации.
+                </p>
+                <div class="callout">
+                  <strong>Ключевой boundary:</strong>
+                  `morpheus-core` и `morpheus-protocol` не зависят от Axum, SQLx, Tokio networking или Synapse.
+                </div>
+              </div>
+              <div class="pipeline" aria-label="Runtime pipeline">
+                <div><span>01</span><strong>HTTP API</strong><small>admin / seller / buyer</small></div>
+                <div><span>02</span><strong>Publisher</strong><small>Matrix client API</small></div>
+                <div><span>03</span><strong>Synapse AS</strong><small>transactions endpoint</small></div>
+                <div><span>04</span><strong>Validator</strong><small>protocol + context</small></div>
+                <div><span>05</span><strong>Store</strong><small>raw events + projections</small></div>
+              </div>
+            </section>
+
+            <section id="journeys" class="doc-section">
+              <div class="section-heading">
+                <p class="eyebrow">Protocol journeys</p>
+                <h2>3. Основные customer journeys</h2>
+              </div>
+              <div class="journey-grid">
+                <article class="journey-card">
+                  <span class="journey-index">A</span>
+                  <h3>Seller публикует каталог</h3>
+                  <ol>
+                    <li>Seller announces actor через `/api/v1/seller/announce`.</li>
+                    <li>Создаёт или обновляет product и offer.</li>
+                    <li>Morpheus пишет protocol event в catalog room.</li>
+                    <li>Synapse возвращает event через AS transaction.</li>
+                    <li>Backend валидирует событие и обновляет catalog projection.</li>
+                  </ol>
+                </article>
+                <article class="journey-card">
+                  <span class="journey-index">B</span>
+                  <h3>Buyer создаёт order</h3>
+                  <ol>
+                    <li>Buyer выбирает offer из локальной catalog projection.</li>
+                    <li>Backend создаёт private order room сам, без client-supplied room id.</li>
+                    <li>В room приглашаются seller и arbiter AS users.</li>
+                    <li>После join backend публикует `customer.bound` и `order.created`.</li>
+                    <li>Ответ `202 Accepted` содержит реальный Matrix `room_id`.</li>
+                  </ol>
+                </article>
+                <article class="journey-card">
+                  <span class="journey-index">C</span>
+                  <h3>Seller закрывает lifecycle</h3>
+                  <ol>
+                    <li>Seller backend lazily joins order room перед publish.</li>
+                    <li>Публикует `order.accepted`.</li>
+                    <li>Создаёт payment intent, затем authorized/captured.</li>
+                    <li>Публикует entitlement grant.</li>
+                    <li>Завершает order через `order.completed`.</li>
+                  </ol>
+                </article>
+              </div>
+            </section>
+
+            <section id="install" class="doc-section">
+              <div class="section-heading">
+                <p class="eyebrow">Developer setup</p>
+                <h2>4. Установка</h2>
+              </div>
+              <div class="steps">
+                <article>
+                  <h3>1. Установить Rust toolchain</h3>
+                  <pre><code>brew install rustup-init
+rustup-init -y
+source "$HOME/.cargo/env"
+rustup component add rustfmt clippy llvm-tools-preview</code></pre>
+                </article>
+                <article>
+                  <h3>2. Установить dev tools</h3>
+                  <pre><code>cargo install cargo-nextest cargo-llvm-cov
+docker --version
+docker compose version</code></pre>
+                </article>
+                <article>
+                  <h3>3. Проверить workspace</h3>
+                  <pre><code>cargo fmt --check
+cargo test --workspace
+cargo run -p morpheus-cli -- conformance run</code></pre>
+                </article>
+              </div>
+            </section>
+
+            <section id="config" class="doc-section">
+              <div class="section-heading">
+                <p class="eyebrow">Configuration</p>
+                <h2>5. Настройка instance</h2>
+              </div>
+              <p>
+                Один Morpheus server описывается TOML-конфигом. Для локального запуска используется
+                `config/local.toml`; для federation E2E - `config/e2e/books.toml`,
+                `config/e2e/cases.toml`, `config/e2e/fashion.toml`.
+              </p>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Секция</th>
+                      <th>Назначение</th>
+                      <th>Важные поля</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>[instance]</code></td>
+                      <td>Идентичность marketplace instance и protocol capabilities.</td>
+                      <td><code>instance_id</code>, <code>matrix_server_name</code>, <code>catalog_room_alias</code>, <code>order_room_alias_prefix</code></td>
+                    </tr>
+                    <tr>
+                      <td><code>[appservice]</code></td>
+                      <td>Связь Morpheus с Synapse Application Service.</td>
+                      <td><code>homeserver_url</code>, <code>sender_localpart</code>, <code>homeserver_token</code>, <code>appservice_token</code></td>
+                    </tr>
+                    <tr>
+                      <td><code>[database]</code></td>
+                      <td>Runtime storage для raw events и projections.</td>
+                      <td><code>url</code></td>
+                    </tr>
+                    <tr>
+                      <td><code>[admin]</code> / <code>[auth]</code></td>
+                      <td>Bind address и env names для bearer tokens.</td>
+                      <td><code>bind</code>, <code>MORPHEUS_ADMIN_TOKEN</code>, <code>MORPHEUS_SELLER_TOKEN</code>, <code>MORPHEUS_BUYER_TOKEN</code></td>
+                    </tr>
+                    <tr>
+                      <td><code>[[allowlist.instances]]</code></td>
+                      <td>Локальная trust policy для remote instances.</td>
+                      <td><code>status</code>, <code>capabilities</code>, <code>catalog_room_alias</code>, <code>morpheus_url</code></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <pre><code>cargo run -p morpheus-cli -- config validate --config config/local.toml
+cargo run -p morpheus-cli -- synapse registration \
+  --config config/local.toml \
+  --out .local/synapse/morpheus-registration.yaml</code></pre>
+            </section>
+
+            <section id="run" class="doc-section">
+              <div class="section-heading">
+                <p class="eyebrow">Single server</p>
+                <h2>6. Запуск одного локального сервера</h2>
+              </div>
+              <div class="runbook">
+                <article>
+                  <h3>Postgres и pgweb</h3>
+                  <pre><code>docker compose up -d postgres pgweb</code></pre>
+                  <p>Postgres доступен на `localhost:5432`, pgweb - на `http://localhost:8081`.</p>
+                </article>
+                <article>
+                  <h3>Synapse bootstrap</h3>
+                  <pre><code>mkdir -p .local/synapse
+docker run --rm \
+  -v "$PWD/.local/synapse:/data" \
+  -e SYNAPSE_SERVER_NAME=localhost \
+  -e SYNAPSE_REPORT_STATS=no \
+  matrixdotorg/synapse:latest generate</code></pre>
+                  <p>После генерации добавьте registration file в `.local/synapse/homeserver.yaml`.</p>
+                </article>
+                <article>
+                  <h3>Database migration</h3>
+                  <pre><code>cargo run -p morpheus-cli -- db migrate \
+  --database-url postgres://morpheus:morpheus@localhost:5432/morpheus \
+  --database-kind postgres</code></pre>
+                </article>
+                <article>
+                  <h3>Server process</h3>
+                  <pre><code>MORPHEUS_ADMIN_TOKEN=admin-token \
+MORPHEUS_SELLER_TOKEN=seller-token \
+MORPHEUS_BUYER_TOKEN=buyer-token \
+cargo run -p morpheus-server -- --config config/local.toml</code></pre>
+                  <p>После старта API и PoC UI доступны на `http://127.0.0.1:8080`.</p>
+                </article>
+              </div>
+            </section>
+
+            <section id="e2e" class="doc-section">
+              <div class="section-heading">
+                <p class="eyebrow">Federated E2E</p>
+                <h2>7. Запуск трёх federated серверов</h2>
+              </div>
+              <p>
+                E2E stack поднимает три независимых marketplace instances: `books.example`,
+                `cases.example`, `fashion.example`. У каждого свой Morpheus server, Synapse homeserver
+                и Postgres database. Federation endpoints обслуживаются nginx TLS proxy на `8448`
+                с local CA, которому доверяют все три Synapse.
+              </p>
+              <div class="instance-grid">
+                <article><strong>books.example</strong><span>Morpheus: 18081</span><span>Synapse: 18008</span></article>
+                <article><strong>cases.example</strong><span>Morpheus: 18082</span><span>Synapse: 18009</span></article>
+                <article><strong>fashion.example</strong><span>Morpheus: 18083</span><span>Synapse: 18010</span></article>
+              </div>
+              <pre><code>make e2e-three-synapse
+make e2e-three-synapse-down</code></pre>
+              <div class="callout success">
+                E2E smoke сначала проверяет Matrix federation: books создаёт private room,
+                invites cases/fashion AS users, remote users join-ятся через свои homeservers,
+                fashion отправляет test event в federated room.
+              </div>
+            </section>
+
+            <section id="ui" class="doc-section">
+              <div class="section-heading">
+                <p class="eyebrow">UI and API</p>
+                <h2>8. Встроенные UI и основные endpoints</h2>
+              </div>
+              <div class="link-grid">
+                <a href="../ui/admin"><strong>Admin UI</strong><span>/ui/admin</span></a>
+                <a href="../ui/seller"><strong>Seller UI</strong><span>/ui/seller</span></a>
+                <a href="../ui/buyer"><strong>Buyer UI</strong><span>/ui/buyer</span></a>
+              </div>
+              <div class="endpoint-grid">
+                <article>
+                  <h3>Admin</h3>
+                  <code>GET /healthz</code>
+                  <code>GET /readyz</code>
+                  <code>GET /admin/config</code>
+                  <code>GET /admin/projections/summary</code>
+                  <code>POST /admin/catalog/rebuild</code>
+                </article>
+                <article>
+                  <h3>Seller</h3>
+                  <code>POST /api/v1/seller/announce</code>
+                  <code>POST /api/v1/seller/products</code>
+                  <code>POST /api/v1/seller/offers</code>
+                  <code>GET /api/v1/seller/orders</code>
+                  <code>POST /api/v1/seller/orders/{order_id}/complete</code>
+                </article>
+                <article>
+                  <h3>Buyer</h3>
+                  <code>GET /api/v1/catalog/offers</code>
+                  <code>POST /api/v1/buyer/orders</code>
+                  <code>GET /api/v1/buyer/orders</code>
+                  <code>GET /api/v1/buyer/orders/{order_id}</code>
+                  <code>POST /api/v1/buyer/orders/{order_id}/cancel</code>
+                </article>
+              </div>
+            </section>
+
+            <section id="ops" class="doc-section">
+              <div class="section-heading">
+                <p class="eyebrow">Operations</p>
+                <h2>9. Операционный чеклист</h2>
+              </div>
+              <div class="ops-grid">
+                <article>
+                  <h3>Health</h3>
+                  <pre><code>curl -fsS http://127.0.0.1:8080/healthz
+curl -fsS http://127.0.0.1:8080/readyz</code></pre>
+                </article>
+                <article>
+                  <h3>Admin counters</h3>
+                  <pre><code>curl -fsS \
+  -H "authorization: Bearer admin-token" \
+  http://127.0.0.1:8080/admin/projections/summary</code></pre>
+                </article>
+                <article>
+                  <h3>Conformance gate</h3>
+                  <pre><code>make check
+cargo test -p morpheus-server
+cargo run -p morpheus-cli -- conformance run</code></pre>
+                </article>
+              </div>
+            </section>
+
+            <section id="troubleshooting" class="doc-section">
+              <div class="section-heading">
+                <p class="eyebrow">Troubleshooting</p>
+                <h2>10. Частые проблемы</h2>
+              </div>
+              <details open>
+                <summary>Synapse не отправляет transactions в Morpheus</summary>
+                <p>
+                  Проверьте `app_service_config_files`, `homeserver_token`, `url` в registration YAML
+                  и доступность Morpheus container hostname из Synapse container.
+                </p>
+              </details>
+              <details>
+                <summary>Order create возвращает 502</summary>
+                <p>
+                  Это ожидаемый hard failure, если Synapse не смог создать federated room с invites.
+                  Проверьте federation DNS aliases, nginx TLS proxy, CA trust и reachability `:8448`.
+                </p>
+              </details>
+              <details>
+                <summary>Seller не видит remote order</summary>
+                <p>
+                  Проверьте, что seller AS user был приглашён и join прошёл. В backend order create
+                  ожидает join invited users перед публикацией order events, чтобы timeline дошёл до remote server.
+                </p>
+              </details>
+              <details>
+                <summary>Remote catalog не появился мгновенно</summary>
+                <p>
+                  На текущем этапе trusted remote catalog visibility строится через Morpheus peer API indexer.
+                  Проверьте allowlist entry, `morpheus_url`, network reachability и catalog rebuild.
+                </p>
+              </details>
+            </section>
+
+            <section class="doc-section github-section">
+              <div>
+                <p class="eyebrow">GitHub Pages</p>
+                <h2>Публикация из папки docs</h2>
+                <p>
+                  Эта страница полностью статическая: `docs/index.html`, `docs/assets/docs.css`,
+                  `docs/assets/docs.js` и локальные изображения. Для GitHub Pages выберите
+                  source: branch `main`, folder `/docs`.
+                </p>
+              </div>
+              <a class="btn primary" href="#top">Наверх</a>
+            </section>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script src="assets/docs.js" defer></script>
+  </body>
+</html>
