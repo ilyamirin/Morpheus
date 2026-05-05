@@ -8,6 +8,8 @@ The goal is to let independent marketplace instances trade with each other witho
 
 Sensitive data stays outside marketplace events: payment secrets, bearer URLs, credentials, files, license keys, and delivery artifacts are not transmitted through `io.marketplace.*`.
 
+Full documentation: <https://ilyamirin.github.io/Morpheus>
+
 ## Current State
 
 Morpheus is now Rust-only. The old TypeScript/npm validator was removed; Rust conformance and behavioral tests are the project oracle.
@@ -20,6 +22,7 @@ Implemented today:
 - Standalone `morpheus-server --config <path>` runtime backed by Postgres.
 - In-memory, SQLite, and Postgres storage implementations.
 - Public HTTP APIs for admins, sellers, and buyers.
+- Tailwind-powered admin, seller, and buyer PoC UIs served by `morpheus-server`.
 - Rust CLI for config, Synapse registration, conformance, DB migration, admin operations, seller publishing, and buyer catalog/order actions.
 - Real local publish loop in server runtime: `Morpheus API -> Synapse -> Morpheus AS ingest -> Postgres`.
 - Three-instance Docker E2E stack: books, smartphone cases, and fashion marketplaces, each with its own Morpheus server, Synapse homeserver, and Postgres database.
@@ -30,8 +33,18 @@ Important current limitation:
 
 ## Documents
 
+- [Full HTML Documentation](https://ilyamirin.github.io/Morpheus) is the broad GitHub Pages documentation for principles, installation, configuration, operation, and federated E2E.
 - [Protocol](docs/protocol.md) describes the Morpheus wire protocol, event model, lifecycles, authority rules, and conformance expectations.
 - [Rust Implementation](docs/rust-implementation.md) describes the workspace architecture, crates, runtime flow, storage, config, tests, and operational scope.
+
+## Stack
+
+- Runtime: [Rust](https://www.rust-lang.org/), [Tokio](https://tokio.rs/), [Axum](https://docs.rs/axum/latest/axum/), and [SQLx](https://github.com/launchbadge/sqlx).
+- Federation: [Matrix](https://matrix.org/) Application Service events on [Element Synapse](https://github.com/element-hq/synapse).
+- Storage: [PostgreSQL](https://www.postgresql.org/) for server deployments; [SQLite](https://www.sqlite.org/) and in-memory stores for local/dev/test flows.
+- Local infrastructure: [Docker](https://www.docker.com/) Compose, [nginx](https://nginx.org/) TLS federation proxies, and generated local CA certificates for E2E.
+- UI: static HTML, vanilla JavaScript, and [Tailwind CSS](https://v3.tailwindcss.com/) with committed generated CSS.
+- Dev assets: product images were generated through [Replicate](https://replicate.com/) and checked in as compressed static JPEGs.
 
 ## Quick Start
 
@@ -149,3 +162,7 @@ Protocol confidence is measured by contract coverage first, line coverage second
 - Behavioral coverage must exercise envelope validation, catalog replay, order lifecycle, payments, entitlements, disputes, arbitration, privacy/security, and Application Service ingest.
 - Line coverage is enforced for protocol/core/matrix/conformance crates with a practical `98%` gate.
 - Protocol behavior changes require a spec note, conformance vector, and Rust behavioral test.
+
+## License
+
+Morpheus is licensed under the [MIT License](LICENSE).

@@ -15,3 +15,8 @@ agents/
 skills/
 .superpowers/
 .mcp/
+
+# Local QA/browser artifacts
+.playwright-cli/
+output/
+*.srl
