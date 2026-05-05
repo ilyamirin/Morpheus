@@ -194,6 +194,14 @@ async fn ui_css_asset_returns_text_css_without_auth() {
 }
 
 #[tokio::test]
+async fn ui_favicon_asset_returns_svg_without_auth() {
+    let (status, content_type) = send_ui_request("/ui/assets/favicon.svg").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("image/svg+xml"));
+}
+
+#[tokio::test]
 async fn ui_js_asset_returns_javascript_without_auth() {
     let (status, content_type) = send_ui_request("/ui/assets/app.js").await;
 

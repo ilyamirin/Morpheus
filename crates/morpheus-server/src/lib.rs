@@ -413,6 +413,7 @@ where
         .route("/ui/admin", get(ui_admin))
         .route("/ui/seller", get(ui_seller))
         .route("/ui/buyer", get(ui_buyer))
+        .route("/ui/assets/favicon.svg", get(ui_favicon_svg))
         .route("/ui/assets/app.css", get(ui_app_css))
         .route("/ui/assets/app.js", get(ui_app_js))
         .route("/admin/health", get(healthz))
@@ -518,6 +519,13 @@ async fn ui_seller() -> impl IntoResponse {
 
 async fn ui_buyer() -> impl IntoResponse {
     Html(include_str!("../ui/buyer.html"))
+}
+
+async fn ui_favicon_svg() -> impl IntoResponse {
+    (
+        [("content-type", "image/svg+xml")],
+        include_str!("../ui/assets/favicon.svg"),
+    )
 }
 
 async fn ui_app_css() -> impl IntoResponse {
