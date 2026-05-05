@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS catalog_snapshots (
 
 CREATE TABLE IF NOT EXISTS catalog_sellers (
   seller_id TEXT PRIMARY KEY,
-  instance_id TEXT NOT NULL,
+  issuer_instance TEXT NOT NULL,
   status TEXT NOT NULL,
   body TEXT NOT NULL
 );
@@ -57,14 +57,14 @@ CREATE TABLE IF NOT EXISTS catalog_offers (
   seller_id TEXT NOT NULL,
   revision INTEGER NOT NULL,
   price TEXT NOT NULL,
-  entitlement_type TEXT NOT NULL,
+  inventory_kind TEXT NOT NULL,
   body TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS catalog_tombstones (
   object_id TEXT PRIMARY KEY,
-  revision INTEGER NOT NULL,
-  reason TEXT NOT NULL
+  object_type TEXT NOT NULL,
+  body TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS order_rooms (
@@ -94,7 +94,6 @@ CREATE TABLE IF NOT EXISTS payments (
   payment_id TEXT PRIMARY KEY,
   order_id TEXT NOT NULL,
   status TEXT NOT NULL,
-  adapter TEXT NOT NULL,
   body TEXT NOT NULL
 );
 
@@ -102,7 +101,6 @@ CREATE TABLE IF NOT EXISTS entitlements (
   entitlement_id TEXT PRIMARY KEY,
   order_id TEXT NOT NULL,
   status TEXT NOT NULL,
-  entitlement_type TEXT NOT NULL,
   body TEXT NOT NULL
 );
 
@@ -114,10 +112,9 @@ CREATE TABLE IF NOT EXISTS disputes (
 );
 
 CREATE TABLE IF NOT EXISTS arbitration_rulings (
-  dispute_id TEXT PRIMARY KEY,
-  order_id TEXT NOT NULL,
-  ruling TEXT NOT NULL,
-  binding INTEGER NOT NULL,
+  ruling_id TEXT PRIMARY KEY,
+  dispute_id TEXT NOT NULL,
+  status TEXT NOT NULL,
   body TEXT NOT NULL
 );
 

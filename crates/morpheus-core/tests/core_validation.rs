@@ -1,7 +1,7 @@
 use morpheus_core::{
     AllowlistPolicy, CatalogIndex, CustomerBinding, Money, OfferRecord, OrderAuthorities,
-    OrderState, SellerRecord, SnapshotRecord, assert_event_authority, validate_order_created,
-    validate_order_sequence,
+    OrderState, ProductRecord, SellerRecord, SnapshotRecord, assert_event_authority,
+    validate_order_created, validate_order_sequence,
 };
 use morpheus_protocol::ValidationCode;
 
@@ -23,11 +23,12 @@ fn catalog_rejects_revision_rollback() {
         })
         .unwrap();
     catalog
-        .upsert_product(
-            "prod:shop.example:01JPROD",
-            "seller:shop.example:01JSELLER",
-            7,
-        )
+        .upsert_product(ProductRecord {
+            product_id: "prod:shop.example:01JPROD".into(),
+            seller_id: "seller:shop.example:01JSELLER".into(),
+            revision: 7,
+            terms_hash: None,
+        })
         .unwrap();
     catalog
         .upsert_offer(OfferRecord {
@@ -40,6 +41,13 @@ fn catalog_rejects_revision_rollback() {
                 currency: "USD".into(),
             },
             entitlement_type: "booking_slot".into(),
+            payment_capture_policy: Some("before_entitlement".into()),
+            offer_terms_hash: Some(
+                "sha256:2222222222222222222222222222222222222222222222222222222222222222".into(),
+            ),
+            seller_terms_hash: Some(
+                "sha256:1111111111111111111111111111111111111111111111111111111111111111".into(),
+            ),
         })
         .unwrap();
 
@@ -54,6 +62,13 @@ fn catalog_rejects_revision_rollback() {
                 currency: "USD".into(),
             },
             entitlement_type: "booking_slot".into(),
+            payment_capture_policy: Some("before_entitlement".into()),
+            offer_terms_hash: Some(
+                "sha256:2222222222222222222222222222222222222222222222222222222222222222".into(),
+            ),
+            seller_terms_hash: Some(
+                "sha256:1111111111111111111111111111111111111111111111111111111111111111".into(),
+            ),
         })
         .expect_err("rollback rejected");
     assert_eq!(err.code, ValidationCode::RevisionRollback);
@@ -95,7 +110,7 @@ fn validates_order_terms_against_catalog_and_allowlist() {
     let customer = CustomerBinding {
         customer_id: "customer:customer.example:01JCUST".into(),
         status: "active".into(),
-        accepted_payment_adapters: vec!["mock".into()],
+        accepted_payment_adapters: vec!["stripe".into()],
         accepted_arbitration_policies: vec!["standard-digital-v1".into()],
     };
 

@@ -50,3 +50,33 @@ status = "active"
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn migrates_sqlite_database_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("morpheus.sqlite");
+    let database_url = format!("sqlite://{}", db.display());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_morpheus"))
+        .args(["db", "migrate", "--database-url", &database_url])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "database migrated\n"
+    );
+
+    let bytes = fs::read(db).unwrap();
+    assert!(
+        bytes
+            .windows(b"marketplace_events".len())
+            .any(|window| window == b"marketplace_events"),
+        "sqlite schema was not written to database file"
+    );
+}

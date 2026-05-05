@@ -1,11 +1,15 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, str::FromStr};
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use morpheus_matrix::generate_synapse_registration;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use sqlx::{
+    postgres::PgPoolOptions,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "morpheus")]
@@ -78,12 +82,23 @@ enum SnapshotCommand {
 
 #[derive(Debug, Subcommand)]
 enum DbCommand {
-    Migrate,
+    Migrate {
+        #[arg(long)]
+        database_url: String,
+        #[arg(long, value_enum)]
+        database_kind: Option<DatabaseKind>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
 enum CatalogCommand {
     Rebuild,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DatabaseKind {
+    Postgres,
+    Sqlite,
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,7 +153,8 @@ struct AllowlistInstance {
     status: String,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Config {
@@ -182,9 +198,14 @@ fn main() -> Result<()> {
             println!("snapshot ok");
         }
         Commands::Db {
-            command: DbCommand::Migrate,
+            command:
+                DbCommand::Migrate {
+                    database_url,
+                    database_kind,
+                },
         } => {
-            println!("run sqlx migrate with migrations/postgres or migrations/sqlite");
+            migrate_database(&database_url, database_kind).await?;
+            println!("database migrated");
         }
         Commands::Catalog {
             command: CatalogCommand::Rebuild,
@@ -193,6 +214,50 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+async fn migrate_database(database_url: &str, database_kind: Option<DatabaseKind>) -> Result<()> {
+    match database_kind
+        .or_else(|| infer_database_kind(database_url))
+        .with_context(|| format!("could not infer database kind from URL: {database_url}"))?
+    {
+        DatabaseKind::Postgres => {
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(database_url)
+                .await
+                .context("connecting to postgres database")?;
+            sqlx::raw_sql(morpheus_store::migrations::POSTGRES_0001)
+                .execute(&pool)
+                .await
+                .context("running postgres migrations")?;
+        }
+        DatabaseKind::Sqlite => {
+            let options = SqliteConnectOptions::from_str(database_url)
+                .context("parsing sqlite database URL")?
+                .create_if_missing(true);
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(options)
+                .await
+                .context("connecting to sqlite database")?;
+            sqlx::raw_sql(morpheus_store::migrations::SQLITE_0001)
+                .execute(&pool)
+                .await
+                .context("running sqlite migrations")?;
+        }
+    }
+    Ok(())
+}
+
+fn infer_database_kind(database_url: &str) -> Option<DatabaseKind> {
+    if database_url.starts_with("postgres://") || database_url.starts_with("postgresql://") {
+        Some(DatabaseKind::Postgres)
+    } else if database_url.starts_with("sqlite:") {
+        Some(DatabaseKind::Sqlite)
+    } else {
+        None
+    }
 }
 
 fn load_and_validate_config(path: &PathBuf) -> Result<Config> {

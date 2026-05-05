@@ -9,6 +9,40 @@ pub struct AppServiceTransaction {
     pub events: Vec<Value>,
 }
 
+pub fn event_ids(transaction: &AppServiceTransaction) -> Vec<String> {
+    transaction
+        .events
+        .iter()
+        .filter_map(|event| {
+            event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+pub fn validate_transaction_event_ids(
+    transaction: &AppServiceTransaction,
+) -> Result<Vec<String>, MatrixError> {
+    transaction
+        .events
+        .iter()
+        .enumerate()
+        .map(|(index, event)| {
+            event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    MatrixError::InvalidTransaction(format!(
+                        "event {index} is missing string event_id"
+                    ))
+                })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplicationServiceContext {
     pub instance_id: String,

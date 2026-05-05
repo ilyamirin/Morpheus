@@ -1019,11 +1019,14 @@ dependencies = [
  "clap",
  "morpheus-conformance",
  "morpheus-matrix",
+ "morpheus-store",
  "serde",
  "serde_json",
  "serde_yaml",
  "sha2",
+ "sqlx",
  "tempfile",
+ "tokio",
  "toml",
 ]
 
@@ -1074,6 +1077,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "http",
+ "morpheus-core",
  "morpheus-matrix",
  "morpheus-protocol",
  "morpheus-store",

@@ -1007,17 +1007,17 @@ The current Spec+Validator surface intentionally leaves production integration o
 
 ## v0.1 Completion Clarifications
 
-The TypeScript reference implementation is a Spec+Validator package. It intentionally does not run a Matrix Application Service, homeserver integration, database, HTTP API, or federated search service.
+The Rust protocol implementation is the normative Spec+Validator package. The server milestone intentionally keeps production Matrix Application Service behavior, persistent projections, HTTP API expansion, and federated search as separate implementation milestones.
 
 Normative validation entrypoints:
 
 ```text
-validateMarketplaceEvent(event, context)
-validateCatalogSnapshot(snapshot, context)
-replayCatalogTimeline(events, snapshot, context)
-validateOrderRoomTimeline(events, context)
-validateAllowlistPolicy(policy, now)
-ConformanceRunner
+morpheus_protocol::validate_marketplace_event(event, context)
+morpheus_core::validate_catalog_snapshot(snapshot, expected_hash)
+morpheus_core::replay_catalog_timeline(instance_id, snapshot, events)
+morpheus_core::validate_order_room_timeline(events, context)
+morpheus_core::validate_allowlist_policy(policy, now_epoch_ms)
+morpheus_conformance::ConformanceRunner
 ```
 
 Low-level exports remain building blocks and MUST NOT be treated as complete protocol acceptance on their own. In particular, `OrderTransitionGraph`/`OrderStateMachine` validate only transition shape; strict order acceptance requires order-room timeline validation.
@@ -1065,4 +1065,4 @@ Retention, security, compatibility, indexing, and privacy validators are policy 
 
 ## Implementation Status
 
-The first implementation milestone is a TypeScript reference validator and conformance suite. It covers event schemas, canonical hashes, Matrix event routing, local allowlist checks, catalog snapshot/delta rules, order state transitions, payment/entitlement/dispute authority checks, privacy/indexing policy, appservice idempotency, security/retention/compatibility validators, and 24 required v0.1 conformance vectors.
+The current implementation milestone is Rust-only for protocol validation and conformance. It covers event schemas, canonical hashes, Matrix event routing, local allowlist checks, catalog snapshot/delta rules, order state transitions, payment/entitlement/dispute authority checks, privacy/indexing policy, appservice idempotency, security/retention/compatibility validators, and 24 required v0.1 conformance vectors.

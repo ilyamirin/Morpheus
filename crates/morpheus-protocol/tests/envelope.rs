@@ -12,7 +12,7 @@ fn validates_order_created_envelope() {
         "content": {
             "protocol": "io.marketplace",
             "protocol_version": "0.1",
-            "event_id": "evt:customer.example:01JORDER",
+            "protocol_event_id": "evt:customer.example:01JORDER",
             "created_at": "2026-05-04T10:00:00Z",
             "issuer": {
                 "instance_id": "customer.example",
@@ -27,14 +27,18 @@ fn validates_order_created_envelope() {
                 "seller_id": "seller:shop.example:01JSELLER",
                 "offer_id": "offer:shop.example:01JOFFER",
                 "offer_revision": 3,
-                "catalog_snapshot_id": "snap_01J",
+                "catalog_snapshot_id": "snap:shop.example:01JSNAP",
                 "quantity": 1,
                 "price": { "amount": "100.00", "currency": "USD" },
                 "payment_adapter": "mock",
+                "payment_capture_policy": "before_entitlement",
                 "entitlement_type": "booking_slot",
+                "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
                 "arbiter_instance": "arbiter.example",
-                "arbiter_actor": "arbiter:arbiter.example:default",
+                "arbiter_actor": "arbiter:arbiter.example:01JARB",
                 "arbitration_policy_id": "standard-digital-v1",
+                "arbitration_policy_version": "1",
                 "arbitration_window": "P14D",
                 "expires_at": "2026-05-04T10:30:00Z"
             }
@@ -55,7 +59,7 @@ fn rejects_unknown_critical_fields() {
     event["content"]["critical"] = json!(["com.example.unknown"]);
 
     let err = validate_event_envelope(&event).expect_err("critical fields are rejected");
-    assert_eq!(err.code, ValidationCode::UnknownCritical);
+    assert_eq!(err.code, ValidationCode::UnknownCriticalExtension);
 }
 
 #[test]
