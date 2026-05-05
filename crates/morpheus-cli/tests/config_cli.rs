@@ -18,6 +18,7 @@ entitlement_types = ["booking_slot"]
 
 [appservice]
 homeserver_url = "http://localhost:8008"
+url = "http://morpheus-test:9000"
 sender_localpart = "market"
 namespace_prefix = "market_"
 homeserver_token = "hs-token"
@@ -48,6 +49,61 @@ status = "active"
         output.status.success(),
         "stderr={}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn synapse_registration_uses_configured_appservice_url() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("local.toml");
+    let out = dir.path().join("registration.yaml");
+    fs::write(
+        &config,
+        r#"
+[instance]
+instance_id = "shop.example"
+matrix_server_name = "shop.example"
+application_service_id = "io.marketplace.shop"
+catalog_room_id = "!catalog:shop.example"
+protocol_versions = ["0.1"]
+payment_adapters = ["mock"]
+entitlement_types = ["booking_slot"]
+
+[appservice]
+homeserver_url = "http://localhost:8008"
+url = "http://morpheus-test:9000"
+sender_localpart = "market"
+namespace_prefix = "market_"
+homeserver_token = "hs-token"
+appservice_token = "as-token"
+
+[database]
+url = "sqlite::memory:"
+
+[admin]
+bind = "127.0.0.1:8080"
+bearer_token_env = "MORPHEUS_ADMIN_TOKEN"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_morpheus"))
+        .args(["synapse", "registration", "--config"])
+        .arg(config)
+        .args(["--out"])
+        .arg(&out)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        fs::read_to_string(out)
+            .unwrap()
+            .contains("url: http://morpheus-test:9000")
     );
 }
 

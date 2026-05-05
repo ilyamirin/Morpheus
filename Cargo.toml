@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/morpheus-cli",
+  "crates/morpheus-config",
   "crates/morpheus-conformance",
   "crates/morpheus-core",
   "crates/morpheus-matrix",
@@ -32,12 +33,13 @@ sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "sqlite", "json", "chrono", "migrate"] }
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 toml = "0.9"
 tower = "0.5"
 ulid = "1"
 
 morpheus-cli = { path = "crates/morpheus-cli" }
+morpheus-config = { path = "crates/morpheus-config" }
 morpheus-conformance = { path = "crates/morpheus-conformance" }
 morpheus-core = { path = "crates/morpheus-core" }
 morpheus-matrix = { path = "crates/morpheus-matrix" }

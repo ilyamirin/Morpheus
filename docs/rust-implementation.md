@@ -9,7 +9,7 @@ crates/
   morpheus-protocol      Wire protocol, IDs, envelope validation, schemas, policies
   morpheus-core          Pure catalog/order/payment/entitlement/dispute/arbitration logic
   morpheus-matrix        Matrix AS transaction helpers and Synapse registration generation
-  morpheus-store         EventStore trait, in-memory store, SQLite store, SQL migrations
+  morpheus-store         EventStore trait, in-memory store, SQLite store, Postgres store, SQL migrations
   morpheus-server        Axum runtime routes and projection pipeline
   morpheus-cli           Operator CLI
   morpheus-conformance   Required protocol vectors and runner
@@ -97,9 +97,8 @@ Responsibilities:
 - AppService transaction idempotency;
 - in-memory implementation for unit and server tests;
 - SQLite implementation for local/conformance usage;
+- Postgres implementation for runtime containers;
 - SQL migration text for SQLite and Postgres.
-
-Postgres migration SQL exists and the CLI can run it, but the workspace does not yet include a Postgres `EventStore` implementation.
 
 Idempotency policy:
 
@@ -137,7 +136,13 @@ POST /admin/orders/{order_id}/replay
 
 Admin routes require `Authorization: Bearer <admin-token>`.
 
-The server crate currently exposes a reusable router rather than a standalone binary. Tests exercise the runtime directly; deployment can wrap `build_router` in a small binary that loads TOML config, constructs an `EventStore`, and binds a socket.
+The server crate exposes both a reusable router and a standalone binary. The binary runs as:
+
+```bash
+MORPHEUS_ADMIN_TOKEN=admin-token cargo run -p morpheus-server -- --config config/local.toml
+```
+
+It loads TOML config, reads the admin bearer token from the configured env var, runs Postgres migrations, constructs `PostgresEventStore`, and binds the configured address.
 
 ### `morpheus-cli`
 
@@ -274,6 +279,15 @@ Run a Postgres migration:
 cargo run -p morpheus-cli -- db migrate --database-url postgres://morpheus:morpheus@localhost:5432/morpheus --database-kind postgres
 ```
 
+Run the three-instance E2E stack:
+
+```bash
+make e2e-three-synapse
+make e2e-three-synapse-down
+```
+
+The E2E stack uses `config/e2e/books.toml`, `config/e2e/cases.toml`, and `config/e2e/fashion.toml`, plus `docker-compose.e2e.yml`. It starts three Synapse homeservers, three Postgres databases, three Morpheus containers, seeds demo catalogs, and verifies catalog/order/payment/entitlement projections.
+
 Run a SQLite migration:
 
 ```bash
@@ -321,18 +335,15 @@ Coverage policy:
 Implemented now:
 
 - protocol/core/matrix/conformance Rust parity surface;
-- AppService transaction route and admin/ops routes as an Axum router;
+- AppService transaction route and admin/ops routes as an Axum router and standalone binary;
 - raw event retention and projection behavior;
-- in-memory and SQLite store implementations;
+- in-memory, SQLite, and Postgres store implementations;
 - SQL migration text for SQLite and Postgres;
 - CLI operator tools;
 - Rust-only tests and coverage gate.
 
-Not yet a production deployment wrapper:
+Not yet production-hardening:
 
-- no standalone `morpheus-server` binary is currently present;
-- no Docker Compose service for the Morpheus server is currently present;
-- Synapse registration is generated, but full local Synapse E2E wiring still needs an operational wrapper;
-- Postgres migrations exist, but runtime persistence currently has in-memory and SQLite store implementations only;
+- Synapse federation in E2E is local/dev only and not TLS-hardened;
 - real Stripe/bank/payment provider integrations are intentionally out of v0.1 runtime scope;
 - entitlement delivery providers are external and not implemented as secret/file/license delivery through Matrix.

@@ -1,9 +1,9 @@
-use std::{fs, path::PathBuf, str::FromStr};
+use std::{fs, path::PathBuf, process::Command, str::FromStr};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use morpheus_config::load_config;
 use morpheus_matrix::generate_synapse_registration;
-use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::{
@@ -44,6 +44,10 @@ enum Commands {
     Catalog {
         #[command(subcommand)]
         command: CatalogCommand,
+    },
+    Demo {
+        #[command(subcommand)]
+        command: DemoCommand,
     },
 }
 
@@ -95,62 +99,25 @@ enum CatalogCommand {
     Rebuild,
 }
 
+#[derive(Debug, Subcommand)]
+enum DemoCommand {
+    Seed {
+        #[arg(long, value_enum)]
+        scenario: DemoScenario,
+        #[arg(long)]
+        config_dir: PathBuf,
+    },
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum DatabaseKind {
     Postgres,
     Sqlite,
 }
 
-#[derive(Debug, Deserialize)]
-struct Config {
-    instance: InstanceConfig,
-    appservice: AppServiceConfig,
-    database: DatabaseConfig,
-    admin: AdminConfig,
-    allowlist: Option<AllowlistConfig>,
-}
-
-#[derive(Debug, Deserialize)]
-struct InstanceConfig {
-    instance_id: String,
-    matrix_server_name: String,
-    application_service_id: String,
-    catalog_room_id: String,
-    protocol_versions: Vec<String>,
-    payment_adapters: Vec<String>,
-    entitlement_types: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AppServiceConfig {
-    homeserver_url: String,
-    sender_localpart: String,
-    namespace_prefix: String,
-    homeserver_token: String,
-    appservice_token: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct DatabaseConfig {
-    url: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct AdminConfig {
-    bind: String,
-    bearer_token_env: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct AllowlistConfig {
-    instances: Vec<AllowlistInstance>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AllowlistInstance {
-    instance_id: String,
-    capabilities: Vec<String>,
-    status: String,
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DemoScenario {
+    ThreeRetailInstances,
 }
 
 #[tokio::main]
@@ -160,16 +127,16 @@ async fn main() -> Result<()> {
         Commands::Config {
             command: ConfigCommand::Validate { config },
         } => {
-            load_and_validate_config(&config)?;
+            load_config(&config)?;
             println!("config ok");
         }
         Commands::Synapse {
             command: SynapseCommand::Registration { config, out },
         } => {
-            let config = load_and_validate_config(&config)?;
+            let config = load_config(&config)?;
             let registration = generate_synapse_registration(
                 &config.instance.application_service_id,
-                "http://morpheus-server:8080",
+                &config.appservice.url,
                 &config.appservice.appservice_token,
                 &config.appservice.homeserver_token,
                 &config.appservice.sender_localpart,
@@ -212,7 +179,33 @@ async fn main() -> Result<()> {
         } => {
             println!("{}", json!({ "status": "scheduled" }));
         }
+        Commands::Demo {
+            command:
+                DemoCommand::Seed {
+                    scenario: DemoScenario::ThreeRetailInstances,
+                    config_dir,
+                },
+        } => {
+            run_demo_seed(config_dir)?;
+        }
     }
+    Ok(())
+}
+
+fn run_demo_seed(config_dir: PathBuf) -> Result<()> {
+    let script = PathBuf::from("scripts/e2e/seed_three_retail.py");
+    anyhow::ensure!(
+        script.exists(),
+        "demo seed script not found at {}",
+        script.display()
+    );
+    let status = Command::new("python3")
+        .arg(script)
+        .arg("--config-dir")
+        .arg(config_dir)
+        .status()
+        .context("running demo seed script")?;
+    anyhow::ensure!(status.success(), "demo seed script failed with {status}");
     Ok(())
 }
 
@@ -258,71 +251,6 @@ fn infer_database_kind(database_url: &str) -> Option<DatabaseKind> {
     } else {
         None
     }
-}
-
-fn load_and_validate_config(path: &PathBuf) -> Result<Config> {
-    let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let config: Config = toml::from_str(&text).context("parsing TOML config")?;
-    validate_config(&config)?;
-    Ok(config)
-}
-
-fn validate_config(config: &Config) -> Result<()> {
-    anyhow::ensure!(
-        !config.instance.instance_id.is_empty(),
-        "instance_id is required"
-    );
-    anyhow::ensure!(
-        !config.instance.matrix_server_name.is_empty(),
-        "matrix_server_name is required"
-    );
-    anyhow::ensure!(
-        config.instance.catalog_room_id.starts_with('!'),
-        "catalog_room_id must be a Matrix room id"
-    );
-    anyhow::ensure!(
-        config
-            .instance
-            .protocol_versions
-            .iter()
-            .any(|version| version == "0.1"),
-        "protocol_versions must include 0.1"
-    );
-    anyhow::ensure!(
-        !config.instance.payment_adapters.is_empty(),
-        "payment_adapters must not be empty"
-    );
-    anyhow::ensure!(
-        !config.instance.entitlement_types.is_empty(),
-        "entitlement_types must not be empty"
-    );
-    anyhow::ensure!(
-        !config.appservice.homeserver_url.is_empty(),
-        "homeserver_url is required"
-    );
-    anyhow::ensure!(!config.database.url.is_empty(), "database url is required");
-    anyhow::ensure!(!config.admin.bind.is_empty(), "admin bind is required");
-    anyhow::ensure!(
-        !config.admin.bearer_token_env.is_empty(),
-        "admin bearer_token_env is required"
-    );
-    if let Some(allowlist) = &config.allowlist {
-        for entry in &allowlist.instances {
-            anyhow::ensure!(
-                !entry.instance_id.is_empty(),
-                "allowlist instance_id is required"
-            );
-            anyhow::ensure!(
-                !entry.capabilities.is_empty(),
-                "allowlist capabilities are required"
-            );
-            anyhow::ensure!(
-                entry.status == "active" || entry.status == "revoked",
-                "allowlist status must be active or revoked"
-            );
-        }
-    }
-    Ok(())
 }
 
 fn hex_string(bytes: impl AsRef<[u8]>) -> String {

@@ -9,6 +9,7 @@ entitlement_types = ["booking_slot", "license_key", "external_entitlement"]
 
 [appservice]
 homeserver_url = "http://localhost:8008"
+url = "http://morpheus-server:8080"
 sender_localpart = "market"
 namespace_prefix = "market_"
 homeserver_token = "dev-homeserver-token"

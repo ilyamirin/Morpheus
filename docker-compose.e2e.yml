@@ -1,0 +1,116 @@
+services:
+  postgres-books:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: morpheus
+      POSTGRES_USER: morpheus
+      POSTGRES_PASSWORD: morpheus
+    volumes:
+      - morpheus-e2e-postgres-books:/var/lib/postgresql/data
+    networks:
+      morpheus-e2e:
+        aliases: [postgres-books]
+
+  postgres-cases:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: morpheus
+      POSTGRES_USER: morpheus
+      POSTGRES_PASSWORD: morpheus
+    volumes:
+      - morpheus-e2e-postgres-cases:/var/lib/postgresql/data
+    networks:
+      morpheus-e2e:
+        aliases: [postgres-cases]
+
+  postgres-fashion:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: morpheus
+      POSTGRES_USER: morpheus
+      POSTGRES_PASSWORD: morpheus
+    volumes:
+      - morpheus-e2e-postgres-fashion:/var/lib/postgresql/data
+    networks:
+      morpheus-e2e:
+        aliases: [postgres-fashion]
+
+  synapse-books:
+    image: matrixdotorg/synapse:latest
+    ports: ["18008:8008"]
+    volumes:
+      - ./.local/e2e/synapse-books:/data
+    networks:
+      morpheus-e2e:
+        aliases: [synapse-books, books.example]
+
+  synapse-cases:
+    image: matrixdotorg/synapse:latest
+    ports: ["18009:8008"]
+    volumes:
+      - ./.local/e2e/synapse-cases:/data
+    networks:
+      morpheus-e2e:
+        aliases: [synapse-cases, cases.example]
+
+  synapse-fashion:
+    image: matrixdotorg/synapse:latest
+    ports: ["18010:8008"]
+    volumes:
+      - ./.local/e2e/synapse-fashion:/data
+    networks:
+      morpheus-e2e:
+        aliases: [synapse-fashion, fashion.example]
+
+  morpheus-books:
+    build: .
+    command: ["--config", "/etc/morpheus/books.toml"]
+    environment:
+      MORPHEUS_ADMIN_TOKEN: admin-token
+    ports: ["18081:8080"]
+    volumes:
+      - ./config/e2e/books.toml:/etc/morpheus/books.toml:ro
+    depends_on:
+      - postgres-books
+      - synapse-books
+    networks:
+      morpheus-e2e:
+        aliases: [morpheus-books]
+
+  morpheus-cases:
+    build: .
+    command: ["--config", "/etc/morpheus/cases.toml"]
+    environment:
+      MORPHEUS_ADMIN_TOKEN: admin-token
+    ports: ["18082:8080"]
+    volumes:
+      - ./config/e2e/cases.toml:/etc/morpheus/cases.toml:ro
+    depends_on:
+      - postgres-cases
+      - synapse-cases
+    networks:
+      morpheus-e2e:
+        aliases: [morpheus-cases]
+
+  morpheus-fashion:
+    build: .
+    command: ["--config", "/etc/morpheus/fashion.toml"]
+    environment:
+      MORPHEUS_ADMIN_TOKEN: admin-token
+    ports: ["18083:8080"]
+    volumes:
+      - ./config/e2e/fashion.toml:/etc/morpheus/fashion.toml:ro
+    depends_on:
+      - postgres-fashion
+      - synapse-fashion
+    networks:
+      morpheus-e2e:
+        aliases: [morpheus-fashion]
+
+networks:
+  morpheus-e2e:
+
+volumes:
+  morpheus-e2e-postgres-books:
+  morpheus-e2e-postgres-cases:
+  morpheus-e2e-postgres-fashion:

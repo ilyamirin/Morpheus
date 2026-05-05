@@ -9,7 +9,8 @@ The project goal is to make marketplace instances interoperable without a centra
 - Protocol validators for `io.marketplace` v0.1 envelopes, IDs, room profiles, schema rules, canonical JSON, privacy/security policy, compatibility, and stable error codes.
 - Core catalog and order logic: catalog snapshot replay, seller/product/offer projection, order lifecycle validation, payment capture rules, entitlements, disputes, arbitration, allowlist policy, and sender authority checks.
 - A Synapse-compatible Matrix Application Service runtime as an Axum router: transaction ingest, raw event retention, validation, projection, health/readiness/metrics, and bearer-protected admin endpoints.
-- Storage contracts plus in-memory and SQLite implementations, with SQL migration text for SQLite and Postgres. A Postgres `EventStore` implementation is not present yet.
+- A standalone `morpheus-server --config <path>` binary backed by Postgres.
+- Storage contracts plus in-memory, SQLite, and Postgres implementations.
 - Rust conformance vectors and behavioral tests as the project oracle.
 - CLI tools for config validation, Synapse registration generation, conformance runs, snapshot hash checks, DB migration, and catalog rebuild scheduling.
 
@@ -63,7 +64,22 @@ cargo run -p morpheus-cli -- db migrate --database-url postgres://morpheus:morph
 
 The Compose file also contains a Synapse service, but a fresh checkout must initialize `.local/synapse` and wire the generated Application Service registration into `homeserver.yaml` before starting it.
 
-The HTTP server runtime currently lives in `morpheus-server` as `build_router(config, store)`. It is exercised by integration tests and can be embedded by a small binary or deployment wrapper. Docker Compose starts infrastructure only; it does not start a Morpheus server container yet. Until that wrapper lands, use the CLI, conformance runner, and server tests to run the implementation surface:
+Run the standalone server:
+
+```bash
+MORPHEUS_ADMIN_TOKEN=admin-token cargo run -p morpheus-server -- --config config/local.toml
+```
+
+Run the three-instance Docker E2E stack:
+
+```bash
+make e2e-three-synapse
+make e2e-three-synapse-down
+```
+
+The E2E stack starts three Morpheus servers, three Postgres databases, and three Synapse homeservers, then seeds books/cases/fashion demo catalog data and one cross-instance order lifecycle.
+
+The reusable server runtime is still available as `morpheus_server::build_router(config, store)` for tests and embedding:
 
 ```bash
 cargo test -p morpheus-server

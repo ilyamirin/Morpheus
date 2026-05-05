@@ -2,6 +2,7 @@ use morpheus_protocol::ValidationCode;
 use morpheus_store::{
     AppServiceTransactionRecord, CatalogOfferProjectionRecord, EventStore, InMemoryEventStore,
     MarketplaceEventRecord, OrderProjectionRecord, ProjectionErrorRecord, RawMatrixEventRecord,
+    migrations,
 };
 
 fn raw_event(event_id: &str, room_id: &str) -> RawMatrixEventRecord {
@@ -288,4 +289,20 @@ async fn store_upserts_payment_entitlement_dispute_and_ruling_projection_records
     assert_eq!(entitlements[0].status, "active");
     assert_eq!(disputes[0].status, "opened");
     assert_eq!(rulings[0].status, "accepted");
+}
+
+#[test]
+fn postgres_migration_matches_event_store_projection_contract() {
+    let sql = migrations::POSTGRES_0001;
+    for required in [
+        "issuer_instance TEXT NOT NULL",
+        "inventory_kind TEXT NOT NULL",
+        "object_type TEXT NOT NULL",
+        "marketplace_event_id TEXT PRIMARY KEY",
+        "ruling_id TEXT PRIMARY KEY",
+        "status TEXT NOT NULL",
+        "body JSONB NOT NULL",
+    ] {
+        assert!(sql.contains(required), "missing {required}");
+    }
 }

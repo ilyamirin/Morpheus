@@ -18,14 +18,15 @@ CREATE TABLE IF NOT EXISTS raw_matrix_events (
 );
 
 CREATE TABLE IF NOT EXISTS marketplace_events (
+  sequence_id BIGSERIAL UNIQUE,
   marketplace_event_id TEXT PRIMARY KEY,
-  matrix_event_id TEXT NOT NULL REFERENCES raw_matrix_events(event_id),
+  matrix_event_id TEXT NOT NULL,
   protocol_version TEXT NOT NULL,
   issuer_instance TEXT NOT NULL,
   actor_id TEXT,
   event_type TEXT NOT NULL,
   body JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL
+  created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS catalog_snapshots (
@@ -39,7 +40,7 @@ CREATE TABLE IF NOT EXISTS catalog_snapshots (
 
 CREATE TABLE IF NOT EXISTS catalog_sellers (
   seller_id TEXT PRIMARY KEY,
-  instance_id TEXT NOT NULL,
+  issuer_instance TEXT NOT NULL,
   status TEXT NOT NULL,
   body JSONB NOT NULL
 );
@@ -57,14 +58,14 @@ CREATE TABLE IF NOT EXISTS catalog_offers (
   seller_id TEXT NOT NULL,
   revision BIGINT NOT NULL,
   price JSONB NOT NULL,
-  entitlement_type TEXT NOT NULL,
+  inventory_kind TEXT NOT NULL,
   body JSONB NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS catalog_tombstones (
   object_id TEXT PRIMARY KEY,
-  revision BIGINT NOT NULL,
-  reason TEXT NOT NULL
+  object_type TEXT NOT NULL,
+  body JSONB NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS order_rooms (
@@ -75,7 +76,7 @@ CREATE TABLE IF NOT EXISTS order_rooms (
 
 CREATE TABLE IF NOT EXISTS orders (
   order_id TEXT PRIMARY KEY,
-  room_id TEXT NOT NULL REFERENCES order_rooms(room_id),
+  room_id TEXT NOT NULL,
   customer_id TEXT NOT NULL,
   seller_id TEXT NOT NULL,
   offer_id TEXT NOT NULL,
@@ -84,7 +85,7 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 
 CREATE TABLE IF NOT EXISTS order_events (
-  matrix_event_id TEXT PRIMARY KEY REFERENCES raw_matrix_events(event_id),
+  matrix_event_id TEXT PRIMARY KEY,
   order_id TEXT NOT NULL,
   event_type TEXT NOT NULL,
   body JSONB NOT NULL
@@ -94,7 +95,6 @@ CREATE TABLE IF NOT EXISTS payments (
   payment_id TEXT PRIMARY KEY,
   order_id TEXT NOT NULL,
   status TEXT NOT NULL,
-  adapter TEXT NOT NULL,
   body JSONB NOT NULL
 );
 
@@ -102,7 +102,6 @@ CREATE TABLE IF NOT EXISTS entitlements (
   entitlement_id TEXT PRIMARY KEY,
   order_id TEXT NOT NULL,
   status TEXT NOT NULL,
-  entitlement_type TEXT NOT NULL,
   body JSONB NOT NULL
 );
 
@@ -114,10 +113,9 @@ CREATE TABLE IF NOT EXISTS disputes (
 );
 
 CREATE TABLE IF NOT EXISTS arbitration_rulings (
-  dispute_id TEXT PRIMARY KEY,
-  order_id TEXT NOT NULL,
-  ruling TEXT NOT NULL,
-  binding BOOLEAN NOT NULL,
+  ruling_id TEXT PRIMARY KEY,
+  dispute_id TEXT NOT NULL,
+  status TEXT NOT NULL,
   body JSONB NOT NULL
 );
 

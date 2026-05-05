@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use morpheus_protocol::{ValidationCode, ValidationError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{Row, SqlitePool};
+use sqlx::{PgPool, Row, SqlitePool, types::Json};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,7 +275,7 @@ impl SqliteEventStore {
 fn store_error(error: impl std::fmt::Display) -> ValidationError {
     ValidationError::new(
         ValidationCode::PolicyViolation,
-        format!("SQLite event store error: {error}"),
+        format!("event store error: {error}"),
     )
 }
 
@@ -298,6 +298,14 @@ fn parse_json(text: String) -> Result<Value, ValidationError> {
 
 fn parse_validation_code(text: String) -> Result<ValidationCode, ValidationError> {
     serde_json::from_value(Value::String(text)).map_err(store_error)
+}
+
+fn pg_json(value: Value) -> Json<Value> {
+    Json(value)
+}
+
+fn pg_json_ref(value: &Value) -> Json<Value> {
+    Json(value.clone())
 }
 
 #[async_trait]
@@ -993,6 +1001,732 @@ impl EventStore for SqliteEventStore {
                     dispute_id: row.try_get("dispute_id").map_err(store_error)?,
                     status: row.try_get("status").map_err(store_error)?,
                     body: parse_json(row.try_get("body").map_err(store_error)?)?,
+                })
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PostgresEventStore {
+    pool: PgPool,
+}
+
+impl PostgresEventStore {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+}
+
+#[async_trait]
+impl EventStore for PostgresEventStore {
+    async fn record_appservice_transaction(
+        &self,
+        transaction: AppServiceTransactionRecord,
+    ) -> Result<(), ValidationError> {
+        if let Some(row) =
+            sqlx::query("SELECT event_ids FROM appservice_transactions WHERE txn_id = $1")
+                .bind(&transaction.txn_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(store_error)?
+        {
+            let previous: Json<Vec<String>> = row.try_get("event_ids").map_err(store_error)?;
+            if previous.0 == transaction.event_ids {
+                return Ok(());
+            }
+            return Err(ValidationError::new(
+                ValidationCode::DuplicateEvent,
+                "AppService transactions must be idempotent",
+            ));
+        }
+
+        sqlx::query("INSERT INTO appservice_transactions (txn_id, event_ids) VALUES ($1, $2)")
+            .bind(transaction.txn_id)
+            .bind(Json(transaction.event_ids))
+            .execute(&self.pool)
+            .await
+            .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn record_raw_event(&self, event: RawMatrixEventRecord) -> Result<(), ValidationError> {
+        let validation_code = event
+            .validation_code
+            .map(validation_code_text)
+            .transpose()?;
+        sqlx::query(
+            "INSERT INTO raw_matrix_events
+             (event_id, room_id, sender, event_type, origin_server_ts, raw_json, validation_status, validation_code)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT(event_id) DO UPDATE SET
+               room_id = excluded.room_id,
+               sender = excluded.sender,
+               event_type = excluded.event_type,
+               origin_server_ts = excluded.origin_server_ts,
+               raw_json = excluded.raw_json,
+               validation_status = excluded.validation_status,
+               validation_code = excluded.validation_code",
+        )
+        .bind(event.event_id)
+        .bind(event.room_id)
+        .bind(event.sender)
+        .bind(event.event_type)
+        .bind(event.origin_server_ts)
+        .bind(pg_json(event.raw_json))
+        .bind(event.validation_status)
+        .bind(validation_code)
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn raw_event(
+        &self,
+        event_id: &str,
+    ) -> Result<Option<RawMatrixEventRecord>, ValidationError> {
+        sqlx::query(
+            "SELECT event_id, room_id, sender, event_type, origin_server_ts, raw_json,
+                    validation_status, validation_code
+             FROM raw_matrix_events
+             WHERE event_id = $1",
+        )
+        .bind(event_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(store_error)?
+        .map(|row| {
+            let validation_code: Option<String> =
+                row.try_get("validation_code").map_err(store_error)?;
+            let raw_json: Json<Value> = row.try_get("raw_json").map_err(store_error)?;
+            Ok(RawMatrixEventRecord {
+                event_id: row.try_get("event_id").map_err(store_error)?,
+                room_id: row.try_get("room_id").map_err(store_error)?,
+                sender: row.try_get("sender").map_err(store_error)?,
+                event_type: row.try_get("event_type").map_err(store_error)?,
+                origin_server_ts: row.try_get("origin_server_ts").map_err(store_error)?,
+                raw_json: raw_json.0,
+                validation_status: row.try_get("validation_status").map_err(store_error)?,
+                validation_code: validation_code.map(parse_validation_code).transpose()?,
+            })
+        })
+        .transpose()
+    }
+
+    async fn record_marketplace_event(
+        &self,
+        event: MarketplaceEventRecord,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO marketplace_events
+             (marketplace_event_id, matrix_event_id, protocol_version, issuer_instance, actor_id, event_type, body, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT(marketplace_event_id) DO UPDATE SET
+               matrix_event_id = excluded.matrix_event_id,
+               protocol_version = excluded.protocol_version,
+               issuer_instance = excluded.issuer_instance,
+               actor_id = excluded.actor_id,
+               event_type = excluded.event_type,
+               body = excluded.body,
+               created_at = excluded.created_at",
+        )
+        .bind(event.marketplace_event_id)
+        .bind(event.matrix_event_id)
+        .bind(event.protocol_version)
+        .bind(event.issuer_instance)
+        .bind(event.actor_id)
+        .bind(event.event_type)
+        .bind(pg_json(event.body))
+        .bind(event.created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn marketplace_events_by_room(
+        &self,
+        room_id: &str,
+    ) -> Result<Vec<MarketplaceEventRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT me.marketplace_event_id, me.matrix_event_id, me.protocol_version,
+                    me.issuer_instance, me.actor_id, me.event_type, me.body, me.created_at
+             FROM marketplace_events me
+             INNER JOIN raw_matrix_events rme ON rme.event_id = me.matrix_event_id
+             WHERE rme.room_id = $1
+             ORDER BY me.sequence_id",
+        )
+        .bind(room_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+                Ok(MarketplaceEventRecord {
+                    marketplace_event_id: row
+                        .try_get("marketplace_event_id")
+                        .map_err(store_error)?,
+                    matrix_event_id: row.try_get("matrix_event_id").map_err(store_error)?,
+                    protocol_version: row.try_get("protocol_version").map_err(store_error)?,
+                    issuer_instance: row.try_get("issuer_instance").map_err(store_error)?,
+                    actor_id: row.try_get("actor_id").map_err(store_error)?,
+                    event_type: row.try_get("event_type").map_err(store_error)?,
+                    body: body.0,
+                    created_at: row.try_get("created_at").map_err(store_error)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn record_projection_error(
+        &self,
+        error: ProjectionErrorRecord,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO projection_errors (matrix_event_id, code, message, details) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(error.matrix_event_id)
+        .bind(validation_code_text(error.code)?)
+        .bind(error.message)
+        .bind(pg_json(error.details))
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn projection_errors(&self) -> Result<Vec<ProjectionErrorRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT matrix_event_id, code, message, details FROM projection_errors ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let details: Json<Value> = row.try_get("details").map_err(store_error)?;
+                Ok(ProjectionErrorRecord {
+                    matrix_event_id: row.try_get("matrix_event_id").map_err(store_error)?,
+                    code: parse_validation_code(row.try_get("code").map_err(store_error)?)?,
+                    message: row.try_get("message").map_err(store_error)?,
+                    details: details.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn upsert_catalog_seller(
+        &self,
+        seller_id: &str,
+        issuer_instance: &str,
+        status: &str,
+        body: Value,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO catalog_sellers (seller_id, issuer_instance, status, body)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(seller_id) DO UPDATE SET
+               issuer_instance = excluded.issuer_instance,
+               status = excluded.status,
+               body = excluded.body",
+        )
+        .bind(seller_id)
+        .bind(issuer_instance)
+        .bind(status)
+        .bind(pg_json(body))
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn catalog_sellers(&self) -> Result<Vec<CatalogSellerRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT seller_id, issuer_instance, status, body FROM catalog_sellers ORDER BY seller_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+                Ok(CatalogSellerRecord {
+                    seller_id: row.try_get("seller_id").map_err(store_error)?,
+                    issuer_instance: row.try_get("issuer_instance").map_err(store_error)?,
+                    status: row.try_get("status").map_err(store_error)?,
+                    body: body.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn upsert_catalog_product(
+        &self,
+        product_id: &str,
+        seller_id: &str,
+        revision: i64,
+        body: Value,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO catalog_products (product_id, seller_id, revision, body)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(product_id) DO UPDATE SET
+               seller_id = excluded.seller_id,
+               revision = excluded.revision,
+               body = excluded.body",
+        )
+        .bind(product_id)
+        .bind(seller_id)
+        .bind(revision)
+        .bind(pg_json(body))
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn catalog_products(&self) -> Result<Vec<CatalogProductRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT product_id, seller_id, revision, body FROM catalog_products ORDER BY product_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+                Ok(CatalogProductRecord {
+                    product_id: row.try_get("product_id").map_err(store_error)?,
+                    seller_id: row.try_get("seller_id").map_err(store_error)?,
+                    revision: row.try_get("revision").map_err(store_error)?,
+                    body: body.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn upsert_catalog_offer(
+        &self,
+        offer: CatalogOfferProjectionRecord,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO catalog_offers
+             (offer_id, product_id, seller_id, revision, price, inventory_kind, body)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT(offer_id) DO UPDATE SET
+               product_id = excluded.product_id,
+               seller_id = excluded.seller_id,
+               revision = excluded.revision,
+               price = excluded.price,
+               inventory_kind = excluded.inventory_kind,
+               body = excluded.body",
+        )
+        .bind(offer.offer_id)
+        .bind(offer.product_id)
+        .bind(offer.seller_id)
+        .bind(offer.revision)
+        .bind(pg_json_ref(&offer.price))
+        .bind(offer.inventory_kind)
+        .bind(pg_json(offer.body))
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn catalog_offers(&self) -> Result<Vec<CatalogOfferProjectionRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT offer_id, product_id, seller_id, revision, price, inventory_kind, body
+             FROM catalog_offers
+             ORDER BY offer_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let price: Json<Value> = row.try_get("price").map_err(store_error)?;
+                let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+                Ok(CatalogOfferProjectionRecord {
+                    offer_id: row.try_get("offer_id").map_err(store_error)?,
+                    product_id: row.try_get("product_id").map_err(store_error)?,
+                    seller_id: row.try_get("seller_id").map_err(store_error)?,
+                    revision: row.try_get("revision").map_err(store_error)?,
+                    price: price.0,
+                    inventory_kind: row.try_get("inventory_kind").map_err(store_error)?,
+                    body: body.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn tombstone_catalog_object(
+        &self,
+        object_id: &str,
+        object_type: &str,
+        body: Value,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO catalog_tombstones (object_id, object_type, body)
+             VALUES ($1, $2, $3)
+             ON CONFLICT(object_id) DO UPDATE SET
+               object_type = excluded.object_type,
+               body = excluded.body",
+        )
+        .bind(object_id)
+        .bind(object_type)
+        .bind(pg_json(body))
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn catalog_tombstones(&self) -> Result<Vec<CatalogTombstoneRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT object_id, object_type, body FROM catalog_tombstones ORDER BY object_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+                Ok(CatalogTombstoneRecord {
+                    object_id: row.try_get("object_id").map_err(store_error)?,
+                    object_type: row.try_get("object_type").map_err(store_error)?,
+                    body: body.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn upsert_order(&self, order: OrderProjectionRecord) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO orders (order_id, room_id, customer_id, seller_id, offer_id, status, body)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT(order_id) DO UPDATE SET
+               room_id = excluded.room_id,
+               customer_id = excluded.customer_id,
+               seller_id = excluded.seller_id,
+               offer_id = excluded.offer_id,
+               status = excluded.status,
+               body = excluded.body",
+        )
+        .bind(order.order_id)
+        .bind(order.room_id)
+        .bind(order.customer_id)
+        .bind(order.seller_id)
+        .bind(order.offer_id)
+        .bind(order.status)
+        .bind(pg_json(order.body))
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn order(
+        &self,
+        order_id: &str,
+    ) -> Result<Option<OrderProjectionRecord>, ValidationError> {
+        sqlx::query(
+            "SELECT order_id, room_id, customer_id, seller_id, offer_id, status, body
+             FROM orders
+             WHERE order_id = $1",
+        )
+        .bind(order_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(store_error)?
+        .map(|row| {
+            let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+            Ok(OrderProjectionRecord {
+                order_id: row.try_get("order_id").map_err(store_error)?,
+                room_id: row.try_get("room_id").map_err(store_error)?,
+                customer_id: row.try_get("customer_id").map_err(store_error)?,
+                seller_id: row.try_get("seller_id").map_err(store_error)?,
+                offer_id: row.try_get("offer_id").map_err(store_error)?,
+                status: row.try_get("status").map_err(store_error)?,
+                body: body.0,
+            })
+        })
+        .transpose()
+    }
+
+    async fn orders(&self) -> Result<Vec<OrderProjectionRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT order_id, room_id, customer_id, seller_id, offer_id, status, body
+             FROM orders
+             ORDER BY order_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+                Ok(OrderProjectionRecord {
+                    order_id: row.try_get("order_id").map_err(store_error)?,
+                    room_id: row.try_get("room_id").map_err(store_error)?,
+                    customer_id: row.try_get("customer_id").map_err(store_error)?,
+                    seller_id: row.try_get("seller_id").map_err(store_error)?,
+                    offer_id: row.try_get("offer_id").map_err(store_error)?,
+                    status: row.try_get("status").map_err(store_error)?,
+                    body: body.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn record_order_event(
+        &self,
+        order_id: &str,
+        marketplace_event_id: &str,
+        event_type: &str,
+        body: Value,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO order_events (matrix_event_id, order_id, event_type, body)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(matrix_event_id) DO UPDATE SET
+               order_id = excluded.order_id,
+               event_type = excluded.event_type,
+               body = excluded.body",
+        )
+        .bind(marketplace_event_id)
+        .bind(order_id)
+        .bind(event_type)
+        .bind(pg_json(body))
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn order_events(&self, order_id: &str) -> Result<Vec<OrderEventRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT order_id, matrix_event_id, event_type, body
+             FROM order_events
+             WHERE order_id = $1
+             ORDER BY matrix_event_id",
+        )
+        .bind(order_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+                Ok(OrderEventRecord {
+                    order_id: row.try_get("order_id").map_err(store_error)?,
+                    marketplace_event_id: row.try_get("matrix_event_id").map_err(store_error)?,
+                    event_type: row.try_get("event_type").map_err(store_error)?,
+                    body: body.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn upsert_payment(
+        &self,
+        payment_id: &str,
+        order_id: &str,
+        status: &str,
+        body: Value,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO payments (payment_id, order_id, status, body)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(payment_id) DO UPDATE SET
+               order_id = excluded.order_id,
+               status = excluded.status,
+               body = excluded.body",
+        )
+        .bind(payment_id)
+        .bind(order_id)
+        .bind(status)
+        .bind(pg_json(body))
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn payments(&self) -> Result<Vec<PaymentProjectionRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT payment_id, order_id, status, body FROM payments ORDER BY payment_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+                Ok(PaymentProjectionRecord {
+                    payment_id: row.try_get("payment_id").map_err(store_error)?,
+                    order_id: row.try_get("order_id").map_err(store_error)?,
+                    status: row.try_get("status").map_err(store_error)?,
+                    body: body.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn upsert_entitlement(
+        &self,
+        entitlement_id: &str,
+        order_id: &str,
+        status: &str,
+        body: Value,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO entitlements (entitlement_id, order_id, status, body)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(entitlement_id) DO UPDATE SET
+               order_id = excluded.order_id,
+               status = excluded.status,
+               body = excluded.body",
+        )
+        .bind(entitlement_id)
+        .bind(order_id)
+        .bind(status)
+        .bind(pg_json(body))
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn entitlements(&self) -> Result<Vec<EntitlementProjectionRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT entitlement_id, order_id, status, body
+             FROM entitlements
+             ORDER BY entitlement_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+                Ok(EntitlementProjectionRecord {
+                    entitlement_id: row.try_get("entitlement_id").map_err(store_error)?,
+                    order_id: row.try_get("order_id").map_err(store_error)?,
+                    status: row.try_get("status").map_err(store_error)?,
+                    body: body.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn upsert_dispute(
+        &self,
+        dispute_id: &str,
+        order_id: &str,
+        status: &str,
+        body: Value,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO disputes (dispute_id, order_id, status, body)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(dispute_id) DO UPDATE SET
+               order_id = excluded.order_id,
+               status = excluded.status,
+               body = excluded.body",
+        )
+        .bind(dispute_id)
+        .bind(order_id)
+        .bind(status)
+        .bind(pg_json(body))
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn disputes(&self) -> Result<Vec<DisputeProjectionRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT dispute_id, order_id, status, body FROM disputes ORDER BY dispute_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+                Ok(DisputeProjectionRecord {
+                    dispute_id: row.try_get("dispute_id").map_err(store_error)?,
+                    order_id: row.try_get("order_id").map_err(store_error)?,
+                    status: row.try_get("status").map_err(store_error)?,
+                    body: body.0,
+                })
+            })
+            .collect()
+    }
+
+    async fn upsert_arbitration_ruling(
+        &self,
+        ruling_id: &str,
+        dispute_id: &str,
+        status: &str,
+        body: Value,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO arbitration_rulings (ruling_id, dispute_id, status, body)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(ruling_id) DO UPDATE SET
+               dispute_id = excluded.dispute_id,
+               status = excluded.status,
+               body = excluded.body",
+        )
+        .bind(ruling_id)
+        .bind(dispute_id)
+        .bind(status)
+        .bind(pg_json(body))
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
+
+    async fn arbitration_rulings(
+        &self,
+    ) -> Result<Vec<ArbitrationRulingProjectionRecord>, ValidationError> {
+        let rows = sqlx::query(
+            "SELECT ruling_id, dispute_id, status, body
+             FROM arbitration_rulings
+             ORDER BY ruling_id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        rows.into_iter()
+            .map(|row| {
+                let body: Json<Value> = row.try_get("body").map_err(store_error)?;
+                Ok(ArbitrationRulingProjectionRecord {
+                    ruling_id: row.try_get("ruling_id").map_err(store_error)?,
+                    dispute_id: row.try_get("dispute_id").map_err(store_error)?,
+                    status: row.try_get("status").map_err(store_error)?,
+                    body: body.0,
                 })
             })
             .collect()

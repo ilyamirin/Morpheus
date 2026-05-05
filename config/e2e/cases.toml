@@ -1,0 +1,38 @@
+[instance]
+instance_id = "cases.example"
+matrix_server_name = "cases.example"
+application_service_id = "io.marketplace.cases"
+catalog_room_id = "!catalog:cases.example"
+protocol_versions = ["0.1"]
+payment_adapters = ["mock"]
+entitlement_types = ["external_entitlement"]
+
+[appservice]
+homeserver_url = "http://synapse-cases:8008"
+url = "http://morpheus-cases:8080"
+sender_localpart = "market"
+namespace_prefix = "market_"
+homeserver_token = "cases-hs-token"
+appservice_token = "cases-as-token"
+
+[database]
+url = "postgres://morpheus:morpheus@postgres-cases:5432/morpheus"
+
+[admin]
+bind = "0.0.0.0:8080"
+bearer_token_env = "MORPHEUS_ADMIN_TOKEN"
+
+[[allowlist.instances]]
+instance_id = "books.example"
+capabilities = ["catalog", "orders", "indexing"]
+status = "active"
+
+[[allowlist.instances]]
+instance_id = "cases.example"
+capabilities = ["catalog", "orders", "indexing", "arbitration"]
+status = "active"
+
+[[allowlist.instances]]
+instance_id = "fashion.example"
+capabilities = ["catalog", "orders", "indexing"]
+status = "active"

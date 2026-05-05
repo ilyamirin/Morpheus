@@ -1,0 +1,11 @@
+[package]
+name = "morpheus-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+toml.workspace = true
