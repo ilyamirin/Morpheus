@@ -19,6 +19,7 @@ use morpheus_store::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use ulid::Ulid;
 
 mod context_validation;
@@ -194,6 +195,54 @@ async fn ensure_room_with_body(
         .ok_or_else(|| publisher_error("room alias response is missing room_id"))
 }
 
+async fn wait_for_joined_members(
+    client: &reqwest::Client,
+    homeserver_url: &str,
+    appservice_token: &str,
+    sender_user_id: &str,
+    room_id: &str,
+    user_ids: &[String],
+) -> Result<(), ValidationError> {
+    let mut pending = user_ids.iter().cloned().collect::<BTreeSet<_>>();
+    if pending.is_empty() {
+        return Ok(());
+    }
+
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(10);
+    while tokio::time::Instant::now() < deadline {
+        for user_id in pending.clone() {
+            let url = matrix_room_member_state_url(
+                homeserver_url,
+                room_id,
+                &user_id,
+                appservice_token,
+                sender_user_id,
+            )?;
+            let Ok(response) = client.get(url).send().await else {
+                continue;
+            };
+            if !response.status().is_success() {
+                continue;
+            }
+            let Ok(value) = response.json::<Value>().await else {
+                continue;
+            };
+            if value.get("membership").and_then(Value::as_str) == Some("join") {
+                pending.remove(&user_id);
+            }
+        }
+        if pending.is_empty() {
+            return Ok(());
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+    }
+
+    Err(publisher_error(&format!(
+        "invited Matrix users did not join order room {room_id}: {}",
+        pending.into_iter().collect::<Vec<_>>().join(", ")
+    )))
+}
+
 #[async_trait::async_trait]
 impl MatrixPublisher for SynapseMatrixPublisher {
     async fn publish(&self, events: Vec<Value>) -> Result<Vec<Value>, ValidationError> {
@@ -250,7 +299,7 @@ impl MatrixPublisher for SynapseMatrixPublisher {
         invite_user_ids: &[String],
     ) -> Result<String, ValidationError> {
         let create_body = matrix_create_order_room_body(alias, order_id, invite_user_ids)?;
-        match ensure_room_with_body(
+        let room_id = ensure_room_with_body(
             &self.client,
             &self.homeserver_url,
             &self.appservice_token,
@@ -259,30 +308,17 @@ impl MatrixPublisher for SynapseMatrixPublisher {
             create_body,
             "order",
         )
-        .await
-        {
-            Ok(room_id) => Ok(room_id),
-            Err(invite_err) if !invite_user_ids.is_empty() => {
-                let create_body = matrix_create_order_room_body(alias, order_id, &[])?;
-                ensure_room_with_body(
-                    &self.client,
-                    &self.homeserver_url,
-                    &self.appservice_token,
-                    &self.sender_user_id,
-                    alias,
-                    create_body,
-                    "order",
-                )
-                .await
-                .map_err(|retry_err| {
-                    publisher_error(&format!(
-                        "creating order room with invites failed: {}; retry without invites failed: {}",
-                        invite_err.message, retry_err.message
-                    ))
-                })
-            }
-            Err(err) => Err(err),
-        }
+        .await?;
+        wait_for_joined_members(
+            &self.client,
+            &self.homeserver_url,
+            &self.appservice_token,
+            &self.sender_user_id,
+            &room_id,
+            invite_user_ids,
+        )
+        .await?;
+        Ok(room_id)
     }
 
     async fn ensure_room_joined(&self, room_id: &str) -> Result<(), ValidationError> {
@@ -437,6 +473,33 @@ pub fn matrix_join_room_url(
     let base = homeserver_url.trim_end_matches('/');
     let mut url = reqwest::Url::parse(&format!("{base}/_matrix/client/v3/join/{room_id}"))
         .map_err(|err| publisher_error(&format!("invalid Matrix join URL: {err}")))?;
+    url.query_pairs_mut()
+        .append_pair("access_token", appservice_token)
+        .append_pair("user_id", sender_user_id);
+    Ok(url)
+}
+
+pub fn matrix_room_member_state_url(
+    homeserver_url: &str,
+    room_id: &str,
+    user_id: &str,
+    appservice_token: &str,
+    sender_user_id: &str,
+) -> Result<reqwest::Url, ValidationError> {
+    let mut url = reqwest::Url::parse(homeserver_url.trim_end_matches('/'))
+        .map_err(|err| publisher_error(&format!("invalid Matrix member state URL: {err}")))?;
+    url.path_segments_mut()
+        .map_err(|_| publisher_error("invalid Matrix member state URL base"))?
+        .extend([
+            "_matrix",
+            "client",
+            "v3",
+            "rooms",
+            room_id,
+            "state",
+            "m.room.member",
+            user_id,
+        ]);
     url.query_pairs_mut()
         .append_pair("access_token", appservice_token)
         .append_pair("user_id", sender_user_id);
@@ -709,6 +772,7 @@ struct AccessTokenQuery {
 
 async fn appservice_transaction<S, P>(
     State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
     Path(txn_id): Path<String>,
     Query(query): Query<AccessTokenQuery>,
     Json(transaction): Json<AppServiceTransaction>,
@@ -717,10 +781,20 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    if query.access_token.as_deref() != Some(state.config.homeserver_token.as_str()) {
+    let query_authorized =
+        query.access_token.as_deref() == Some(state.config.homeserver_token.as_str());
+    if !query_authorized && !bearer_authorized(&headers, &state.config.homeserver_token) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": "unauthorized" })),
+        )
+            .into_response();
+    }
+
+    if let Err(err) = ensure_invited_rooms_joined(&state, &transaction).await {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "code": err.code, "error": err.message, "details": err.details })),
         )
             .into_response();
     }
@@ -729,6 +803,36 @@ where
         Ok(()) => (StatusCode::OK, Json(json!({}))).into_response(),
         Err(response) => response,
     }
+}
+
+async fn ensure_invited_rooms_joined<S, P>(
+    state: &AppState<S, P>,
+    transaction: &AppServiceTransaction,
+) -> Result<(), ValidationError>
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    let local_user_id = matrix_user_id(&state.config, &state.config.instance_id);
+    let mut room_ids = BTreeSet::new();
+
+    for event in &transaction.events {
+        let is_invite = event.get("type").and_then(Value::as_str) == Some("m.room.member")
+            && event.get("state_key").and_then(Value::as_str) == Some(local_user_id.as_str())
+            && event.pointer("/content/membership").and_then(Value::as_str) == Some("invite");
+        if !is_invite {
+            continue;
+        }
+        if let Some(room_id) = event.get("room_id").and_then(Value::as_str) {
+            room_ids.insert(room_id.to_string());
+        }
+    }
+
+    for room_id in room_ids {
+        state.publisher.ensure_room_joined(&room_id).await?;
+    }
+
+    Ok(())
 }
 
 pub async fn ingest_transaction<S>(

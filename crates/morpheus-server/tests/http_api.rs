@@ -386,6 +386,66 @@ async fn transaction_endpoint_accepts_valid_token() {
 }
 
 #[tokio::test]
+async fn transaction_endpoint_accepts_synapse_bearer_token() {
+    let app = build_router(server_config(), InMemoryEventStore::default());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/_matrix/app/v1/transactions/txn-1")
+                .header("authorization", "Bearer hs-token")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"events":[]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn appservice_invite_auto_joins_local_sender_room() {
+    let publisher = RecordingPublisher::default();
+    let joined_rooms = publisher.joined_rooms.clone();
+    let app =
+        build_router_with_publisher(server_config(), InMemoryEventStore::default(), publisher);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/_matrix/app/v1/transactions/txn-invite")
+                .header("authorization", "Bearer hs-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "events": [{
+                            "type": "m.room.member",
+                            "event_id": "$invite-shop",
+                            "room_id": "!remote-order:customer.example",
+                            "sender": "@market:customer.example",
+                            "state_key": "@market:shop.example",
+                            "origin_server_ts": 1_777_888_000_000i64,
+                            "content": {"membership": "invite"}
+                        }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        joined_rooms.lock().unwrap().as_slice(),
+        ["!remote-order:customer.example"]
+    );
+}
+
+#[tokio::test]
 async fn admin_endpoints_reject_missing_malformed_and_wrong_bearer_auth() {
     let endpoints = [
         ("GET", "/admin/config"),

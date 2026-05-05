@@ -40,27 +40,63 @@ services:
     ports: ["18008:8008"]
     volumes:
       - ./.local/e2e/synapse-books:/data
+      - ./.local/e2e/federation/ca.crt:/etc/morpheus/e2e-ca.pem:ro
     networks:
       morpheus-e2e:
-        aliases: [synapse-books, books.example]
+        aliases: [synapse-books]
 
   synapse-cases:
     image: matrixdotorg/synapse:latest
     ports: ["18009:8008"]
     volumes:
       - ./.local/e2e/synapse-cases:/data
+      - ./.local/e2e/federation/ca.crt:/etc/morpheus/e2e-ca.pem:ro
     networks:
       morpheus-e2e:
-        aliases: [synapse-cases, cases.example]
+        aliases: [synapse-cases]
 
   synapse-fashion:
     image: matrixdotorg/synapse:latest
     ports: ["18010:8008"]
     volumes:
       - ./.local/e2e/synapse-fashion:/data
+      - ./.local/e2e/federation/ca.crt:/etc/morpheus/e2e-ca.pem:ro
     networks:
       morpheus-e2e:
-        aliases: [synapse-fashion, fashion.example]
+        aliases: [synapse-fashion]
+
+  federation-books:
+    image: nginx:alpine
+    volumes:
+      - ./.local/e2e/federation/nginx-books.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./.local/e2e/federation/certs:/etc/nginx/certs:ro
+    depends_on:
+      - synapse-books
+    networks:
+      morpheus-e2e:
+        aliases: [books.example]
+
+  federation-cases:
+    image: nginx:alpine
+    volumes:
+      - ./.local/e2e/federation/nginx-cases.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./.local/e2e/federation/certs:/etc/nginx/certs:ro
+    depends_on:
+      - synapse-cases
+    networks:
+      morpheus-e2e:
+        aliases: [cases.example]
+
+  federation-fashion:
+    image: nginx:alpine
+    volumes:
+      - ./.local/e2e/federation/nginx-fashion.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./.local/e2e/federation/certs:/etc/nginx/certs:ro
+    depends_on:
+      - synapse-fashion
+    networks:
+      morpheus-e2e:
+        aliases: [fashion.example]
 
   morpheus-books:
     build: .

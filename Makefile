@@ -14,4 +14,5 @@ e2e-three-synapse:
 	scripts/e2e/run-three-synapse.sh
 
 e2e-three-synapse-down:
-	docker compose -f docker-compose.e2e.yml down
+	docker compose -f docker-compose.e2e.yml down -v
+	find .local/e2e -path '.local/e2e/synapse-*' -type f \( -name 'homeserver.db' -o -name 'homeserver.db-*' \) -delete
