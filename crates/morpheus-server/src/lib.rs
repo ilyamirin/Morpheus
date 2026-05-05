@@ -96,6 +96,30 @@ where
         }
     };
 
+    match state.store.appservice_transaction_event_ids(&txn_id).await {
+        Ok(Some(previous)) if previous == event_ids => {
+            return (StatusCode::OK, Json(json!({}))).into_response();
+        }
+        Ok(Some(_)) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "AppService transactions must be idempotent",
+                    "code": ValidationCode::DuplicateEvent,
+                })),
+            )
+                .into_response();
+        }
+        Ok(None) => {}
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err.message, "code": err.code })),
+            )
+                .into_response();
+        }
+    }
+
     if let Err(err) = state
         .store
         .record_appservice_transaction(AppServiceTransactionRecord { txn_id, event_ids })

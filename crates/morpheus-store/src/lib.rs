@@ -132,6 +132,11 @@ pub struct ArbitrationRulingProjectionRecord {
 
 #[async_trait]
 pub trait EventStore: Clone + Send + Sync + 'static {
+    async fn appservice_transaction_event_ids(
+        &self,
+        txn_id: &str,
+    ) -> Result<Option<Vec<String>>, ValidationError>;
+
     async fn record_appservice_transaction(
         &self,
         transaction: AppServiceTransactionRecord,
@@ -310,6 +315,22 @@ fn pg_json_ref(value: &Value) -> Json<Value> {
 
 #[async_trait]
 impl EventStore for SqliteEventStore {
+    async fn appservice_transaction_event_ids(
+        &self,
+        txn_id: &str,
+    ) -> Result<Option<Vec<String>>, ValidationError> {
+        sqlx::query("SELECT event_ids FROM appservice_transactions WHERE txn_id = ?")
+            .bind(txn_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(store_error)?
+            .map(|row| {
+                let event_ids: String = row.try_get("event_ids").map_err(store_error)?;
+                serde_json::from_str(&event_ids).map_err(store_error)
+            })
+            .transpose()
+    }
+
     async fn record_appservice_transaction(
         &self,
         transaction: AppServiceTransactionRecord,
@@ -1024,6 +1045,22 @@ impl PostgresEventStore {
 
 #[async_trait]
 impl EventStore for PostgresEventStore {
+    async fn appservice_transaction_event_ids(
+        &self,
+        txn_id: &str,
+    ) -> Result<Option<Vec<String>>, ValidationError> {
+        sqlx::query("SELECT event_ids FROM appservice_transactions WHERE txn_id = $1")
+            .bind(txn_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(store_error)?
+            .map(|row| {
+                let event_ids: Json<Vec<String>> = row.try_get("event_ids").map_err(store_error)?;
+                Ok(event_ids.0)
+            })
+            .transpose()
+    }
+
     async fn record_appservice_transaction(
         &self,
         transaction: AppServiceTransactionRecord,
@@ -1760,6 +1797,13 @@ struct InMemoryState {
 
 #[async_trait]
 impl EventStore for InMemoryEventStore {
+    async fn appservice_transaction_event_ids(
+        &self,
+        txn_id: &str,
+    ) -> Result<Option<Vec<String>>, ValidationError> {
+        Ok(self.inner.lock().await.transactions.get(txn_id).cloned())
+    }
+
     async fn record_appservice_transaction(
         &self,
         transaction: AppServiceTransactionRecord,

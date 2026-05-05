@@ -324,6 +324,44 @@ async fn send_transaction_projects_catalog_order_and_payment_state() {
 }
 
 #[tokio::test]
+async fn duplicate_appservice_transaction_is_noop_after_success() {
+    let store = InMemoryEventStore::default();
+    let mut events = catalog_trio();
+    events.extend(order_lifecycle());
+
+    let (first_status, first_body) =
+        send_transaction_to_store(store.clone(), "txn-idempotent-order", events.clone()).await;
+    let (second_status, second_body) =
+        send_transaction_to_store(store.clone(), "txn-idempotent-order", events).await;
+
+    assert_eq!(first_status, StatusCode::OK, "{first_body}");
+    assert_eq!(second_status, StatusCode::OK, "{second_body}");
+    assert!(store.projection_errors().await.unwrap().is_empty());
+    assert_eq!(
+        store
+            .marketplace_events_by_room("!order:customer.example")
+            .await
+            .unwrap()
+            .len(),
+        9
+    );
+}
+
+#[tokio::test]
+async fn conflicting_appservice_transaction_id_is_rejected_before_processing() {
+    let store = InMemoryEventStore::default();
+    let (first_status, first_body) =
+        send_transaction_to_store(store.clone(), "txn-conflicting-order", catalog_trio()).await;
+    let (second_status, second_body) =
+        send_transaction_to_store(store.clone(), "txn-conflicting-order", order_lifecycle()).await;
+
+    assert_eq!(first_status, StatusCode::OK, "{first_body}");
+    assert_eq!(second_status, StatusCode::CONFLICT, "{second_body}");
+    assert_eq!(second_body["code"], "DUPLICATE_EVENT");
+    assert!(store.projection_errors().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn send_transaction_rejects_order_created_when_catalog_terms_do_not_match() {
     let store = InMemoryEventStore::default();
     let mut invalid_order = order_created_event();
