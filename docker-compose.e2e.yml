@@ -1,3 +1,11 @@
+name: morpheus
+
+x-morpheus-build: &morpheus-build
+  image: morpheus-e2e:local
+  build:
+    context: .
+    dockerfile: Dockerfile
+
 services:
   postgres-books:
     image: postgres:16-alpine
@@ -99,7 +107,7 @@ services:
         aliases: [fashion.example]
 
   morpheus-books:
-    build: .
+    <<: *morpheus-build
     command: ["--config", "/etc/morpheus/books.toml"]
     environment:
       MORPHEUS_ADMIN_TOKEN: admin-token
@@ -116,7 +124,7 @@ services:
         aliases: [morpheus-books]
 
   morpheus-cases:
-    build: .
+    <<: *morpheus-build
     command: ["--config", "/etc/morpheus/cases.toml"]
     environment:
       MORPHEUS_ADMIN_TOKEN: admin-token
@@ -133,7 +141,7 @@ services:
         aliases: [morpheus-cases]
 
   morpheus-fashion:
-    build: .
+    <<: *morpheus-build
     command: ["--config", "/etc/morpheus/fashion.toml"]
     environment:
       MORPHEUS_ADMIN_TOKEN: admin-token
