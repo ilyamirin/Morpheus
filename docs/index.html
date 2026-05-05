@@ -44,6 +44,7 @@
             </p>
             <div class="hero-actions">
               <a class="btn primary" href="#install">Быстрый старт</a>
+              <a class="btn ghost" href="dev-environment.html">Mini dev env</a>
               <a class="btn ghost" href="protocol.md">Protocol spec</a>
             </div>
           </div>
@@ -146,6 +147,12 @@
                   </p>
                 </article>
               </div>
+              <div class="callout">
+                В mini dev окружении эти принципы можно проверить руками: seller publication меняет catalog projection,
+                buyer order creation создаёт Matrix order room на backend-е, seller lifecycle публикует события в эту room,
+                а admin UI показывает итоговые counters и validation stream.
+                Подробная инструкция: <a class="inline-link" href="dev-environment.html">Mini dev environment</a>.
+              </div>
             </section>
 
             <section id="architecture" class="doc-section split-section">
@@ -170,6 +177,11 @@
                 <div><span>03</span><strong>Synapse AS</strong><small>transactions endpoint</small></div>
                 <div><span>04</span><strong>Validator</strong><small>protocol + context</small></div>
                 <div><span>05</span><strong>Store</strong><small>raw events + projections</small></div>
+              </div>
+              <div class="callout">
+                В Docker E2E этот pipeline повторяется три раза: `books.example`, `cases.example`, `fashion.example`
+                имеют разные Postgres, Synapse и Morpheus runtime. nginx federation proxies дают Synapse reachable
+                TLS endpoints на `:8448`, а Morpheus servers доступны разработчику на `18081`, `18082`, `18083`.
               </div>
             </section>
 
@@ -212,6 +224,12 @@
                     <li>Завершает order через `order.completed`.</li>
                   </ol>
                 </article>
+              </div>
+              <div class="callout success">
+                Практический путь товара описан отдельно для UI, CLI и HTTP API:
+                <a class="inline-link" href="dev-environment.html#product-ui">UI journey</a>,
+                <a class="inline-link" href="dev-environment.html#cli">CLI journey</a>,
+                <a class="inline-link" href="dev-environment.html#api">API journey</a>.
               </div>
             </section>
 
@@ -330,7 +348,7 @@ docker run --rm \
 MORPHEUS_SELLER_TOKEN=seller-token \
 MORPHEUS_BUYER_TOKEN=buyer-token \
 cargo run -p morpheus-server -- --config config/local.toml</code></pre>
-                  <p>После старта API и PoC UI доступны на `http://127.0.0.1:8080`.</p>
+                  <p>После старта API и PoC UI доступны на <a class="inline-link" href="http://127.0.0.1:8080"><code>http://127.0.0.1:8080</code></a>.</p>
                 </article>
               </div>
             </section>
@@ -340,12 +358,16 @@ cargo run -p morpheus-server -- --config config/local.toml</code></pre>
                 <p class="eyebrow">Federated E2E</p>
                 <h2>7. Запуск трёх federated серверов</h2>
               </div>
-              <p>
-                E2E stack поднимает три независимых marketplace instances: `books.example`,
-                `cases.example`, `fashion.example`. У каждого свой Morpheus server, Synapse homeserver
-                и Postgres database. Federation endpoints обслуживаются nginx TLS proxy на `8448`
-                с local CA, которому доверяют все три Synapse.
-              </p>
+                <p>
+                  E2E stack поднимает три независимых marketplace instances: `books.example`,
+                  `cases.example`, `fashion.example`. У каждого свой Morpheus server, Synapse homeserver
+                  и Postgres database. Federation endpoints обслуживаются nginx TLS proxy на `8448`
+                  с local CA, которому доверяют все три Synapse.
+                </p>
+                <p>
+                  Подробный runbook по контейнерам, UI кабинетам, CLI и API находится на странице
+                  <a class="inline-link" href="dev-environment.html">Mini dev environment</a>.
+                </p>
               <div class="instance-grid">
                 <article><strong>books.example</strong><span>Morpheus: 18081</span><span>Synapse: 18008</span></article>
                 <article><strong>cases.example</strong><span>Morpheus: 18082</span><span>Synapse: 18009</span></article>
