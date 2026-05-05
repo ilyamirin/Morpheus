@@ -2,11 +2,13 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Optional
 
 HASH = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 SELLER_TERMS = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
@@ -165,6 +167,76 @@ def catalog_events(name: str, domain: str, seller_names: list[str]) -> list[dict
     return events
 
 
+def run_cli(server_url: str, token: str, args: list[str], body: Optional[dict] = None) -> None:
+    cli = os.environ.get("MORPHEUS_CLI", "target/debug/morpheus")
+    command = [cli, "--server-url", server_url, "--token", token, *args]
+    if body is not None:
+        command.extend(["--json", json.dumps(body)])
+    result = subprocess.run(command, text=True, capture_output=True)
+    if result.returncode != 0 and cli == "target/debug/morpheus" and not Path(cli).exists():
+        command = ["cargo", "run", "-p", "morpheus-cli", "--", "--server-url", server_url, "--token", token, *args]
+        if body is not None:
+            command.extend(["--json", json.dumps(body)])
+        result = subprocess.run(command, text=True, capture_output=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"CLI failed: {' '.join(command)}\nstdout={result.stdout}\nstderr={result.stderr}")
+
+
+def seed_catalog_with_cli(name: str, domain: str, seller_names: list[str], server_url: str) -> None:
+    for seller_index, seller_name in enumerate(seller_names, start=1):
+        seller_id = f"seller:{domain}:{local(name.upper() + 'SELLER', seller_index)}"
+        run_cli(
+            server_url,
+            "seller-token",
+            ["seller", "announce"],
+            {
+                "seller_id": seller_id,
+                "display_name": seller_name.title(),
+                "legal_profile_ref": f"https://{domain}/legal/{seller_index}",
+                "terms_ref": f"https://{domain}/terms/{seller_index}",
+                "terms_hash": HASH,
+                "supported_payment_adapters": ["mock"],
+                "supported_entitlement_types": ["external_entitlement"],
+            },
+        )
+        for product_index in range(1, 3):
+            product_id = f"prod:{domain}:{local(name.upper() + 'PROD', seller_index, product_index)}"
+            offer_id = f"offer:{domain}:{local(name.upper() + 'OFFER', seller_index, product_index)}"
+            run_cli(
+                server_url,
+                "seller-token",
+                ["seller", "product", "upsert"],
+                {
+                    "product_id": product_id,
+                    "seller_id": seller_id,
+                    "revision": 1,
+                    "kind": "external_entitlement",
+                    "title": f"{seller_name.title()} Item {product_index}",
+                    "description": f"Demo catalog item for {seller_name}",
+                    "categories": [seller_name],
+                    "tags": [name, "demo"],
+                    "terms_hash": HASH,
+                },
+            )
+            run_cli(
+                server_url,
+                "seller-token",
+                ["seller", "offer", "upsert"],
+                {
+                    "offer_id": offer_id,
+                    "product_id": product_id,
+                    "seller_id": seller_id,
+                    "revision": 1,
+                    "price": {"amount": f"{20 + seller_index * 5 + product_index}.00", "currency": "USD"},
+                    "payment_capture_policy": "before_entitlement",
+                    "seller_terms_hash": SELLER_TERMS,
+                    "offer_terms_hash": OFFER_TERMS,
+                    "entitlement_type": "external_entitlement",
+                    "availability_mode": "unlimited",
+                },
+            )
+
+
 def order_events() -> list[dict]:
     room_id = "!order-books-fashion:fashion.example"
     customer = "customer:books.example:BOOKCUST01"
@@ -321,10 +393,7 @@ def main() -> int:
     for name, meta in INSTANCES.items():
         domain = meta["domain"]
         url = os.environ.get(meta["url_env"], meta["default_url"])
-        token = configs[name]["appservice"]["homeserver_token"]
-        events = catalog_events(name, domain, meta["sellers"])
-        send_transaction(url, token, f"{name}-catalog-seed", events)
-        send_transaction(url, token, f"{name}-catalog-seed", events)
+        seed_catalog_with_cli(name, domain, meta["sellers"], url)
 
     fashion_url = os.environ.get("MORPHEUS_FASHION_URL", INSTANCES["fashion"]["default_url"])
     fashion_token = configs["fashion"]["appservice"]["homeserver_token"]

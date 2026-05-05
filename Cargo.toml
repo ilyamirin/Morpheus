@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/morpheus-api",
   "crates/morpheus-cli",
   "crates/morpheus-config",
   "crates/morpheus-conformance",
@@ -31,6 +32,7 @@ serde_json = "1"
 serde_yaml = "0.9"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "sqlite", "json", "chrono", "migrate"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
@@ -38,6 +40,7 @@ toml = "0.9"
 tower = "0.5"
 ulid = "1"
 
+morpheus-api = { path = "crates/morpheus-api" }
 morpheus-cli = { path = "crates/morpheus-cli" }
 morpheus-config = { path = "crates/morpheus-config" }
 morpheus-conformance = { path = "crates/morpheus-conformance" }

@@ -3,3 +3,4 @@ target/
 .worktrees/
 .local/
 dist/
+.venv/

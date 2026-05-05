@@ -26,6 +26,18 @@ async fn main() -> Result<()> {
             config.admin.bearer_token_env
         )
     })?;
+    let seller_token = env::var(&config.auth.seller_token_env).with_context(|| {
+        format!(
+            "missing seller bearer token env {}",
+            config.auth.seller_token_env
+        )
+    })?;
+    let buyer_token = env::var(&config.auth.buyer_token_env).with_context(|| {
+        format!(
+            "missing buyer bearer token env {}",
+            config.auth.buyer_token_env
+        )
+    })?;
     let pool = connect_postgres(&config.database.url).await?;
     sqlx::raw_sql(migrations::POSTGRES_0001)
         .execute(&pool)
@@ -35,8 +47,14 @@ async fn main() -> Result<()> {
     let store = PostgresEventStore::new(pool);
     let app = build_router(
         ServerConfig {
+            instance_id: config.instance.instance_id,
+            matrix_server_name: config.instance.matrix_server_name,
+            catalog_room_id: config.instance.catalog_room_id,
+            appservice_sender_localpart: config.appservice.sender_localpart,
             homeserver_token: config.appservice.homeserver_token,
             admin_token,
+            seller_token,
+            buyer_token,
         },
         store,
     );

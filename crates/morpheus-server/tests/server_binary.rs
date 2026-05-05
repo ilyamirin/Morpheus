@@ -30,6 +30,10 @@ url = "postgres://morpheus:morpheus@127.0.0.1:1/morpheus"
 [admin]
 bind = "127.0.0.1:0"
 bearer_token_env = "MORPHEUS_TEST_ADMIN_TOKEN_MISSING"
+
+[auth]
+seller_token_env = "MORPHEUS_TEST_SELLER_TOKEN_MISSING"
+buyer_token_env = "MORPHEUS_TEST_BUYER_TOKEN_MISSING"
 "#,
     )
     .unwrap();

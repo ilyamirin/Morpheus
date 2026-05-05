@@ -22,6 +22,10 @@ url = "postgres://morpheus:morpheus@postgres-books:5432/morpheus"
 bind = "0.0.0.0:8080"
 bearer_token_env = "MORPHEUS_ADMIN_TOKEN"
 
+[auth]
+seller_token_env = "MORPHEUS_SELLER_TOKEN"
+buyer_token_env = "MORPHEUS_BUYER_TOKEN"
+
 [[allowlist.instances]]
 instance_id = "books.example"
 capabilities = ["catalog", "orders", "indexing"]

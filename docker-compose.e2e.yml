@@ -67,6 +67,8 @@ services:
     command: ["--config", "/etc/morpheus/books.toml"]
     environment:
       MORPHEUS_ADMIN_TOKEN: admin-token
+      MORPHEUS_SELLER_TOKEN: seller-token
+      MORPHEUS_BUYER_TOKEN: buyer-token
     ports: ["18081:8080"]
     volumes:
       - ./config/e2e/books.toml:/etc/morpheus/books.toml:ro
@@ -82,6 +84,8 @@ services:
     command: ["--config", "/etc/morpheus/cases.toml"]
     environment:
       MORPHEUS_ADMIN_TOKEN: admin-token
+      MORPHEUS_SELLER_TOKEN: seller-token
+      MORPHEUS_BUYER_TOKEN: buyer-token
     ports: ["18082:8080"]
     volumes:
       - ./config/e2e/cases.toml:/etc/morpheus/cases.toml:ro
@@ -97,6 +101,8 @@ services:
     command: ["--config", "/etc/morpheus/fashion.toml"]
     environment:
       MORPHEUS_ADMIN_TOKEN: admin-token
+      MORPHEUS_SELLER_TOKEN: seller-token
+      MORPHEUS_BUYER_TOKEN: buyer-token
     ports: ["18083:8080"]
     volumes:
       - ./config/e2e/fashion.toml:/etc/morpheus/fashion.toml:ro

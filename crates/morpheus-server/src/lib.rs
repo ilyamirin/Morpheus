@@ -5,48 +5,152 @@ use axum::{
     response::IntoResponse,
     routing::{get, post, put},
 };
+use chrono::Utc;
+use morpheus_api::{
+    BuyerOrderCreateRequest, EntitlementGrantRequest, OfferUpsertRequest, OfferWithdrawRequest,
+    OrderAcceptRequest, OrderActionRequest, PaymentCaptureRequest, PaymentIntentRequest,
+    ProductUpsertRequest, SellerAnnounceRequest,
+};
 use morpheus_matrix::{AppServiceTransaction, validate_transaction_event_ids};
-use morpheus_protocol::{ValidationCode, validate_event_envelope};
+use morpheus_protocol::{ValidationCode, ValidationError, parse_actor_id, validate_event_envelope};
 use morpheus_store::{
     AppServiceTransactionRecord, EventStore, ProjectionErrorRecord, RawMatrixEventRecord,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use ulid::Ulid;
 
 mod context_validation;
 mod projection;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
+    pub instance_id: String,
+    pub matrix_server_name: String,
+    pub catalog_room_id: String,
+    pub appservice_sender_localpart: String,
     pub homeserver_token: String,
     pub admin_token: String,
+    pub seller_token: String,
+    pub buyer_token: String,
 }
 
 #[derive(Clone)]
-struct AppState<S> {
+struct AppState<S, P> {
     config: ServerConfig,
     store: S,
+    publisher: P,
+}
+
+#[async_trait::async_trait]
+pub trait MatrixPublisher: Clone + Send + Sync + 'static {
+    async fn publish(&self, events: Vec<Value>) -> Result<Vec<Value>, ValidationError>;
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct InProcessMatrixPublisher;
+
+#[async_trait::async_trait]
+impl MatrixPublisher for InProcessMatrixPublisher {
+    async fn publish(&self, events: Vec<Value>) -> Result<Vec<Value>, ValidationError> {
+        Ok(events)
+    }
 }
 
 pub fn build_router<S>(config: ServerConfig, store: S) -> Router
 where
     S: EventStore,
 {
-    let state = AppState { config, store };
+    build_router_with_publisher(config, store, InProcessMatrixPublisher)
+}
+
+pub fn build_router_with_publisher<S, P>(config: ServerConfig, store: S, publisher: P) -> Router
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    let state = AppState {
+        config,
+        store,
+        publisher,
+    };
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics))
+        .route("/admin/health", get(healthz))
         .route(
             "/_matrix/app/v1/transactions/{txn_id}",
-            put(appservice_transaction::<S>),
+            put(appservice_transaction::<S, P>),
         )
-        .route("/admin/config", get(admin_config::<S>))
-        .route("/admin/allowlist", get(admin_allowlist::<S>))
-        .route("/admin/catalog/rebuild", post(admin_catalog_rebuild::<S>))
+        .route("/admin/config", get(admin_config::<S, P>))
+        .route("/admin/allowlist", get(admin_allowlist::<S, P>))
+        .route(
+            "/admin/projections/summary",
+            get(admin_projection_summary::<S, P>),
+        )
+        .route("/admin/events", get(admin_events::<S, P>))
+        .route(
+            "/admin/catalog/rebuild",
+            post(admin_catalog_rebuild::<S, P>),
+        )
         .route(
             "/admin/orders/{order_id}/replay",
-            post(admin_order_replay::<S>),
+            post(admin_order_replay::<S, P>),
+        )
+        .route("/api/v1/seller/announce", post(seller_announce::<S, P>))
+        .route(
+            "/api/v1/seller/products",
+            post(seller_product_upsert::<S, P>),
+        )
+        .route("/api/v1/seller/offers", post(seller_offer_upsert::<S, P>))
+        .route(
+            "/api/v1/seller/offers/{offer_id}/withdraw",
+            post(seller_offer_withdraw::<S, P>),
+        )
+        .route("/api/v1/seller/orders", get(seller_orders::<S, P>))
+        .route(
+            "/api/v1/seller/orders/{order_id}/accept",
+            post(seller_order_accept::<S, P>),
+        )
+        .route(
+            "/api/v1/seller/orders/{order_id}/reject",
+            post(seller_order_reject::<S, P>),
+        )
+        .route(
+            "/api/v1/seller/orders/{order_id}/payment-intent",
+            post(seller_payment_intent::<S, P>),
+        )
+        .route(
+            "/api/v1/seller/orders/{order_id}/payment-capture",
+            post(seller_payment_capture::<S, P>),
+        )
+        .route(
+            "/api/v1/seller/orders/{order_id}/entitlement-grant",
+            post(seller_entitlement_grant::<S, P>),
+        )
+        .route(
+            "/api/v1/seller/orders/{order_id}/complete",
+            post(seller_order_complete::<S, P>),
+        )
+        .route("/api/v1/catalog/sellers", get(catalog_sellers::<S, P>))
+        .route("/api/v1/catalog/products", get(catalog_products::<S, P>))
+        .route("/api/v1/catalog/offers", get(catalog_offers::<S, P>))
+        .route(
+            "/api/v1/catalog/offers/{offer_id}",
+            get(catalog_offer::<S, P>),
+        )
+        .route(
+            "/api/v1/buyer/orders",
+            post(buyer_order_create::<S, P>).get(buyer_orders::<S, P>),
+        )
+        .route(
+            "/api/v1/buyer/orders/{order_id}",
+            get(buyer_order_show::<S, P>),
+        )
+        .route(
+            "/api/v1/buyer/orders/{order_id}/cancel",
+            post(buyer_order_cancel::<S, P>),
         )
         .with_state(state)
 }
@@ -68,14 +172,15 @@ struct AccessTokenQuery {
     access_token: Option<String>,
 }
 
-async fn appservice_transaction<S>(
-    State(state): State<AppState<S>>,
+async fn appservice_transaction<S, P>(
+    State(state): State<AppState<S, P>>,
     Path(txn_id): Path<String>,
     Query(query): Query<AccessTokenQuery>,
     Json(transaction): Json<AppServiceTransaction>,
 ) -> impl IntoResponse
 where
     S: EventStore,
+    P: MatrixPublisher,
 {
     if query.access_token.as_deref() != Some(state.config.homeserver_token.as_str()) {
         return (
@@ -85,51 +190,64 @@ where
             .into_response();
     }
 
+    match ingest_transaction(&state.store, txn_id, transaction).await {
+        Ok(()) => (StatusCode::OK, Json(json!({}))).into_response(),
+        Err(response) => response,
+    }
+}
+
+pub async fn ingest_transaction<S>(
+    store: &S,
+    txn_id: String,
+    transaction: AppServiceTransaction,
+) -> Result<(), axum::response::Response>
+where
+    S: EventStore,
+{
     let event_ids = match validate_transaction_event_ids(&transaction) {
         Ok(event_ids) => event_ids,
         Err(err) => {
-            return (
+            return Err((
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": err.to_string(), "code": "INVALID_TRANSACTION" })),
             )
-                .into_response();
+                .into_response());
         }
     };
 
-    match state.store.appservice_transaction_event_ids(&txn_id).await {
+    match store.appservice_transaction_event_ids(&txn_id).await {
         Ok(Some(previous)) if previous == event_ids => {
-            return (StatusCode::OK, Json(json!({}))).into_response();
+            return Ok(());
         }
         Ok(Some(_)) => {
-            return (
+            return Err((
                 StatusCode::CONFLICT,
                 Json(json!({
                     "error": "AppService transactions must be idempotent",
                     "code": ValidationCode::DuplicateEvent,
                 })),
             )
-                .into_response();
+                .into_response());
         }
         Ok(None) => {}
         Err(err) => {
-            return (
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": err.message, "code": err.code })),
             )
-                .into_response();
+                .into_response());
         }
     }
 
-    if let Err(err) = state
-        .store
+    if let Err(err) = store
         .record_appservice_transaction(AppServiceTransactionRecord { txn_id, event_ids })
         .await
     {
-        return (
+        return Err((
             StatusCode::CONFLICT,
             Json(json!({ "error": err.message, "code": err.code })),
         )
-            .into_response();
+            .into_response());
     }
 
     for raw in transaction.events {
@@ -150,10 +268,9 @@ where
         let status = match validate_event_envelope(&raw) {
             Ok(validated) => {
                 if let Err(err) =
-                    context_validation::validate_event_context(&state.store, &validated).await
+                    context_validation::validate_event_context(store, &validated).await
                 {
-                    if let Err(store_err) = state
-                        .store
+                    if let Err(store_err) = store
                         .record_raw_event(RawMatrixEventRecord {
                             event_id: validated.matrix_event_id.clone(),
                             room_id: validated.room_id.clone(),
@@ -166,14 +283,13 @@ where
                         })
                         .await
                     {
-                        return (
+                        return Err((
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(json!({ "error": store_err.message, "code": store_err.code })),
                         )
-                            .into_response();
+                            .into_response());
                     }
-                    let _ = state
-                        .store
+                    let _ = store
                         .record_projection_error(ProjectionErrorRecord {
                             matrix_event_id: Some(validated.matrix_event_id),
                             code: err.code,
@@ -181,11 +297,11 @@ where
                             details: err.details.clone(),
                         })
                         .await;
-                    return (
+                    return Err((
                         StatusCode::UNPROCESSABLE_ENTITY,
                         Json(json!({ "error": err.message, "code": err.code })),
                     )
-                        .into_response();
+                        .into_response());
                 }
 
                 let record = RawMatrixEventRecord {
@@ -198,26 +314,26 @@ where
                     validation_status: "accepted".into(),
                     validation_code: None,
                 };
-                if let Err(err) = state.store.record_raw_event(record.clone()).await {
-                    return (
+                if let Err(err) = store.record_raw_event(record.clone()).await {
+                    return Err((
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(json!({ "error": err.message, "code": err.code })),
                     )
-                        .into_response();
+                        .into_response());
                 }
                 if let Err(err) = projection::persist_and_project(
-                    &state.store,
+                    store,
                     &validated,
                     protocol_version.as_str(),
                     created_at.as_str(),
                 )
                 .await
                 {
-                    return (
+                    return Err((
                         StatusCode::UNPROCESSABLE_ENTITY,
                         Json(json!({ "error": err.message, "code": err.code })),
                     )
-                        .into_response();
+                        .into_response());
                 }
                 continue;
             }
@@ -248,21 +364,25 @@ where
                 validation_code: Some(err.code),
             },
         };
-        if let Err(err) = state.store.record_raw_event(status).await {
-            return (
+        if let Err(err) = store.record_raw_event(status).await {
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": err.message, "code": err.code })),
             )
-                .into_response();
+                .into_response());
         }
     }
 
-    (StatusCode::OK, Json(json!({}))).into_response()
+    Ok(())
 }
 
-async fn admin_config<S>(State(state): State<AppState<S>>, headers: HeaderMap) -> impl IntoResponse
+async fn admin_config<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+) -> impl IntoResponse
 where
     S: EventStore,
+    P: MatrixPublisher,
 {
     if !admin_authorized(&headers, &state.config.admin_token) {
         return admin_unauthorized();
@@ -279,12 +399,13 @@ where
     .into_response()
 }
 
-async fn admin_allowlist<S>(
-    State(state): State<AppState<S>>,
+async fn admin_allowlist<S, P>(
+    State(state): State<AppState<S, P>>,
     headers: HeaderMap,
 ) -> impl IntoResponse
 where
     S: EventStore,
+    P: MatrixPublisher,
 {
     if !admin_authorized(&headers, &state.config.admin_token) {
         return admin_unauthorized();
@@ -297,12 +418,44 @@ where
     .into_response()
 }
 
-async fn admin_catalog_rebuild<S>(
-    State(state): State<AppState<S>>,
+async fn admin_projection_summary<S, P>(
+    State(state): State<AppState<S, P>>,
     headers: HeaderMap,
 ) -> impl IntoResponse
 where
     S: EventStore,
+    P: MatrixPublisher,
+{
+    if !admin_authorized(&headers, &state.config.admin_token) {
+        return admin_unauthorized();
+    }
+    projection_summary(&state.store).await
+}
+
+async fn admin_events<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if !admin_authorized(&headers, &state.config.admin_token) {
+        return admin_unauthorized();
+    }
+    match state.store.projection_errors().await {
+        Ok(errors) => Json(json!({ "events": errors })).into_response(),
+        Err(err) => store_error_response(err.message, err.code),
+    }
+}
+
+async fn admin_catalog_rebuild<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
 {
     if !admin_authorized(&headers, &state.config.admin_token) {
         return admin_unauthorized();
@@ -321,13 +474,14 @@ where
         .into_response()
 }
 
-async fn admin_order_replay<S>(
-    State(state): State<AppState<S>>,
+async fn admin_order_replay<S, P>(
+    State(state): State<AppState<S, P>>,
     headers: HeaderMap,
     Path(order_id): Path<String>,
 ) -> impl IntoResponse
 where
     S: EventStore,
+    P: MatrixPublisher,
 {
     if !admin_authorized(&headers, &state.config.admin_token) {
         return admin_unauthorized();
@@ -365,11 +519,758 @@ where
         .into_response()
 }
 
-fn admin_authorized(headers: &HeaderMap, token: &str) -> bool {
+async fn seller_announce<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Json(request): Json<SellerAnnounceRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.seller_token,
+        "seller",
+        &state.config.instance_id,
+        &request.seller_id,
+    ) {
+        return response;
+    }
+    publish_generated(
+        &state,
+        vec![marketplace_event(
+            &state.config,
+            "io.marketplace.actor.seller.announced",
+            &state.config.catalog_room_id,
+            &request.seller_id,
+            json!({
+                "seller_id": request.seller_id,
+                "status": "active",
+                "display_name": request.display_name,
+                "legal_profile_ref": request.legal_profile_ref,
+                "terms_ref": request.terms_ref,
+                "terms_hash": request.terms_hash,
+                "supported_payment_adapters": request.supported_payment_adapters,
+                "supported_entitlement_types": request.supported_entitlement_types,
+            }),
+        )],
+    )
+    .await
+}
+
+async fn seller_product_upsert<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Json(request): Json<ProductUpsertRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.seller_token,
+        "seller",
+        &state.config.instance_id,
+        &request.seller_id,
+    ) {
+        return response;
+    }
+    publish_generated(
+        &state,
+        vec![marketplace_event(
+            &state.config,
+            "io.marketplace.product.upserted",
+            &state.config.catalog_room_id,
+            &request.seller_id,
+            json!({
+                "product_id": request.product_id,
+                "seller_id": request.seller_id,
+                "revision": request.revision,
+                "status": "active",
+                "kind": request.kind,
+                "title": request.title,
+                "description": request.description,
+                "categories": request.categories,
+                "tags": request.tags,
+                "media": [],
+                "terms_hash": request.terms_hash,
+            }),
+        )],
+    )
+    .await
+}
+
+async fn seller_offer_upsert<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Json(request): Json<OfferUpsertRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.seller_token,
+        "seller",
+        &state.config.instance_id,
+        &request.seller_id,
+    ) {
+        return response;
+    }
+    publish_generated(
+        &state,
+        vec![marketplace_event(
+            &state.config,
+            "io.marketplace.offer.upserted",
+            &state.config.catalog_room_id,
+            &request.seller_id,
+            json!({
+                "offer_id": request.offer_id,
+                "product_id": request.product_id,
+                "seller_id": request.seller_id,
+                "revision": request.revision,
+                "status": "active",
+                "price": request.price,
+                "payment_terms": {
+                    "capture_policy": request.payment_capture_policy,
+                    "adapter_policy": "seller_supported",
+                },
+                "seller_terms_hash": request.seller_terms_hash,
+                "offer_terms_hash": request.offer_terms_hash,
+                "entitlement": {"type": request.entitlement_type, "delivery": "external"},
+                "availability": {"mode": request.availability_mode},
+            }),
+        )],
+    )
+    .await
+}
+
+async fn seller_offer_withdraw<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(offer_id): Path<String>,
+    Json(request): Json<OfferWithdrawRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.seller_token,
+        "seller",
+        &state.config.instance_id,
+        &request.seller_id,
+    ) {
+        return response;
+    }
+    publish_generated(
+        &state,
+        vec![marketplace_event(
+            &state.config,
+            "io.marketplace.offer.withdrawn",
+            &state.config.catalog_room_id,
+            &request.seller_id,
+            json!({
+                "offer_id": offer_id,
+                "seller_id": request.seller_id,
+                "reason": request.reason.unwrap_or_else(|| "seller_withdrawn".into()),
+            }),
+        )],
+    )
+    .await
+}
+
+async fn seller_orders<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if !bearer_authorized(&headers, &state.config.seller_token) {
+        return role_unauthorized();
+    }
+    list_orders(&state.store).await
+}
+
+async fn seller_order_accept<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+    Json(request): Json<OrderAcceptRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.seller_token,
+        "seller",
+        &state.config.instance_id,
+        &request.actor_id,
+    ) {
+        return response;
+    }
+    order_event_response(
+        &state,
+        "io.marketplace.order.accepted",
+        &order_id,
+        &request.actor_id,
+        json!({
+            "order_id": order_id,
+            "offer_revision": request.offer_revision,
+            "seller_terms_hash": request.seller_terms_hash,
+            "offer_terms_hash": request.offer_terms_hash,
+            "payment_capture_policy": request.payment_capture_policy,
+            "arbitration_policy_version": request.arbitration_policy_version,
+        }),
+    )
+    .await
+}
+
+async fn seller_order_reject<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+    Json(request): Json<OrderActionRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    seller_simple_order_event(
+        state,
+        headers,
+        order_id,
+        request,
+        "io.marketplace.order.rejected",
+    )
+    .await
+}
+
+async fn seller_order_complete<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+    Json(request): Json<OrderActionRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    seller_simple_order_event(
+        state,
+        headers,
+        order_id,
+        request,
+        "io.marketplace.order.completed",
+    )
+    .await
+}
+
+async fn seller_payment_intent<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+    Json(request): Json<PaymentIntentRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.seller_token,
+        "seller",
+        &state.config.instance_id,
+        &request.actor_id,
+    ) {
+        return response;
+    }
+    order_event_response(
+        &state,
+        "io.marketplace.payment.intent.created",
+        &order_id,
+        &request.actor_id,
+        json!({
+            "order_id": order_id,
+            "payment_id": request.payment_id,
+            "adapter": request.adapter,
+            "amount": request.amount,
+            "currency": request.currency,
+            "capture_policy": request.capture_policy,
+            "idempotency_key": request.idempotency_key,
+            "provider_ref": request.provider_ref,
+            "confirmation": request.confirmation,
+            "expires_at": request.expires_at,
+        }),
+    )
+    .await
+}
+
+async fn seller_payment_capture<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+    Json(request): Json<PaymentCaptureRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.seller_token,
+        "seller",
+        &state.config.instance_id,
+        &request.actor_id,
+    ) {
+        return response;
+    }
+    order_event_response(
+        &state,
+        "io.marketplace.payment.captured",
+        &order_id,
+        &request.actor_id,
+        json!({
+            "order_id": order_id,
+            "payment_id": request.payment_id,
+            "adapter": request.adapter,
+            "amount": request.amount,
+            "currency": request.currency,
+            "provider_ref": request.provider_ref,
+            "evidence": request.evidence,
+        }),
+    )
+    .await
+}
+
+async fn seller_entitlement_grant<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+    Json(request): Json<EntitlementGrantRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.seller_token,
+        "seller",
+        &state.config.instance_id,
+        &request.actor_id,
+    ) {
+        return response;
+    }
+    order_event_response(
+        &state,
+        "io.marketplace.entitlement.granted",
+        &order_id,
+        &request.actor_id,
+        json!({
+            "order_id": order_id,
+            "payment_id": request.payment_id,
+            "entitlement_id": request.entitlement_id,
+            "type": request.entitlement_type,
+            "external_ref": request.external_ref,
+            "evidence": request.evidence,
+        }),
+    )
+    .await
+}
+
+async fn buyer_order_create<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Json(request): Json<BuyerOrderCreateRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.buyer_token,
+        "customer",
+        &state.config.instance_id,
+        &request.customer_id,
+    ) {
+        return response;
+    }
+    let customer_bound = marketplace_event(
+        &state.config,
+        "io.marketplace.actor.customer.bound",
+        &request.room_id,
+        &request.customer_id,
+        json!({
+            "customer_id": request.customer_id,
+            "status": "active",
+            "display_name": request.customer_display_name,
+            "instance_id": state.config.instance_id,
+            "authorized_representatives": [format!("@{}:{}", state.config.appservice_sender_localpart, state.config.matrix_server_name)],
+            "accepted_payment_adapters": ["mock"],
+            "accepted_arbitration_policies": [request.arbitration_policy_id.clone()],
+        }),
+    );
+    let order_created = marketplace_event(
+        &state.config,
+        "io.marketplace.order.created",
+        &request.room_id,
+        &request.customer_id,
+        json!({
+            "order_id": request.order_id,
+            "room_id": request.room_id,
+            "customer_id": request.customer_id,
+            "seller_id": request.seller_id,
+            "offer_id": request.offer_id,
+            "offer_revision": request.offer_revision,
+            "catalog_snapshot_id": request.catalog_snapshot_id,
+            "quantity": 1,
+            "price": request.price,
+            "payment_adapter": request.payment_adapter,
+            "payment_capture_policy": request.payment_capture_policy,
+            "entitlement_type": request.entitlement_type,
+            "seller_terms_hash": request.seller_terms_hash,
+            "offer_terms_hash": request.offer_terms_hash,
+            "arbiter_instance": request.arbiter_instance,
+            "arbiter_actor": request.arbiter_actor,
+            "arbitration_policy_id": request.arbitration_policy_id,
+            "arbitration_policy_version": request.arbitration_policy_version,
+            "arbitration_window": request.arbitration_window,
+            "expires_at": request.expires_at,
+        }),
+    );
+    publish_generated(&state, vec![customer_bound, order_created]).await
+}
+
+async fn buyer_order_cancel<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+    Json(request): Json<OrderActionRequest>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.buyer_token,
+        "customer",
+        &state.config.instance_id,
+        &request.actor_id,
+    ) {
+        return response;
+    }
+    order_event_response(
+        &state,
+        "io.marketplace.order.cancelled",
+        &order_id,
+        &request.actor_id,
+        json!({ "order_id": order_id }),
+    )
+    .await
+}
+
+async fn buyer_orders<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if !bearer_authorized(&headers, &state.config.buyer_token) {
+        return role_unauthorized();
+    }
+    list_orders(&state.store).await
+}
+
+async fn buyer_order_show<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if !bearer_authorized(&headers, &state.config.buyer_token) {
+        return role_unauthorized();
+    }
+    match state.store.order(&order_id).await {
+        Ok(Some(order)) => Json(json!({ "order": order })).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code": "ORDER_NOT_FOUND", "error": "order not found"})),
+        )
+            .into_response(),
+        Err(err) => store_error_response(err.message, err.code),
+    }
+}
+
+async fn catalog_sellers<S, P>(State(state): State<AppState<S, P>>) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    match state.store.catalog_sellers().await {
+        Ok(items) => Json(json!({ "items": items })).into_response(),
+        Err(err) => store_error_response(err.message, err.code),
+    }
+}
+
+async fn catalog_products<S, P>(State(state): State<AppState<S, P>>) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    match state.store.catalog_products().await {
+        Ok(items) => Json(json!({ "items": items })).into_response(),
+        Err(err) => store_error_response(err.message, err.code),
+    }
+}
+
+async fn catalog_offers<S, P>(State(state): State<AppState<S, P>>) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    match state.store.catalog_offers().await {
+        Ok(items) => Json(json!({ "items": items })).into_response(),
+        Err(err) => store_error_response(err.message, err.code),
+    }
+}
+
+async fn catalog_offer<S, P>(
+    State(state): State<AppState<S, P>>,
+    Path(offer_id): Path<String>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    match state.store.catalog_offers().await {
+        Ok(items) => items
+            .into_iter()
+            .find(|offer| offer.offer_id == offer_id)
+            .map(|offer| Json(json!({ "offer": offer })).into_response())
+            .unwrap_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"code": "OFFER_NOT_FOUND", "error": "offer not found"})),
+                )
+                    .into_response()
+            }),
+        Err(err) => store_error_response(err.message, err.code),
+    }
+}
+
+async fn seller_simple_order_event<S, P>(
+    state: AppState<S, P>,
+    headers: HeaderMap,
+    order_id: String,
+    request: OrderActionRequest,
+    event_type: &'static str,
+) -> axum::response::Response
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.seller_token,
+        "seller",
+        &state.config.instance_id,
+        &request.actor_id,
+    ) {
+        return response;
+    }
+    order_event_response(
+        &state,
+        event_type,
+        &order_id,
+        &request.actor_id,
+        json!({ "order_id": order_id }),
+    )
+    .await
+}
+
+async fn order_event_response<S, P>(
+    state: &AppState<S, P>,
+    event_type: &str,
+    order_id: &str,
+    actor_id: &str,
+    body: Value,
+) -> axum::response::Response
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    let room_id = match state.store.order(order_id).await {
+        Ok(Some(order)) => order.room_id,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"code": "ORDER_NOT_FOUND", "error": "order not found"})),
+            )
+                .into_response();
+        }
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    publish_generated(
+        state,
+        vec![marketplace_event(
+            &state.config,
+            event_type,
+            &room_id,
+            actor_id,
+            body,
+        )],
+    )
+    .await
+}
+
+async fn publish_generated<S, P>(
+    state: &AppState<S, P>,
+    events: Vec<Value>,
+) -> axum::response::Response
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    for event in &events {
+        if let Err(err) = validate_event_envelope(event) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "code": err.code, "error": err.message, "details": err.details })),
+            )
+                .into_response();
+        }
+    }
+    let published = match state.publisher.publish(events).await {
+        Ok(events) => events,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "code": err.code, "error": err.message, "details": err.details })),
+            )
+                .into_response();
+        }
+    };
+    let event_ids = published
+        .iter()
+        .filter_map(|event| {
+            event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect::<Vec<_>>();
+    let txn_id = format!("api-{}", Ulid::new());
+    match ingest_transaction(
+        &state.store,
+        txn_id,
+        AppServiceTransaction { events: published },
+    )
+    .await
+    {
+        Ok(()) => (
+            StatusCode::ACCEPTED,
+            Json(json!({ "status": "accepted", "event_ids": event_ids })),
+        )
+            .into_response(),
+        Err(response) => response,
+    }
+}
+
+fn marketplace_event(
+    config: &ServerConfig,
+    event_type: &str,
+    room_id: &str,
+    actor_id: &str,
+    body: Value,
+) -> Value {
+    let local = Ulid::new().to_string();
+    json!({
+        "type": event_type,
+        "room_id": room_id,
+        "event_id": format!("$morpheus-{}:{}", local.to_ascii_lowercase(), config.matrix_server_name),
+        "sender": format!("@{}:{}", config.appservice_sender_localpart, config.matrix_server_name),
+        "origin_server_ts": Utc::now().timestamp_millis(),
+        "content": {
+            "protocol": "io.marketplace",
+            "protocol_version": "0.1",
+            "protocol_event_id": format!("evt:{}:{}", config.instance_id, local),
+            "created_at": Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            "issuer": {
+                "instance_id": config.instance_id,
+                "actor_id": actor_id,
+                "matrix_user_id": format!("@{}:{}", config.appservice_sender_localpart, config.matrix_server_name),
+            },
+            "critical": [],
+            "body": body,
+        },
+    })
+}
+
+fn authorize_actor(
+    headers: &HeaderMap,
+    token: &str,
+    kind: &str,
+    instance_id: &str,
+    actor_id: &str,
+) -> Option<axum::response::Response> {
+    if !bearer_authorized(headers, token) {
+        return Some(role_unauthorized());
+    }
+    match parse_actor_id(actor_id) {
+        Ok(actor) if actor.kind == kind && actor.instance_id == instance_id => None,
+        Ok(_) => Some(
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "code": "ACTOR_FORBIDDEN",
+                    "error": "actor is outside the authorized local role scope",
+                })),
+            )
+                .into_response(),
+        ),
+        Err(err) => Some(
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "code": err.code, "error": err.message, "details": err.details })),
+            )
+                .into_response(),
+        ),
+    }
+}
+
+fn bearer_authorized(headers: &HeaderMap, token: &str) -> bool {
     headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value == format!("Bearer {token}"))
+}
+
+fn role_unauthorized() -> axum::response::Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": "unauthorized", "code": "ROLE_UNAUTHORIZED" })),
+    )
+        .into_response()
+}
+
+fn admin_authorized(headers: &HeaderMap, token: &str) -> bool {
+    bearer_authorized(headers, token)
 }
 
 fn admin_unauthorized() -> axum::response::Response {
@@ -415,6 +1316,55 @@ where
         "offers": offers.len(),
         "tombstones": tombstones.len(),
     }))
+}
+
+async fn projection_summary<S>(store: &S) -> axum::response::Response
+where
+    S: EventStore,
+{
+    let catalog = match catalog_summary(store).await {
+        Ok(catalog) => catalog,
+        Err(response) => return response,
+    };
+    let orders = match store.orders().await {
+        Ok(items) => items.len(),
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    let payments = match store.payments().await {
+        Ok(items) => items.len(),
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    let entitlements = match store.entitlements().await {
+        Ok(items) => items.len(),
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    let disputes = match store.disputes().await {
+        Ok(items) => items.len(),
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    let arbitration_rulings = match store.arbitration_rulings().await {
+        Ok(items) => items.len(),
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    Json(json!({
+        "catalog": catalog,
+        "orders": orders,
+        "payments": payments,
+        "entitlements": entitlements,
+        "disputes": disputes,
+        "arbitration_rulings": arbitration_rulings,
+    }))
+    .into_response()
+}
+
+async fn list_orders<S>(store: &S) -> axum::response::Response
+where
+    S: EventStore,
+{
+    match store.orders().await {
+        Ok(orders) => Json(json!({ "orders": orders })).into_response(),
+        Err(err) => store_error_response(err.message, err.code),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

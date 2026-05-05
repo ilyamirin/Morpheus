@@ -232,8 +232,14 @@ async fn send_transaction_to_store(
 ) -> (StatusCode, Value) {
     let app = build_router(
         ServerConfig {
+            instance_id: "shop.example".into(),
+            matrix_server_name: "customer.example".into(),
+            catalog_room_id: "!catalog:shop.example".into(),
+            appservice_sender_localpart: "market".into(),
             homeserver_token: "hs-token".into(),
             admin_token: "admin-token".into(),
+            seller_token: "seller-token".into(),
+            buyer_token: "buyer-token".into(),
         },
         store,
     );

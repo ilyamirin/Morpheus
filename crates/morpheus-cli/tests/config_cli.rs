@@ -31,6 +31,10 @@ url = "sqlite::memory:"
 bind = "127.0.0.1:8080"
 bearer_token_env = "MORPHEUS_ADMIN_TOKEN"
 
+[auth]
+seller_token_env = "MORPHEUS_SELLER_TOKEN"
+buyer_token_env = "MORPHEUS_BUYER_TOKEN"
+
 [[allowlist.instances]]
 instance_id = "shop.example"
 capabilities = ["catalog", "orders", "indexing"]
@@ -83,6 +87,10 @@ url = "sqlite::memory:"
 [admin]
 bind = "127.0.0.1:8080"
 bearer_token_env = "MORPHEUS_ADMIN_TOKEN"
+
+[auth]
+seller_token_env = "MORPHEUS_SELLER_TOKEN"
+buyer_token_env = "MORPHEUS_BUYER_TOKEN"
 "#,
     )
     .unwrap();
@@ -134,5 +142,94 @@ fn migrates_sqlite_database_file() {
             .windows(b"marketplace_events".len())
             .any(|window| window == b"marketplace_events"),
         "sqlite schema was not written to database file"
+    );
+}
+
+#[test]
+fn admin_health_uses_server_url_and_token() {
+    let output = Command::new(env!("CARGO_BIN_EXE_morpheus"))
+        .env("MORPHEUS_CLI_DRY_RUN_REQUEST", "1")
+        .args([
+            "--server-url",
+            "http://127.0.0.1:18080",
+            "--token",
+            "admin-token",
+            "admin",
+            "health",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let request: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(request["method"], "GET");
+    assert_eq!(request["path"], "/admin/health");
+    assert_eq!(request["url"], "http://127.0.0.1:18080/admin/health");
+    assert_eq!(request["authorization"], "Bearer admin-token");
+}
+
+#[test]
+fn seller_offer_upsert_uses_seller_token_env_and_json_body() {
+    let body = r#"{"seller_id":"seller:shop.example:01JSELLER","product_id":"prod:shop.example:01JPROD","offer_id":"offer:shop.example:01JOFFER","revision":1,"price":{"amount":"10.00","currency":"USD"},"payment_capture_policy":"before_entitlement","seller_terms_hash":"sha256:1111111111111111111111111111111111111111111111111111111111111111","offer_terms_hash":"sha256:2222222222222222222222222222222222222222222222222222222222222222","entitlement_type":"external_entitlement","availability_mode":"unlimited"}"#;
+    let output = Command::new(env!("CARGO_BIN_EXE_morpheus"))
+        .env("MORPHEUS_CLI_DRY_RUN_REQUEST", "1")
+        .env("MORPHEUS_SELLER_TOKEN", "seller-token")
+        .args([
+            "--server-url",
+            "http://127.0.0.1:18080",
+            "seller",
+            "offer",
+            "upsert",
+            "--json",
+            body,
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let request: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(request["method"], "POST");
+    assert_eq!(request["path"], "/api/v1/seller/offers");
+    assert_eq!(request["authorization"], "Bearer seller-token");
+    assert_eq!(request["body"]["offer_id"], "offer:shop.example:01JOFFER");
+}
+
+#[test]
+fn buyer_order_create_token_flag_overrides_env() {
+    let output = Command::new(env!("CARGO_BIN_EXE_morpheus"))
+        .env("MORPHEUS_CLI_DRY_RUN_REQUEST", "1")
+        .env("MORPHEUS_BUYER_TOKEN", "env-token")
+        .args([
+            "--server-url",
+            "http://127.0.0.1:18080",
+            "--token",
+            "flag-token",
+            "buyer",
+            "order",
+            "create",
+            "--json",
+            r#"{"customer_id":"customer:shop.example:01JCUST"}"#,
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let request: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(request["authorization"], "Bearer flag-token");
+    assert_eq!(
+        request["body"]["customer_id"],
+        "customer:shop.example:01JCUST"
     );
 }

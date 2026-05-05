@@ -9,6 +9,7 @@ pub struct MorpheusConfig {
     pub appservice: AppServiceConfig,
     pub database: DatabaseConfig,
     pub admin: AdminConfig,
+    pub auth: AuthConfig,
     pub allowlist: Option<AllowlistConfig>,
 }
 
@@ -42,6 +43,12 @@ pub struct DatabaseConfig {
 pub struct AdminConfig {
     pub bind: String,
     pub bearer_token_env: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthConfig {
+    pub seller_token_env: String,
+    pub buyer_token_env: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +134,14 @@ pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
         !config.admin.bearer_token_env.is_empty(),
         "admin bearer_token_env is required"
     );
+    anyhow::ensure!(
+        !config.auth.seller_token_env.is_empty(),
+        "auth seller_token_env is required"
+    );
+    anyhow::ensure!(
+        !config.auth.buyer_token_env.is_empty(),
+        "auth buyer_token_env is required"
+    );
     if let Some(allowlist) = &config.allowlist {
         for entry in &allowlist.instances {
             anyhow::ensure!(
@@ -176,6 +191,10 @@ mod tests {
                 bind: "127.0.0.1:8080".into(),
                 bearer_token_env: "MORPHEUS_ADMIN_TOKEN".into(),
             },
+            auth: AuthConfig {
+                seller_token_env: "MORPHEUS_SELLER_TOKEN".into(),
+                buyer_token_env: "MORPHEUS_BUYER_TOKEN".into(),
+            },
             allowlist: Some(AllowlistConfig {
                 instances: vec![AllowlistInstance {
                     instance_id: "shop.example".into(),
@@ -195,6 +214,13 @@ mod tests {
         assert_eq!(
             validate_config(&config).unwrap_err().to_string(),
             "appservice url is required"
+        );
+
+        let mut config = valid_config();
+        config.auth.seller_token_env.clear();
+        assert_eq!(
+            validate_config(&config).unwrap_err().to_string(),
+            "auth seller_token_env is required"
         );
     }
 

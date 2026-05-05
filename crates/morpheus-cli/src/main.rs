@@ -1,10 +1,11 @@
-use std::{fs, path::PathBuf, process::Command, str::FromStr};
+use std::{env, fs, path::PathBuf, process::Command, str::FromStr};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use morpheus_api::ErrorResponse;
 use morpheus_config::load_config;
 use morpheus_matrix::generate_synapse_registration;
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{
     postgres::PgPoolOptions,
@@ -15,6 +16,12 @@ use sqlx::{
 #[command(name = "morpheus")]
 #[command(about = "Morpheus marketplace protocol server tools")]
 struct Cli {
+    #[arg(long, global = true, default_value = "http://127.0.0.1:8080")]
+    server_url: String,
+    #[arg(long, global = true)]
+    token: Option<String>,
+    #[arg(long, global = true)]
+    pretty: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -44,6 +51,18 @@ enum Commands {
     Catalog {
         #[command(subcommand)]
         command: CatalogCommand,
+    },
+    Admin {
+        #[command(subcommand)]
+        command: AdminCommand,
+    },
+    Seller {
+        #[command(subcommand)]
+        command: SellerCommand,
+    },
+    Buyer {
+        #[command(subcommand)]
+        command: BuyerCommand,
     },
     Demo {
         #[command(subcommand)]
@@ -100,6 +119,169 @@ enum CatalogCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum AdminCommand {
+    Health,
+    Config,
+    Allowlist,
+    Projections,
+    Events,
+    Catalog {
+        #[command(subcommand)]
+        command: AdminCatalogCommand,
+    },
+    Order {
+        #[command(subcommand)]
+        command: AdminOrderCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AdminCatalogCommand {
+    Rebuild,
+}
+
+#[derive(Debug, Subcommand)]
+enum AdminOrderCommand {
+    Replay { order_id: String },
+}
+
+#[derive(Debug, Subcommand)]
+enum SellerCommand {
+    Announce {
+        #[arg(long)]
+        json: String,
+    },
+    Product {
+        #[command(subcommand)]
+        command: SellerProductCommand,
+    },
+    Offer {
+        #[command(subcommand)]
+        command: SellerOfferCommand,
+    },
+    Orders {
+        #[command(subcommand)]
+        command: SellerOrdersCommand,
+    },
+    Order {
+        #[command(subcommand)]
+        command: SellerOrderCommand,
+    },
+    Payment {
+        #[command(subcommand)]
+        command: SellerPaymentCommand,
+    },
+    Entitlement {
+        #[command(subcommand)]
+        command: SellerEntitlementCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SellerProductCommand {
+    Upsert {
+        #[arg(long)]
+        json: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SellerOfferCommand {
+    Upsert {
+        #[arg(long)]
+        json: String,
+    },
+    Withdraw {
+        offer_id: String,
+        #[arg(long)]
+        json: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SellerOrdersCommand {
+    List,
+}
+
+#[derive(Debug, Subcommand)]
+enum SellerOrderCommand {
+    Accept {
+        order_id: String,
+        #[arg(long)]
+        json: String,
+    },
+    Reject {
+        order_id: String,
+        #[arg(long)]
+        json: String,
+    },
+    Complete {
+        order_id: String,
+        #[arg(long)]
+        json: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SellerPaymentCommand {
+    Intent {
+        order_id: String,
+        #[arg(long)]
+        json: String,
+    },
+    Capture {
+        order_id: String,
+        #[arg(long)]
+        json: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SellerEntitlementCommand {
+    Grant {
+        order_id: String,
+        #[arg(long)]
+        json: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BuyerCommand {
+    Catalog {
+        #[command(subcommand)]
+        command: BuyerCatalogCommand,
+    },
+    Order {
+        #[command(subcommand)]
+        command: BuyerOrderCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BuyerCatalogCommand {
+    Sellers,
+    Products,
+    Offers,
+}
+
+#[derive(Debug, Subcommand)]
+enum BuyerOrderCommand {
+    Create {
+        #[arg(long)]
+        json: String,
+    },
+    Cancel {
+        order_id: String,
+        #[arg(long)]
+        json: String,
+    },
+    List,
+    Show {
+        order_id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum DemoCommand {
     Seed {
         #[arg(long, value_enum)]
@@ -123,17 +305,17 @@ enum DemoScenario {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command {
+    match &cli.command {
         Commands::Config {
             command: ConfigCommand::Validate { config },
         } => {
-            load_config(&config)?;
+            load_config(config)?;
             println!("config ok");
         }
         Commands::Synapse {
             command: SynapseCommand::Registration { config, out },
         } => {
-            let config = load_config(&config)?;
+            let config = load_config(config)?;
             let registration = generate_synapse_registration(
                 &config.instance.application_service_id,
                 &config.appservice.url,
@@ -159,7 +341,7 @@ async fn main() -> Result<()> {
             let bytes = fs::read(file)?;
             let digest = format!("sha256:{}", hex_string(Sha256::digest(bytes)));
             anyhow::ensure!(
-                digest == sha256,
+                digest == *sha256,
                 "snapshot hash mismatch: expected {sha256}, got {digest}"
             );
             println!("snapshot ok");
@@ -171,13 +353,22 @@ async fn main() -> Result<()> {
                     database_kind,
                 },
         } => {
-            migrate_database(&database_url, database_kind).await?;
+            migrate_database(database_url, *database_kind).await?;
             println!("database migrated");
         }
         Commands::Catalog {
             command: CatalogCommand::Rebuild,
         } => {
             println!("{}", json!({ "status": "scheduled" }));
+        }
+        Commands::Admin { command } => {
+            run_admin_command(&cli, command).await?;
+        }
+        Commands::Seller { command } => {
+            run_seller_command(&cli, command).await?;
+        }
+        Commands::Buyer { command } => {
+            run_buyer_command(&cli, command).await?;
         }
         Commands::Demo {
             command:
@@ -186,20 +377,275 @@ async fn main() -> Result<()> {
                     config_dir,
                 },
         } => {
-            run_demo_seed(config_dir)?;
+            run_demo_seed(config_dir.clone())?;
         }
+    }
+    Ok(())
+}
+
+async fn run_admin_command(cli: &Cli, command: &AdminCommand) -> Result<()> {
+    match command {
+        AdminCommand::Health => get(cli, "/admin/health", Role::Admin).await,
+        AdminCommand::Config => get(cli, "/admin/config", Role::Admin).await,
+        AdminCommand::Allowlist => get(cli, "/admin/allowlist", Role::Admin).await,
+        AdminCommand::Projections => get(cli, "/admin/projections/summary", Role::Admin).await,
+        AdminCommand::Events => get(cli, "/admin/events", Role::Admin).await,
+        AdminCommand::Catalog {
+            command: AdminCatalogCommand::Rebuild,
+        } => post(cli, "/admin/catalog/rebuild", Role::Admin, json!({})).await,
+        AdminCommand::Order {
+            command: AdminOrderCommand::Replay { order_id },
+        } => {
+            post(
+                cli,
+                &format!("/admin/orders/{order_id}/replay"),
+                Role::Admin,
+                json!({}),
+            )
+            .await
+        }
+    }
+}
+
+async fn run_seller_command(cli: &Cli, command: &SellerCommand) -> Result<()> {
+    match command {
+        SellerCommand::Announce { json } => {
+            post_json(cli, "/api/v1/seller/announce", Role::Seller, json).await
+        }
+        SellerCommand::Product {
+            command: SellerProductCommand::Upsert { json },
+        } => post_json(cli, "/api/v1/seller/products", Role::Seller, json).await,
+        SellerCommand::Offer {
+            command: SellerOfferCommand::Upsert { json },
+        } => post_json(cli, "/api/v1/seller/offers", Role::Seller, json).await,
+        SellerCommand::Offer {
+            command: SellerOfferCommand::Withdraw { offer_id, json },
+        } => {
+            post_json(
+                cli,
+                &format!("/api/v1/seller/offers/{offer_id}/withdraw"),
+                Role::Seller,
+                json,
+            )
+            .await
+        }
+        SellerCommand::Orders {
+            command: SellerOrdersCommand::List,
+        } => get(cli, "/api/v1/seller/orders", Role::Seller).await,
+        SellerCommand::Order {
+            command: SellerOrderCommand::Accept { order_id, json },
+        } => {
+            post_json(
+                cli,
+                &format!("/api/v1/seller/orders/{order_id}/accept"),
+                Role::Seller,
+                json,
+            )
+            .await
+        }
+        SellerCommand::Order {
+            command: SellerOrderCommand::Reject { order_id, json },
+        } => {
+            post_json(
+                cli,
+                &format!("/api/v1/seller/orders/{order_id}/reject"),
+                Role::Seller,
+                json,
+            )
+            .await
+        }
+        SellerCommand::Order {
+            command: SellerOrderCommand::Complete { order_id, json },
+        } => {
+            post_json(
+                cli,
+                &format!("/api/v1/seller/orders/{order_id}/complete"),
+                Role::Seller,
+                json,
+            )
+            .await
+        }
+        SellerCommand::Payment {
+            command: SellerPaymentCommand::Intent { order_id, json },
+        } => {
+            post_json(
+                cli,
+                &format!("/api/v1/seller/orders/{order_id}/payment-intent"),
+                Role::Seller,
+                json,
+            )
+            .await
+        }
+        SellerCommand::Payment {
+            command: SellerPaymentCommand::Capture { order_id, json },
+        } => {
+            post_json(
+                cli,
+                &format!("/api/v1/seller/orders/{order_id}/payment-capture"),
+                Role::Seller,
+                json,
+            )
+            .await
+        }
+        SellerCommand::Entitlement {
+            command: SellerEntitlementCommand::Grant { order_id, json },
+        } => {
+            post_json(
+                cli,
+                &format!("/api/v1/seller/orders/{order_id}/entitlement-grant"),
+                Role::Seller,
+                json,
+            )
+            .await
+        }
+    }
+}
+
+async fn run_buyer_command(cli: &Cli, command: &BuyerCommand) -> Result<()> {
+    match command {
+        BuyerCommand::Catalog {
+            command: BuyerCatalogCommand::Sellers,
+        } => get(cli, "/api/v1/catalog/sellers", Role::Buyer).await,
+        BuyerCommand::Catalog {
+            command: BuyerCatalogCommand::Products,
+        } => get(cli, "/api/v1/catalog/products", Role::Buyer).await,
+        BuyerCommand::Catalog {
+            command: BuyerCatalogCommand::Offers,
+        } => get(cli, "/api/v1/catalog/offers", Role::Buyer).await,
+        BuyerCommand::Order {
+            command: BuyerOrderCommand::Create { json },
+        } => post_json(cli, "/api/v1/buyer/orders", Role::Buyer, json).await,
+        BuyerCommand::Order {
+            command: BuyerOrderCommand::Cancel { order_id, json },
+        } => {
+            post_json(
+                cli,
+                &format!("/api/v1/buyer/orders/{order_id}/cancel"),
+                Role::Buyer,
+                json,
+            )
+            .await
+        }
+        BuyerCommand::Order {
+            command: BuyerOrderCommand::List,
+        } => get(cli, "/api/v1/buyer/orders", Role::Buyer).await,
+        BuyerCommand::Order {
+            command: BuyerOrderCommand::Show { order_id },
+        } => {
+            get(
+                cli,
+                &format!("/api/v1/buyer/orders/{order_id}"),
+                Role::Buyer,
+            )
+            .await
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Role {
+    Admin,
+    Seller,
+    Buyer,
+}
+
+async fn get(cli: &Cli, path: &str, role: Role) -> Result<()> {
+    request(cli, reqwest::Method::GET, path, role, None).await
+}
+
+async fn post_json(cli: &Cli, path: &str, role: Role, body: &str) -> Result<()> {
+    let value: Value = serde_json::from_str(body).context("parsing --json request body")?;
+    post(cli, path, role, value).await
+}
+
+async fn post(cli: &Cli, path: &str, role: Role, body: Value) -> Result<()> {
+    request(cli, reqwest::Method::POST, path, role, Some(body)).await
+}
+
+async fn request(
+    cli: &Cli,
+    method: reqwest::Method,
+    path: &str,
+    role: Role,
+    body: Option<Value>,
+) -> Result<()> {
+    let token = cli
+        .token
+        .clone()
+        .or_else(|| env::var(default_token_env(role)).ok())
+        .with_context(|| {
+            format!(
+                "missing token; pass --token or set {}",
+                default_token_env(role)
+            )
+        })?;
+    let url = format!("{}{}", cli.server_url.trim_end_matches('/'), path);
+    if env::var("MORPHEUS_CLI_DRY_RUN_REQUEST").ok().as_deref() == Some("1") {
+        print_json(
+            &json!({
+                "method": method.as_str(),
+                "path": path,
+                "url": url,
+                "authorization": format!("Bearer {token}"),
+                "body": body,
+            }),
+            cli.pretty,
+        )?;
+        return Ok(());
+    }
+    let client = reqwest::Client::new();
+    let mut request = client.request(method, url).bearer_auth(token);
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request.send().await.context("sending HTTP request")?;
+    let status = response.status();
+    let text = response.text().await.context("reading HTTP response")?;
+    let value = serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({ "raw": text }));
+    if !status.is_success() {
+        if let Ok(error) = serde_json::from_str::<ErrorResponse>(&text) {
+            anyhow::bail!("server returned {status}: {}: {}", error.code, error.error);
+        }
+        anyhow::bail!(
+            "server returned {status}: {}",
+            serde_json::to_string(&value)?
+        );
+    }
+    print_json(&value, cli.pretty)?;
+    Ok(())
+}
+
+fn default_token_env(role: Role) -> &'static str {
+    match role {
+        Role::Admin => "MORPHEUS_ADMIN_TOKEN",
+        Role::Seller => "MORPHEUS_SELLER_TOKEN",
+        Role::Buyer => "MORPHEUS_BUYER_TOKEN",
+    }
+}
+
+fn print_json(value: &Value, pretty: bool) -> Result<()> {
+    if pretty {
+        println!("{}", serde_json::to_string_pretty(value)?);
+    } else {
+        println!("{}", serde_json::to_string(value)?);
     }
     Ok(())
 }
 
 fn run_demo_seed(config_dir: PathBuf) -> Result<()> {
     let script = PathBuf::from("scripts/e2e/seed_three_retail.py");
+    let python = PathBuf::from(".venv/bin/python");
     anyhow::ensure!(
         script.exists(),
         "demo seed script not found at {}",
         script.display()
     );
-    let status = Command::new("python3")
+    anyhow::ensure!(
+        python.exists(),
+        "python venv not found at {}; create it with `/opt/homebrew/bin/python3.12 -m venv .venv`",
+        python.display()
+    );
+    let status = Command::new(&python)
         .arg(script)
         .arg("--config-dir")
         .arg(config_dir)

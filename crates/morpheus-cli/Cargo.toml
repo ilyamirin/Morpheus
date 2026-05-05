@@ -8,10 +8,12 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+morpheus-api.workspace = true
 morpheus-conformance.workspace = true
 morpheus-config.workspace = true
 morpheus-matrix.workspace = true
 morpheus-store.workspace = true
+reqwest.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 sha2.workspace = true

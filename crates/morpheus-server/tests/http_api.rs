@@ -9,8 +9,14 @@ use tower::ServiceExt;
 
 fn server_config() -> ServerConfig {
     ServerConfig {
+        instance_id: "shop.example".into(),
+        matrix_server_name: "shop.example".into(),
+        catalog_room_id: "!catalog:shop.example".into(),
+        appservice_sender_localpart: "market".into(),
         homeserver_token: "hs-token".into(),
         admin_token: "admin-token".into(),
+        seller_token: "seller-token".into(),
+        buyer_token: "buyer-token".into(),
     }
 }
 
@@ -27,6 +33,31 @@ async fn send_admin_request(
     }
     let response = app
         .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({}));
+    (status, body)
+}
+
+async fn send_json_request(
+    store: InMemoryEventStore,
+    method: &str,
+    uri: &str,
+    authorization: Option<&str>,
+    body: Value,
+) -> (StatusCode, Value) {
+    let app = build_router(server_config(), store);
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json");
+    if let Some(authorization) = authorization {
+        request = request.header("authorization", authorization);
+    }
+    let response = app
+        .oneshot(request.body(Body::from(body.to_string())).unwrap())
         .await
         .unwrap();
     let status = response.status();
@@ -61,9 +92,15 @@ async fn store_with_admin_projection_data() -> InMemoryEventStore {
             product_id: "prod:shop.example:01JPROD".into(),
             seller_id: "seller:shop.example:01JSELLER".into(),
             revision: 1,
-            price: json!({ "amount": "100.00" }),
+            price: json!({ "amount": "100.00", "currency": "USD" }),
             inventory_kind: "booking_slot".into(),
-            body: json!({ "revision": 1 }),
+            body: json!({
+                "revision": 1,
+                "payment_terms": {"capture_policy": "before_entitlement"},
+                "entitlement": {"type": "external_entitlement"},
+                "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            }),
         })
         .await
         .unwrap();
@@ -262,4 +299,120 @@ async fn admin_order_replay_accepts_bearer_auth_and_reports_order_context() {
             },
         })
     );
+}
+
+#[tokio::test]
+async fn admin_projection_summary_reports_runtime_counts() {
+    let store = store_with_admin_projection_data().await;
+    let (status, body) = send_admin_request(
+        store,
+        "GET",
+        "/admin/projections/summary",
+        Some("Bearer admin-token"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["catalog"]["sellers"], 1);
+    assert_eq!(body["orders"], 1);
+}
+
+#[tokio::test]
+async fn seller_announce_requires_seller_token_and_local_seller_actor() {
+    let store = InMemoryEventStore::default();
+    let request = json!({
+        "seller_id": "seller:shop.example:01JSELLER",
+        "display_name": "Fixture Seller",
+        "legal_profile_ref": "https://shop.example/legal",
+        "terms_ref": "https://shop.example/terms",
+        "terms_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "supported_payment_adapters": ["mock"],
+        "supported_entitlement_types": ["external_entitlement"]
+    });
+
+    let (unauthorized, _) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/seller/announce",
+        Some("Bearer buyer-token"),
+        request.clone(),
+    )
+    .await;
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/seller/announce",
+        Some("Bearer seller-token"),
+        request,
+    )
+    .await;
+
+    assert_eq!(unauthorized, StatusCode::UNAUTHORIZED);
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(store.catalog_sellers().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn seller_actor_from_foreign_instance_is_forbidden() {
+    let (status, body) = send_json_request(
+        InMemoryEventStore::default(),
+        "POST",
+        "/api/v1/seller/announce",
+        Some("Bearer seller-token"),
+        json!({
+            "seller_id": "seller:other.example:01JSELLER",
+            "display_name": "Foreign Seller",
+            "legal_profile_ref": "https://other.example/legal",
+            "terms_ref": "https://other.example/terms",
+            "terms_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "supported_payment_adapters": ["mock"],
+            "supported_entitlement_types": ["external_entitlement"]
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["code"], "ACTOR_FORBIDDEN");
+}
+
+#[tokio::test]
+async fn buyer_order_create_publishes_customer_binding_before_order_created() {
+    let store = store_with_admin_projection_data().await;
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/buyer/orders",
+        Some("Bearer buyer-token"),
+        json!({
+            "customer_id": "customer:shop.example:01JCUST",
+            "customer_display_name": "Fixture Customer",
+            "order_id": "ord:shop.example:01JORDER2",
+            "room_id": "!order2:shop.example",
+            "seller_id": "seller:shop.example:01JSELLER",
+            "offer_id": "offer:shop.example:01JOFFER",
+            "offer_revision": 1,
+            "catalog_snapshot_id": "snap:shop.example:01JSNAP",
+            "price": {"amount": "100.00", "currency": "USD"},
+            "payment_adapter": "mock",
+            "payment_capture_policy": "before_entitlement",
+            "entitlement_type": "external_entitlement",
+            "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "arbiter_instance": "cases.example",
+            "arbiter_actor": "arbiter:cases.example:01JARBITER",
+            "arbitration_policy_id": "standard-digital-v1",
+            "arbitration_policy_version": "1",
+            "arbitration_window": "P14D",
+            "expires_at": "2026-05-04T10:30:00Z"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let events = store
+        .marketplace_events_by_room("!order2:shop.example")
+        .await
+        .unwrap();
+    assert_eq!(events[0].event_type, "io.marketplace.actor.customer.bound");
+    assert_eq!(events[1].event_type, "io.marketplace.order.created");
 }
