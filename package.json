@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "build:ui-css": "tailwindcss -c tailwind.config.js -i crates/morpheus-server/ui/src/input.css -o crates/morpheus-server/ui/assets/app.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}
