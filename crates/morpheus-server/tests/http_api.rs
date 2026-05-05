@@ -7,6 +7,7 @@ use morpheus_store::{
     CatalogOfferProjectionRecord, EventStore, InMemoryEventStore, OrderProjectionRecord,
 };
 use serde_json::{Value, json};
+use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 #[derive(Clone)]
@@ -16,6 +17,27 @@ struct SubmittedOnlyPublisher;
 impl MatrixPublisher for SubmittedOnlyPublisher {
     async fn publish(&self, events: Vec<Value>) -> Result<Vec<Value>, ValidationError> {
         Ok(events)
+    }
+
+    fn ingest_after_publish(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Clone, Default)]
+struct RecordingPublisher {
+    joined_rooms: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl MatrixPublisher for RecordingPublisher {
+    async fn publish(&self, events: Vec<Value>) -> Result<Vec<Value>, ValidationError> {
+        Ok(events)
+    }
+
+    async fn ensure_room_joined(&self, room_id: &str) -> Result<(), ValidationError> {
+        self.joined_rooms.lock().unwrap().push(room_id.to_string());
+        Ok(())
     }
 
     fn ingest_after_publish(&self) -> bool {
@@ -85,6 +107,12 @@ async fn send_json_request(
 }
 
 async fn send_ui_request(uri: &str) -> (StatusCode, Option<String>) {
+    let (status, content_type, _) = send_ui_body_request(uri).await;
+
+    (status, content_type)
+}
+
+async fn send_ui_body_request(uri: &str) -> (StatusCode, Option<String>, String) {
     let app = build_router(server_config(), InMemoryEventStore::default());
     let response = app
         .oneshot(
@@ -102,8 +130,16 @@ async fn send_ui_request(uri: &str) -> (StatusCode, Option<String>) {
         .get("content-type")
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
 
-    (status, content_type)
+    (status, content_type, body)
+}
+
+fn assert_contains_all(body: &str, expected: &[&str]) {
+    for text in expected {
+        assert!(body.contains(text), "missing {text:?}");
+    }
 }
 
 async fn store_with_admin_projection_data() -> InMemoryEventStore {
@@ -183,6 +219,67 @@ async fn ui_html_routes_return_ok_without_auth() {
 
         assert_eq!(status, StatusCode::OK, "{uri}");
     }
+}
+
+#[tokio::test]
+async fn seller_ui_contains_studio_anchors_and_hooks() {
+    let (status, content_type, body) = send_ui_body_request("/ui/seller").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("text/html; charset=utf-8"));
+    assert_contains_all(
+        &body,
+        &[
+            "Seller Studio",
+            "Home",
+            "Listings",
+            "Orders",
+            "Advanced",
+            "advanced-panel",
+            r#"data-page="seller""#,
+            r#"data-token="seller""#,
+            r#"data-form="seller-announce""#,
+            r#"data-form="seller-product""#,
+            r#"data-form="seller-offer""#,
+            r#"data-form="seller-order-action""#,
+            r#"data-action="seller-orders""#,
+            r#"id="seller-orders-rows""#,
+            r#"id="seller-order-count""#,
+            r#"id="result-panel""#,
+        ],
+    );
+}
+
+#[tokio::test]
+async fn buyer_ui_contains_marketplace_anchors_and_hooks() {
+    let (status, content_type, body) = send_ui_body_request("/ui/buyer").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("text/html; charset=utf-8"));
+    assert_contains_all(
+        &body,
+        &[
+            "Marketplace",
+            "Discover",
+            "Offer",
+            "My orders",
+            "Advanced",
+            "detail-drawer",
+            "advanced-panel",
+            r#"data-page="buyer""#,
+            r#"data-token="buyer""#,
+            r#"data-form="buyer-create-order""#,
+            r#"data-form="buyer-order-tools""#,
+            r#"data-action="buyer-catalog""#,
+            r#"data-action="buyer-orders""#,
+            r#"id="buyer-sellers""#,
+            r#"id="buyer-products""#,
+            r#"id="buyer-offers""#,
+            r#"id="buyer-orders-rows""#,
+            r#"id="buyer-order-count""#,
+            r#"id="result-panel""#,
+        ],
+    );
 }
 
 #[tokio::test]
@@ -524,7 +621,6 @@ async fn buyer_order_create_publishes_customer_binding_before_order_created() {
             "customer_id": "customer:shop.example:01JCUST",
             "customer_display_name": "Fixture Customer",
             "order_id": "ord:shop.example:01JORDER2",
-            "room_id": "!order2:shop.example",
             "seller_id": "seller:shop.example:01JSELLER",
             "offer_id": "offer:shop.example:01JOFFER",
             "offer_revision": 1,
@@ -546,10 +642,190 @@ async fn buyer_order_create_publishes_customer_binding_before_order_created() {
     .await;
 
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(
+        body["room_id"],
+        "!marketplace-order-ord-shop-example-01jorder2:shop.example"
+    );
     let events = store
-        .marketplace_events_by_room("!order2:shop.example")
+        .marketplace_events_by_room("!marketplace-order-ord-shop-example-01jorder2:shop.example")
         .await
         .unwrap();
     assert_eq!(events[0].event_type, "io.marketplace.actor.customer.bound");
     assert_eq!(events[1].event_type, "io.marketplace.order.created");
+    assert_eq!(
+        events[1].body["room_id"],
+        "!marketplace-order-ord-shop-example-01jorder2:shop.example"
+    );
+}
+
+#[tokio::test]
+async fn seller_order_action_joins_order_room_before_publish() {
+    let store = store_with_admin_projection_data().await;
+    let publisher = RecordingPublisher::default();
+    let joined_rooms = publisher.joined_rooms.clone();
+    let app = build_router_with_publisher(server_config(), store, publisher);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/seller/orders/ord:customer.example:01JORDER/accept")
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "actor_id": "seller:shop.example:01JSELLER",
+                        "offer_revision": 1,
+                        "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                        "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                        "payment_capture_policy": "before_entitlement",
+                        "arbitration_policy_version": "1"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        joined_rooms.lock().unwrap().as_slice(),
+        ["!order:customer.example"]
+    );
+}
+
+#[tokio::test]
+async fn seller_order_action_accepts_browser_encoded_order_id_path() {
+    let store = store_with_admin_projection_data().await;
+    let app = build_router_with_publisher(server_config(), store, SubmittedOnlyPublisher);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/seller/orders/ord%3Acustomer.example%3A01JORDER/accept")
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "actor_id": "seller:shop.example:01JSELLER",
+                        "offer_revision": 1,
+                        "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                        "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                        "payment_capture_policy": "before_entitlement",
+                        "arbitration_policy_version": "1"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn seller_payment_capture_publishes_authorized_before_captured() {
+    let store = store_with_admin_projection_data().await;
+    let order_id = "ord:shop.example:01JORDER3";
+    let create = json!({
+        "customer_id": "customer:shop.example:01JCUST",
+        "customer_display_name": "Fixture Customer",
+        "order_id": order_id,
+        "seller_id": "seller:shop.example:01JSELLER",
+        "offer_id": "offer:shop.example:01JOFFER",
+        "offer_revision": 1,
+        "catalog_snapshot_id": "snap:shop.example:01JSNAP",
+        "price": {"amount": "100.00", "currency": "USD"},
+        "payment_adapter": "mock",
+        "payment_capture_policy": "before_entitlement",
+        "entitlement_type": "external_entitlement",
+        "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "arbiter_instance": "cases.example",
+        "arbiter_actor": "arbiter:cases.example:01JARBITER",
+        "arbitration_policy_id": "standard-digital-v1",
+        "arbitration_policy_version": "1",
+        "arbitration_window": "P14D",
+        "expires_at": "2026-05-06T10:30:00Z"
+    });
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/buyer/orders",
+        Some("Bearer buyer-token"),
+        create,
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        &format!("/api/v1/seller/orders/{order_id}/accept"),
+        Some("Bearer seller-token"),
+        json!({
+            "actor_id": "seller:shop.example:01JSELLER",
+            "offer_revision": 1,
+            "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "payment_capture_policy": "before_entitlement",
+            "arbitration_policy_version": "1"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        &format!("/api/v1/seller/orders/{order_id}/payment-intent"),
+        Some("Bearer seller-token"),
+        json!({
+            "actor_id": "seller:shop.example:01JSELLER",
+            "payment_id": "pay:shop.example:01JPAY3",
+            "adapter": "mock",
+            "amount": "100.00",
+            "currency": "USD",
+            "capture_policy": "before_entitlement",
+            "idempotency_key": "idem:shop.example:01JPAY3",
+            "provider_ref": "mock:pi_01JPAY3",
+            "confirmation": {"method": "redirect", "uri": "https://shop.example/pay/confirm"},
+            "expires_at": "2026-05-06T10:30:00Z"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        &format!("/api/v1/seller/orders/{order_id}/payment-capture"),
+        Some("Bearer seller-token"),
+        json!({
+            "actor_id": "seller:shop.example:01JSELLER",
+            "payment_id": "pay:shop.example:01JPAY3",
+            "adapter": "mock",
+            "amount": "100.00",
+            "currency": "USD",
+            "provider_ref": "mock:cap_01JPAY3",
+            "evidence": {
+                "kind": "capture",
+                "uri": "https://shop.example/evidence/capture",
+                "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let events = store
+        .order_events(order_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|event| event.event_type)
+        .collect::<Vec<_>>();
+    assert!(events.contains(&"io.marketplace.payment.authorized".to_string()));
+    assert!(events.contains(&"io.marketplace.payment.captured".to_string()));
 }

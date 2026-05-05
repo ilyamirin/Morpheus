@@ -49,6 +49,19 @@ struct AppState<S, P> {
 pub trait MatrixPublisher: Clone + Send + Sync + 'static {
     async fn publish(&self, events: Vec<Value>) -> Result<Vec<Value>, ValidationError>;
 
+    async fn ensure_order_room(
+        &self,
+        alias: &str,
+        _order_id: &str,
+        _invite_user_ids: &[String],
+    ) -> Result<String, ValidationError> {
+        room_id_from_alias(alias)
+    }
+
+    async fn ensure_room_joined(&self, _room_id: &str) -> Result<(), ValidationError> {
+        Ok(())
+    }
+
     fn ingest_after_publish(&self) -> bool {
         true
     }
@@ -91,8 +104,29 @@ pub async fn ensure_catalog_room(
     instance_id: &str,
 ) -> Result<String, ValidationError> {
     let client = reqwest::Client::new();
-    let create_url = matrix_create_room_url(homeserver_url, appservice_token, sender_user_id)?;
     let create_body = matrix_create_room_body(catalog_room_alias, instance_id)?;
+    ensure_room_with_body(
+        &client,
+        homeserver_url,
+        appservice_token,
+        sender_user_id,
+        catalog_room_alias,
+        create_body,
+        "catalog",
+    )
+    .await
+}
+
+async fn ensure_room_with_body(
+    client: &reqwest::Client,
+    homeserver_url: &str,
+    appservice_token: &str,
+    sender_user_id: &str,
+    room_alias: &str,
+    create_body: Value,
+    room_kind: &str,
+) -> Result<String, ValidationError> {
+    let create_url = matrix_create_room_url(homeserver_url, appservice_token, sender_user_id)?;
     let mut last_error = None;
     let mut response = None;
     for _ in 0..60 {
@@ -114,7 +148,7 @@ pub async fn ensure_catalog_room(
     }
     let response = response.ok_or_else(|| {
         publisher_error(&format!(
-            "creating catalog room failed: {}",
+            "creating {room_kind} room failed: {}",
             last_error
                 .map(|err| err.to_string())
                 .unwrap_or_else(|| "request was not attempted".into())
@@ -137,16 +171,11 @@ pub async fn ensure_catalog_room(
             "createRoom returned {status}: {value}"
         )));
     }
-    let alias_url = matrix_room_alias_url(
-        homeserver_url,
-        catalog_room_alias,
-        appservice_token,
-        sender_user_id,
-    )?;
-    let response =
-        client.get(alias_url).send().await.map_err(|err| {
-            publisher_error(&format!("resolving catalog room alias failed: {err}"))
-        })?;
+    let alias_url =
+        matrix_room_alias_url(homeserver_url, room_alias, appservice_token, sender_user_id)?;
+    let response = client.get(alias_url).send().await.map_err(|err| {
+        publisher_error(&format!("resolving {room_kind} room alias failed: {err}"))
+    })?;
     let status = response.status();
     let value = response.json::<Value>().await.map_err(|err| {
         publisher_error(&format!(
@@ -214,8 +243,76 @@ impl MatrixPublisher for SynapseMatrixPublisher {
         Ok(published)
     }
 
+    async fn ensure_order_room(
+        &self,
+        alias: &str,
+        order_id: &str,
+        invite_user_ids: &[String],
+    ) -> Result<String, ValidationError> {
+        let create_body = matrix_create_order_room_body(alias, order_id, invite_user_ids)?;
+        match ensure_room_with_body(
+            &self.client,
+            &self.homeserver_url,
+            &self.appservice_token,
+            &self.sender_user_id,
+            alias,
+            create_body,
+            "order",
+        )
+        .await
+        {
+            Ok(room_id) => Ok(room_id),
+            Err(invite_err) if !invite_user_ids.is_empty() => {
+                let create_body = matrix_create_order_room_body(alias, order_id, &[])?;
+                ensure_room_with_body(
+                    &self.client,
+                    &self.homeserver_url,
+                    &self.appservice_token,
+                    &self.sender_user_id,
+                    alias,
+                    create_body,
+                    "order",
+                )
+                .await
+                .map_err(|retry_err| {
+                    publisher_error(&format!(
+                        "creating order room with invites failed: {}; retry without invites failed: {}",
+                        invite_err.message, retry_err.message
+                    ))
+                })
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn ensure_room_joined(&self, room_id: &str) -> Result<(), ValidationError> {
+        let url = matrix_join_room_url(
+            &self.homeserver_url,
+            room_id,
+            &self.appservice_token,
+            &self.sender_user_id,
+        )?;
+        let response = self
+            .client
+            .post(url)
+            .json(&matrix_join_room_body())
+            .send()
+            .await
+            .map_err(|err| publisher_error(&format!("joining Matrix room failed: {err}")))?;
+        let status = response.status();
+        let value = response.json::<Value>().await.map_err(|err| {
+            publisher_error(&format!("reading Matrix join response failed: {err}"))
+        })?;
+        if status.is_success() {
+            return Ok(());
+        }
+        Err(publisher_error(&format!(
+            "Matrix join returned {status}: {value}"
+        )))
+    }
+
     fn ingest_after_publish(&self) -> bool {
-        false
+        true
     }
 }
 
@@ -246,12 +343,16 @@ pub fn matrix_send_url(
 }
 
 pub fn catalog_alias_localpart(alias: &str) -> Result<String, ValidationError> {
+    alias_localpart(alias, "catalog room alias")
+}
+
+fn alias_localpart(alias: &str, label: &str) -> Result<String, ValidationError> {
     alias
         .strip_prefix('#')
         .and_then(|without_hash| without_hash.split_once(':').map(|(local, _)| local))
         .filter(|local| !local.is_empty())
         .map(str::to_string)
-        .ok_or_else(|| publisher_error("catalog room alias must look like #local:server"))
+        .ok_or_else(|| publisher_error(&format!("{label} must look like #local:server")))
 }
 
 pub fn matrix_create_room_body(alias: &str, instance_id: &str) -> Result<Value, ValidationError> {
@@ -261,6 +362,36 @@ pub fn matrix_create_room_body(alias: &str, instance_id: &str) -> Result<Value, 
         "room_alias_name": catalog_alias_localpart(alias)?,
         "name": format!("Morpheus catalog {instance_id}"),
         "topic": format!("Morpheus marketplace catalog for {instance_id}"),
+        "creation_content": {"m.federate": true},
+    }))
+}
+
+pub fn order_room_alias(prefix: &str, order_id: &str, matrix_server_name: &str) -> String {
+    let local = order_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    format!("{prefix}{local}:{matrix_server_name}")
+}
+
+pub fn matrix_create_order_room_body(
+    alias: &str,
+    order_id: &str,
+    invite_user_ids: &[String],
+) -> Result<Value, ValidationError> {
+    Ok(json!({
+        "visibility": "private",
+        "preset": "private_chat",
+        "room_alias_name": alias_localpart(alias, "order room alias")?,
+        "name": format!("Morpheus order {order_id}"),
+        "topic": format!("Morpheus marketplace order {order_id}"),
+        "invite": invite_user_ids,
         "creation_content": {"m.federate": true},
     }))
 }
@@ -295,6 +426,35 @@ pub fn matrix_room_alias_url(
         .append_pair("access_token", appservice_token)
         .append_pair("user_id", sender_user_id);
     Ok(url)
+}
+
+pub fn matrix_join_room_url(
+    homeserver_url: &str,
+    room_id: &str,
+    appservice_token: &str,
+    sender_user_id: &str,
+) -> Result<reqwest::Url, ValidationError> {
+    let base = homeserver_url.trim_end_matches('/');
+    let mut url = reqwest::Url::parse(&format!("{base}/_matrix/client/v3/join/{room_id}"))
+        .map_err(|err| publisher_error(&format!("invalid Matrix join URL: {err}")))?;
+    url.query_pairs_mut()
+        .append_pair("access_token", appservice_token)
+        .append_pair("user_id", sender_user_id);
+    Ok(url)
+}
+
+pub fn matrix_join_room_body() -> Value {
+    json!({})
+}
+
+fn room_id_from_alias(alias: &str) -> Result<String, ValidationError> {
+    let localpart = alias_localpart(alias, "order room alias")?;
+    let server_name = alias
+        .split_once(':')
+        .map(|(_, server)| server)
+        .filter(|server| !server.is_empty())
+        .ok_or_else(|| publisher_error("order room alias must look like #local:server"))?;
+    Ok(format!("!{localpart}:{server_name}"))
 }
 
 fn publisher_error(message: &str) -> ValidationError {
@@ -1231,20 +1391,53 @@ where
     ) {
         return response;
     }
-    order_event_response(
+    let room_id = match state.store.order(&order_id).await {
+        Ok(Some(order)) => order.room_id,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"code": "ORDER_NOT_FOUND", "error": "order not found"})),
+            )
+                .into_response();
+        }
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    if let Err(err) = state.publisher.ensure_room_joined(&room_id).await {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "code": err.code, "error": err.message, "details": err.details })),
+        )
+            .into_response();
+    }
+    publish_generated(
         &state,
-        "io.marketplace.payment.captured",
-        &order_id,
-        &request.actor_id,
-        json!({
-            "order_id": order_id,
-            "payment_id": request.payment_id,
-            "adapter": request.adapter,
-            "amount": request.amount,
-            "currency": request.currency,
-            "provider_ref": request.provider_ref,
-            "evidence": request.evidence,
-        }),
+        vec![
+            marketplace_event(
+                &state.config,
+                "io.marketplace.payment.authorized",
+                &room_id,
+                &request.actor_id,
+                json!({
+                    "order_id": order_id,
+                    "payment_id": request.payment_id,
+                }),
+            ),
+            marketplace_event(
+                &state.config,
+                "io.marketplace.payment.captured",
+                &room_id,
+                &request.actor_id,
+                json!({
+                    "order_id": order_id,
+                    "payment_id": request.payment_id,
+                    "adapter": request.adapter,
+                    "amount": request.amount,
+                    "currency": request.currency,
+                    "provider_ref": request.provider_ref,
+                    "evidence": request.evidence,
+                }),
+            ),
+        ],
     )
     .await
 }
@@ -1303,10 +1496,20 @@ where
     ) {
         return response;
     }
+    let room_id = match buyer_order_room_id(&state, &request).await {
+        Ok(room_id) => room_id,
+        Err((status, err)) => {
+            return (
+                status,
+                Json(json!({ "code": err.code, "error": err.message, "details": err.details })),
+            )
+                .into_response();
+        }
+    };
     let customer_bound = marketplace_event(
         &state.config,
         "io.marketplace.actor.customer.bound",
-        &request.room_id,
+        &room_id,
         &request.customer_id,
         json!({
             "customer_id": request.customer_id,
@@ -1321,11 +1524,11 @@ where
     let order_created = marketplace_event(
         &state.config,
         "io.marketplace.order.created",
-        &request.room_id,
+        &room_id,
         &request.customer_id,
         json!({
             "order_id": request.order_id,
-            "room_id": request.room_id,
+            "room_id": room_id,
             "customer_id": request.customer_id,
             "seller_id": request.seller_id,
             "offer_id": request.offer_id,
@@ -1347,6 +1550,59 @@ where
         }),
     );
     publish_generated(&state, vec![customer_bound, order_created]).await
+}
+
+async fn buyer_order_room_id<S, P>(
+    state: &AppState<S, P>,
+    request: &BuyerOrderCreateRequest,
+) -> Result<String, (StatusCode, ValidationError)>
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    let Some(prefix) = &state.config.order_room_alias_prefix else {
+        return request
+            .room_id
+            .clone()
+            .filter(|room_id| !room_id.is_empty())
+            .ok_or_else(|| {
+                (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    ValidationError::new(
+                        ValidationCode::MissingRequiredField,
+                        "room_id is required when order_room_alias_prefix is not configured",
+                    ),
+                )
+            });
+    };
+    let alias = order_room_alias(prefix, &request.order_id, &state.config.matrix_server_name);
+    let invite_user_ids = order_room_invite_user_ids(&state.config, request)
+        .map_err(|err| (StatusCode::UNPROCESSABLE_ENTITY, err))?;
+    state
+        .publisher
+        .ensure_order_room(&alias, &request.order_id, &invite_user_ids)
+        .await
+        .map_err(|err| (StatusCode::BAD_GATEWAY, err))
+}
+
+fn order_room_invite_user_ids(
+    config: &ServerConfig,
+    request: &BuyerOrderCreateRequest,
+) -> Result<Vec<String>, ValidationError> {
+    let seller = parse_actor_id(&request.seller_id)?;
+    let local_sender = matrix_user_id(config, &config.instance_id);
+    let mut invite_user_ids = vec![
+        matrix_user_id(config, &seller.instance_id),
+        matrix_user_id(config, &request.arbiter_instance),
+    ];
+    invite_user_ids.retain(|user_id| user_id != &local_sender);
+    invite_user_ids.sort();
+    invite_user_ids.dedup();
+    Ok(invite_user_ids)
+}
+
+fn matrix_user_id(config: &ServerConfig, instance_id: &str) -> String {
+    format!("@{}:{}", config.appservice_sender_localpart, instance_id)
 }
 
 async fn buyer_order_cancel<S, P>(
@@ -1524,6 +1780,13 @@ where
         }
         Err(err) => return store_error_response(err.message, err.code),
     };
+    if let Err(err) = state.publisher.ensure_room_joined(&room_id).await {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "code": err.code, "error": err.message, "details": err.details })),
+        )
+            .into_response();
+    }
     publish_generated(
         state,
         vec![marketplace_event(
@@ -1574,6 +1837,11 @@ where
         })
         .collect::<Vec<_>>();
     let txn_id = format!("api-{}", Ulid::new());
+    let room_id = published
+        .first()
+        .and_then(|event| event.get("room_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
     if state.publisher.ingest_after_publish() {
         match ingest_transaction(
             &state.store,
@@ -1589,15 +1857,10 @@ where
         }
         return (
             StatusCode::ACCEPTED,
-            Json(json!({ "status": "accepted", "event_ids": event_ids })),
+            Json(json!({ "status": "accepted", "room_id": room_id, "event_ids": event_ids })),
         )
             .into_response();
     }
-    let room_id = published
-        .first()
-        .and_then(|event| event.get("room_id"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
     (
         StatusCode::ACCEPTED,
         Json(json!({ "status": "submitted", "room_id": room_id, "event_ids": event_ids })),

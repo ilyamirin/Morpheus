@@ -1,6 +1,7 @@
 use morpheus_server::{
-    catalog_alias_localpart, matrix_create_room_body, matrix_create_room_url,
-    matrix_room_alias_url, matrix_send_body, matrix_send_url,
+    catalog_alias_localpart, matrix_create_order_room_body, matrix_create_room_body,
+    matrix_create_room_url, matrix_join_room_body, matrix_join_room_url, matrix_room_alias_url,
+    matrix_send_body, matrix_send_url, order_room_alias,
 };
 use serde_json::json;
 
@@ -84,4 +85,56 @@ fn room_bootstrap_uses_catalog_alias_and_appservice_user() {
             "creation_content": {"m.federate": true}
         })
     );
+}
+
+#[test]
+fn order_room_alias_sanitizes_order_id() {
+    assert_eq!(
+        order_room_alias(
+            "#marketplace-order-",
+            "ord:books.example:UIORDER050501",
+            "books.example",
+        ),
+        "#marketplace-order-ord-books-example-uiorder050501:books.example"
+    );
+}
+
+#[test]
+fn order_room_bootstrap_uses_private_alias_and_invites_participants() {
+    assert_eq!(
+        matrix_create_order_room_body(
+            "#marketplace-order-ord-books-example-uiorder050501:books.example",
+            "ord:books.example:UIORDER050501",
+            &[
+                "@market:fashion.example".to_string(),
+                "@market:cases.example".to_string()
+            ],
+        )
+        .unwrap(),
+        json!({
+            "visibility": "private",
+            "preset": "private_chat",
+            "room_alias_name": "marketplace-order-ord-books-example-uiorder050501",
+            "name": "Morpheus order ord:books.example:UIORDER050501",
+            "topic": "Morpheus marketplace order ord:books.example:UIORDER050501",
+            "invite": ["@market:fashion.example", "@market:cases.example"],
+            "creation_content": {"m.federate": true}
+        })
+    );
+}
+
+#[test]
+fn room_join_helpers_use_appservice_user() {
+    assert_eq!(
+        matrix_join_room_url(
+            "http://synapse-fashion:8008",
+            "!orderroom:books.example",
+            "fashion-as-token",
+            "@market:fashion.example",
+        )
+        .unwrap()
+        .as_str(),
+        "http://synapse-fashion:8008/_matrix/client/v3/join/!orderroom:books.example?access_token=fashion-as-token&user_id=%40market%3Afashion.example"
+    );
+    assert_eq!(matrix_join_room_body(), json!({}));
 }

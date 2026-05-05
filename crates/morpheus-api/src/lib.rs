@@ -99,7 +99,8 @@ pub struct BuyerOrderCreateRequest {
     pub customer_id: String,
     pub customer_display_name: String,
     pub order_id: String,
-    pub room_id: String,
+    #[serde(default)]
+    pub room_id: Option<String>,
     pub seller_id: String,
     pub offer_id: String,
     pub offer_revision: i64,

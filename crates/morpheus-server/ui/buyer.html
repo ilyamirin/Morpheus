@@ -12,7 +12,7 @@
       <div class="page-wrap topbar-grid">
         <div>
           <p class="eyebrow">Buyer marketplace</p>
-          <h1 class="page-title">Discover catalog and track orders</h1>
+          <h1 class="page-title">Marketplace</h1>
         </div>
         <label class="token-field" title="Stored locally only">
           <span>Buyer bearer token</span>
@@ -21,75 +21,177 @@
       </div>
     </header>
 
-    <main class="page-wrap workspace-grid">
-      <section class="surface light-surface panel-span">
+    <main class="page-wrap role-shell">
+      <nav class="role-tabs" aria-label="Buyer marketplace sections">
+        <a class="role-tab" href="#discover">Discover</a>
+        <a class="role-tab" href="#offer">Offer</a>
+        <a class="role-tab" href="#orders">My orders</a>
+        <a class="role-tab" href="#advanced">Advanced</a>
+      </nav>
+
+      <section class="hero-band" aria-labelledby="marketplace-title">
+        <div>
+          <p class="eyebrow">Hybrid Studio + Marketplace</p>
+          <h2 id="marketplace-title">Find trusted seller offers and start a clean order flow.</h2>
+          <p class="hero-copy">Browse sellers, products, and offers from the projected catalog. Choose an offer, confirm the checkout details, then track the order lifecycle from one buyer workspace.</p>
+        </div>
+        <div class="summary-strip" aria-label="Marketplace summary">
+          <article class="metric-card">
+            <span class="status-pill accent-emerald">Trusted instance</span>
+            <strong>cases.example</strong>
+          </article>
+          <article class="metric-card">
+            <span class="status-pill accent-cyan">Ready flow</span>
+            <strong>Offer to order</strong>
+          </article>
+          <article class="metric-card">
+            <span class="status-pill accent-amber" id="buyer-order-count">0 orders</span>
+            <strong>My orders</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="flow-panel" id="discover" aria-labelledby="discover-title">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Catalog discovery</p>
-            <h2>Marketplace catalog</h2>
+            <p class="eyebrow">Discover</p>
+            <h2 id="discover-title">Marketplace catalog</h2>
           </div>
           <div class="button-row">
             <button class="btn" data-action="buyer-catalog">Refresh catalog</button>
             <button class="btn" data-action="buyer-orders">Refresh orders</button>
           </div>
         </div>
+
         <div class="catalog-grid">
-          <div>
-            <h3>Sellers</h3>
-            <div id="buyer-sellers" class="list-panel">
+          <article class="catalog-card">
+            <div class="section-head compact-head">
+              <div>
+                <p class="eyebrow">Trusted sellers</p>
+                <h3>Sellers</h3>
+              </div>
+            </div>
+            <div id="buyer-sellers" class="list-panel catalog-card-list">
               <div class="empty-state">No sellers loaded. Ask a seller to announce, then refresh catalog.</div>
             </div>
-          </div>
-          <div>
-            <h3>Products</h3>
-            <div id="buyer-products" class="list-panel">
+          </article>
+
+          <article class="catalog-card">
+            <div class="section-head compact-head">
+              <div>
+                <p class="eyebrow">Studio catalog</p>
+                <h3>Products</h3>
+              </div>
+            </div>
+            <div id="buyer-products" class="list-panel catalog-card-list">
               <div class="empty-state">No products loaded. Product upserts appear here after projection.</div>
             </div>
-          </div>
-          <div>
-            <h3>Offers</h3>
-            <div id="buyer-offers" class="list-panel">
-              <div class="empty-state">No offers loaded. Offer terms will populate the create-order form.</div>
+          </article>
+
+          <article class="catalog-card offer-card">
+            <div class="section-head compact-head">
+              <div>
+                <p class="eyebrow">Ready offers</p>
+                <h3>Offers</h3>
+              </div>
             </div>
-          </div>
+            <div id="buyer-offers" class="list-panel catalog-card-list offer-card-list">
+              <div class="empty-state">No offers loaded. Offer terms will populate the checkout form.</div>
+            </div>
+          </article>
         </div>
       </section>
 
-      <section class="surface light-surface">
+      <section class="flow-panel marketplace-flow" id="offer" aria-labelledby="offer-title">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Order creation</p>
-            <h2>Create order</h2>
+            <p class="eyebrow">Offer</p>
+            <h2 id="offer-title">Selected offer</h2>
           </div>
         </div>
-        <form class="stack-form" data-form="buyer-create-order">
-          <label class="field"><span class="label">Customer id</span><input class="input" name="customer_id" value="customer:shop.example:01JCUST"></label>
-          <label class="field"><span class="label">Order id</span><input class="input" name="order_id" value="ord:shop.example:01JORDER2"></label>
-          <label class="field"><span class="label">Room id</span><input class="input" name="room_id" value="!order2:shop.example"></label>
-          <label class="field"><span class="label">Offer id</span><input class="input" name="offer_id" value="offer:shop.example:01JOFFER"></label>
-          <div class="two-col">
-            <label class="field"><span class="label">Amount</span><input class="input" name="amount" value="100.00"></label>
-            <label class="field"><span class="label">Currency</span><input class="input" name="currency" value="USD"></label>
-          </div>
-          <button class="btn btn-primary" type="submit">Create order</button>
-        </form>
+
+        <div class="offer-workspace">
+          <aside class="detail-drawer" aria-label="Selected offer detail">
+            <p class="eyebrow">Selection</p>
+            <h3>Morpheus Operations Seat</h3>
+            <p class="muted-copy">Use an offer from Discover to fill this checkout. The current script updates offer, amount, and currency when you choose an offer card.</p>
+            <dl class="detail-list">
+              <div>
+                <dt>Seller</dt>
+                <dd>Fixture Seller</dd>
+              </div>
+              <div>
+                <dt>Category</dt>
+                <dd>Digital service</dd>
+              </div>
+              <div>
+                <dt>Instance</dt>
+                <dd>cases.example</dd>
+              </div>
+            </dl>
+          </aside>
+
+          <form id="buyer-create-order-form" class="stack-form order-card" data-form="buyer-create-order">
+            <div>
+              <p class="eyebrow">Checkout</p>
+              <h3>Create order from selected offer</h3>
+            </div>
+            <input type="hidden" name="customer_id" value="customer:shop.example:01JCUST">
+            <article class="catalog-card">
+              <p class="eyebrow">Buyer profile</p>
+              <h4>Fixture Customer</h4>
+              <p class="muted-copy">Advanced protocol fields remain below for operators who need exact ids.</p>
+            </article>
+            <div class="two-col">
+              <label class="field">
+                <span class="label">Amount</span>
+                <input class="input" name="amount" value="100.00">
+              </label>
+              <label class="field">
+                <span class="label">Currency</span>
+                <input class="input" name="currency" value="USD">
+              </label>
+            </div>
+            <button class="btn btn-primary" type="submit">Create order</button>
+          </form>
+        </div>
       </section>
 
-      <section class="surface light-surface">
+      <section class="flow-panel" id="orders" aria-labelledby="orders-title">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Tracking</p>
-            <h2>Order status</h2>
+            <p class="eyebrow">My orders</p>
+            <h2 id="orders-title">Order timeline</h2>
           </div>
-          <span class="status-pill accent-emerald" id="buyer-order-count">0 orders</span>
+          <button class="btn" data-action="buyer-orders">Refresh orders</button>
         </div>
-        <form class="stack-form" data-form="buyer-order-tools">
-          <label class="field"><span class="label">Order id</span><input class="input" name="order_id" value="ord:shop.example:01JORDER2"></label>
-          <div class="button-row stretch">
-            <button class="btn" type="submit" data-step="show">Show</button>
-            <button class="btn btn-danger" type="submit" data-step="cancel">Cancel</button>
-          </div>
-        </form>
+
+        <div class="timeline-list" aria-label="Buyer order lifecycle">
+          <article class="order-card">
+            <div class="section-head compact-head">
+              <div>
+                <p class="eyebrow">Current order</p>
+                <h3>Waiting for catalog selection</h3>
+              </div>
+              <span class="status-pill accent-amber">Draft</span>
+            </div>
+            <ol class="timeline-list compact-timeline">
+              <li class="timeline-step">
+                <strong>Offer selected</strong>
+                <span>Choose a trusted offer from the marketplace list.</span>
+              </li>
+              <li class="timeline-step">
+                <strong>Order created</strong>
+                <span>Create the buyer order with the selected terms.</span>
+              </li>
+              <li class="timeline-step">
+                <strong>Seller fulfillment</strong>
+                <span>Watch acceptance, payment, entitlement, and completion events.</span>
+              </li>
+            </ol>
+          </article>
+        </div>
+
         <div class="table-wrap">
           <table class="data-table light-table compact-table">
             <thead>
@@ -102,14 +204,86 @@
         </div>
       </section>
 
-      <section class="surface light-surface panel-span">
+      <section class="advanced-panel" id="advanced" aria-labelledby="advanced-title">
         <div class="section-head">
           <div>
-            <p class="eyebrow">API response</p>
-            <h2>Last result</h2>
+            <p class="eyebrow">Advanced</p>
+            <h2 id="advanced-title">Protocol details and API response</h2>
           </div>
         </div>
-        <pre class="json-panel light-json" id="result-panel">{ "status": "idle" }</pre>
+
+        <div class="catalog-grid">
+          <section class="flow-panel" aria-labelledby="advanced-create-title">
+            <div class="section-head compact-head">
+              <div>
+                <p class="eyebrow">Create order payload</p>
+                <h3 id="advanced-create-title">Protocol ids</h3>
+              </div>
+            </div>
+            <div class="stack-form">
+              <label class="field">
+                <span class="label">Order id</span>
+                <input class="input" form="buyer-create-order-form" name="order_id" value="ord:shop.example:01JORDER2">
+              </label>
+              <label class="field">
+                <span class="label">Customer id</span>
+                <input class="input" value="customer:shop.example:01JCUST" readonly>
+              </label>
+              <label class="field">
+                <span class="label">Offer id</span>
+                <input class="input" form="buyer-create-order-form" name="offer_id" value="offer:shop.example:01JOFFER">
+              </label>
+            </div>
+          </section>
+
+          <section class="flow-panel" aria-labelledby="advanced-tools-title">
+            <div class="section-head compact-head">
+              <div>
+                <p class="eyebrow">Order tools</p>
+                <h3 id="advanced-tools-title">Show or cancel</h3>
+              </div>
+            </div>
+            <form class="stack-form" data-form="buyer-order-tools">
+              <label class="field">
+                <span class="label">Order id</span>
+                <input class="input" name="order_id" value="ord:shop.example:01JORDER2">
+              </label>
+              <div class="button-row stretch">
+                <button class="btn" type="submit" data-step="show">Show</button>
+                <button class="btn btn-danger" type="submit" data-step="cancel">Cancel</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="flow-panel" aria-labelledby="advanced-orders-title">
+            <div class="section-head compact-head">
+              <div>
+                <p class="eyebrow">Raw order rows</p>
+                <h3 id="advanced-orders-title">Rendered order ids</h3>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table light-table compact-table">
+                <thead>
+                  <tr><th>Order</th><th>Status</th><th>Offer</th></tr>
+                </thead>
+                <tbody id="buyer-orders-raw-rows">
+                  <tr><td colspan="3" class="empty-cell">No buyer orders loaded. Create an order or refresh tracking.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <section class="flow-panel result-flow" aria-labelledby="result-title">
+          <div class="section-head compact-head">
+            <div>
+              <p class="eyebrow">API response</p>
+              <h3 id="result-title">Last result</h3>
+            </div>
+          </div>
+          <pre class="json-panel light-json" id="result-panel">{ "status": "idle" }</pre>
+        </section>
       </section>
     </main>
 
