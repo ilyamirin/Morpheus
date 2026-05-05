@@ -1,57 +1,91 @@
-# Federated Marketplace Protocol
+# Morpheus
 
-Rust protocol implementation, conformance suite, and server skeleton for `io.marketplace` v0.1, a strict federated digital marketplace protocol over Matrix.
+Morpheus is a Rust implementation of `io.marketplace`, a draft Matrix protocol for federated digital marketplaces.
 
-## Current Scope
+The project goal is to make marketplace instances interoperable without a central registry. Each instance publishes a catalog room, validates allowlisted peers, creates private order rooms, and records order/payment/entitlement/dispute state as typed Matrix events. Matrix carries verifiable protocol state; search, payments, credentials, files, license delivery, and other sensitive artifacts stay outside Matrix.
 
-This workspace validates protocol events, catalog sync, order-room replay, federation policy, and conformance vectors. It also includes the first runnable server milestone: protocol/core crates, in-memory event store, Synapse-compatible Application Service transaction endpoint, CLI config validation, migrations, and local Docker Compose scaffolding.
+## What Is Included
 
-For order-room replay validation, use `morpheus_core::validate_order_room_timeline` for Matrix envelopes and room authority, or `morpheus_core::validate_order_sequence` for payload-aware lifecycle replay. They enforce `customer.bound` before `order.created`, locked order terms, payment intent/capture/refund references, entitlement references, and dispute references. `OrderTransitionGraph` is intentionally only the capture-policy-agnostic transition graph and is not sufficient by itself for strict protocol acceptance.
+- Protocol validators for `io.marketplace` v0.1 envelopes, IDs, room profiles, schema rules, canonical JSON, privacy/security policy, compatibility, and stable error codes.
+- Core catalog and order logic: catalog snapshot replay, seller/product/offer projection, order lifecycle validation, payment capture rules, entitlements, disputes, arbitration, allowlist policy, and sender authority checks.
+- A Synapse-compatible Matrix Application Service runtime as an Axum router: transaction ingest, raw event retention, validation, projection, health/readiness/metrics, and bearer-protected admin endpoints.
+- Storage contracts plus in-memory and SQLite implementations, with SQL migration text for SQLite and Postgres. A Postgres `EventStore` implementation is not present yet.
+- Rust conformance vectors and behavioral tests as the project oracle.
+- CLI tools for config validation, Synapse registration generation, conformance runs, snapshot hash checks, DB migration, and catalog rebuild scheduling.
 
-Matrix `event_id` is the homeserver-assigned immutable event id. Marketplace content uses an independent `content.protocol_event_id` with `evt:<instance_id>:<local_id>` grammar; validators do not require it to match Matrix `event_id`.
+## Documents
 
-Retention, security, indexing, compatibility, and privacy validators are exported policy validators. They are advisory unless a caller wires them into a strict validation context.
+- [Protocol](docs/protocol.md) describes the Morpheus wire protocol, event model, lifecycles, authority rules, and conformance expectations.
+- [Rust Implementation](docs/rust-implementation.md) describes the workspace architecture, crates, runtime flow, storage, config, tests, and current operational scope.
+- [Original design draft](docs/superpowers/specs/2026-05-04-federated-digital-marketplace-matrix-design.md) is kept as the detailed specification source for v0.1.
 
-## Strict API Entry Points
+## Quick Start
 
-- `morpheus_protocol::validate_marketplace_event(event, context)` validates Matrix event envelope semantics, room profile routing, unknown event handling, redaction rejection, sender/issuer binding, and known event bodies.
-- `morpheus_core::validate_catalog_snapshot(snapshot, expected_hash)` validates canonical snapshot hashes.
-- `morpheus_core::replay_catalog_timeline(instance_id, snapshot, events)` applies snapshot plus delta events with dedupe and revision protection.
-- `morpheus_core::validate_order_room_timeline(events, context)` validates required members, event authorities, Matrix event envelopes, and payload-aware order replay.
-- `morpheus_core::validate_allowlist_policy(policy, now_epoch_ms)` validates local trust policy metadata.
-- `morpheus_conformance::ConformanceRunner` runs the 24 required v0.1 conformance vectors with stable results.
-
-Low-level schemas, ID parsers, `OrderStateMachine`, room-profile helpers, and individual policy validators remain exported as building blocks.
-
-## Coverage Policy
-
-Protocol confidence is measured by contract coverage first, line coverage second.
-
-- Every required conformance vector and every migrated TypeScript parity scenario must have a Rust test with stable accept/reject status and error code.
-- Behavioral coverage must exercise the protocol surface: envelope, catalog, order lifecycle, payments, entitlements, disputes, arbitration, privacy/security, and Application Service ingest.
-- Line coverage is enforced for protocol/core/matrix/conformance crates with a practical `98%` gate. Do not chase formatting-only or mechanically unreachable lines when behavioral and conformance contracts are already covered.
-- Do not weaken or remove conformance vectors to satisfy line coverage. If protocol behavior changes, update the spec note, conformance vector, and Rust behavioral test together.
-
-## Commands
+Install Rust and project tools:
 
 ```bash
-brew install rust
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-PATH="$HOME/.cargo/bin:$PATH" cargo nextest run --workspace
-LLVM_COV=/opt/homebrew/opt/llvm/bin/llvm-cov LLVM_PROFDATA=/opt/homebrew/opt/llvm/bin/llvm-profdata PATH="$HOME/.cargo/bin:$PATH" cargo llvm-cov --workspace --exclude morpheus-cli --exclude morpheus-server --exclude morpheus-store --fail-under-lines 98
+brew install rustup-init
+rustup-init -y
+source "$HOME/.cargo/env"
+rustup component add rustfmt clippy llvm-tools-preview
+cargo install cargo-nextest cargo-llvm-cov
+```
+
+Run the full Rust gate:
+
+```bash
 make check
 ```
 
-Local server bootstrap:
+Run individual checks:
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo nextest run --workspace
+cargo run -p morpheus-cli -- conformance run
+```
+
+Validate local config and generate a Synapse Application Service registration:
 
 ```bash
 cargo run -p morpheus-cli -- config validate --config config/local.toml
 cargo run -p morpheus-cli -- synapse registration --config config/local.toml --out .local/synapse/morpheus-registration.yaml
-docker compose up -d postgres synapse
 ```
 
-## Documents
+Start the local infrastructure used by the implementation:
 
-- Spec: `docs/superpowers/specs/2026-05-04-federated-digital-marketplace-matrix-design.md`
-- Plan: `docs/superpowers/plans/2026-05-04-federated-marketplace-reference-validator.md`
+```bash
+docker compose up -d postgres pgweb
+cargo run -p morpheus-cli -- db migrate --database-url postgres://morpheus:morpheus@localhost:5432/morpheus --database-kind postgres
+```
+
+The Compose file also contains a Synapse service, but a fresh checkout must initialize `.local/synapse` and wire the generated Application Service registration into `homeserver.yaml` before starting it.
+
+The HTTP server runtime currently lives in `morpheus-server` as `build_router(config, store)`. It is exercised by integration tests and can be embedded by a small binary or deployment wrapper. Docker Compose starts infrastructure only; it does not start a Morpheus server container yet. Until that wrapper lands, use the CLI, conformance runner, and server tests to run the implementation surface:
+
+```bash
+cargo test -p morpheus-server
+cargo test -p morpheus-store
+cargo test -p morpheus-conformance
+```
+
+## Main Crates
+
+- `morpheus-protocol`: wire constants, IDs, envelope validation, canonical JSON, room profile checks, versioning, and policy helpers.
+- `morpheus-core`: pure catalog/order/payment/entitlement/dispute/arbitration state machines and validators.
+- `morpheus-matrix`: Matrix Application Service transaction types and Synapse registration generation.
+- `morpheus-store`: storage trait, in-memory store, SQLite store, and SQL migrations.
+- `morpheus-server`: Axum routes for Matrix AS ingest, projections, health, metrics, and admin APIs.
+- `morpheus-cli`: local operator tools.
+- `morpheus-conformance`: required v0.1 vectors and stable conformance runner.
+
+## Quality Policy
+
+Protocol confidence is measured by contract coverage first, line coverage second.
+
+- Every required conformance vector and every migrated parity scenario must have a Rust test with stable accept/reject status and error code.
+- Behavioral coverage must exercise envelope validation, catalog replay, order lifecycle, payments, entitlements, disputes, arbitration, privacy/security, and Application Service ingest.
+- Line coverage is enforced for protocol/core/matrix/conformance crates with a practical `98%` gate.
+- Conformance vectors must not be weakened to satisfy line coverage. Protocol behavior changes require a spec note, conformance vector, and Rust behavioral test.
