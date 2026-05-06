@@ -134,7 +134,7 @@ where
             project_order_event(store, event, order_status(event_type)?).await
         }
         event_type if event_type.starts_with("io.marketplace.payment.") => {
-            project_order_event(store, event, None).await?;
+            project_order_event(store, event, payment_order_status(event_type)).await?;
             store
                 .upsert_payment(
                     required_str(&event.body, "payment_id")?,
@@ -145,7 +145,7 @@ where
                 .await
         }
         event_type if event_type.starts_with("io.marketplace.entitlement.") => {
-            project_order_event(store, event, None).await?;
+            project_order_event(store, event, entitlement_order_status(event_type)).await?;
             store
                 .upsert_entitlement(
                     required_str(&event.body, "entitlement_id")?,
@@ -257,6 +257,20 @@ fn payment_status(event_type: &str) -> ValidationResult<&'static str> {
     }
 }
 
+fn payment_order_status(event_type: &str) -> Option<&'static str> {
+    match event_type {
+        "io.marketplace.payment.intent.created" => Some("payment_intent_created"),
+        "io.marketplace.payment.authorized" => Some("payment_authorized"),
+        "io.marketplace.payment.captured" => Some("payment_captured"),
+        "io.marketplace.payment.failed" => Some("payment_failed"),
+        "io.marketplace.payment.cancelled" => Some("payment_cancelled"),
+        "io.marketplace.payment.refund.requested" => Some("refund_requested"),
+        "io.marketplace.payment.refunded" => Some("refunded"),
+        "io.marketplace.payment.chargeback.opened" => Some("chargeback_opened"),
+        _ => None,
+    }
+}
+
 fn entitlement_status(event_type: &str) -> ValidationResult<&'static str> {
     match event_type {
         "io.marketplace.entitlement.granted" => Ok("granted"),
@@ -265,6 +279,17 @@ fn entitlement_status(event_type: &str) -> ValidationResult<&'static str> {
         "io.marketplace.entitlement.revoked" => Ok("revoked"),
         "io.marketplace.entitlement.expired" => Ok("expired"),
         _ => Err(unknown_projection(event_type)),
+    }
+}
+
+fn entitlement_order_status(event_type: &str) -> Option<&'static str> {
+    match event_type {
+        "io.marketplace.entitlement.granted" => Some("entitlement_granted"),
+        "io.marketplace.entitlement.activated" => Some("entitlement_activated"),
+        "io.marketplace.entitlement.completed" => Some("entitlement_completed"),
+        "io.marketplace.entitlement.revoked" => Some("entitlement_revoked"),
+        "io.marketplace.entitlement.expired" => Some("entitlement_expired"),
+        _ => None,
     }
 }
 

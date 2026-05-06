@@ -166,3 +166,69 @@ async fn sqlite_persists_catalog_and_order_projections() {
         "created"
     );
 }
+
+#[tokio::test]
+async fn sqlite_order_events_follow_marketplace_sequence_not_event_id_order() {
+    let store = sqlite_store().await;
+    for (event_id, marketplace_event_id, event_type) in [
+        (
+            "$z-order",
+            "evt:shop.example:ZORDER",
+            "io.marketplace.order.created",
+        ),
+        (
+            "$a-accept",
+            "evt:shop.example:AACCEPT",
+            "io.marketplace.order.accepted",
+        ),
+        (
+            "$b-payment",
+            "evt:shop.example:BPAYMENT",
+            "io.marketplace.payment.intent.created",
+        ),
+    ] {
+        store
+            .record_raw_event(raw_event(event_id, "!order:shop.example"))
+            .await
+            .unwrap();
+        store
+            .record_marketplace_event(MarketplaceEventRecord {
+                marketplace_event_id: marketplace_event_id.into(),
+                matrix_event_id: event_id.into(),
+                protocol_version: "0.1".into(),
+                issuer_instance: "shop.example".into(),
+                actor_id: Some("seller:shop.example:01JSELLER".into()),
+                event_type: event_type.into(),
+                body: serde_json::json!({}),
+                created_at: "2026-05-05T00:00:00Z".into(),
+            })
+            .await
+            .unwrap();
+        store
+            .record_order_event(
+                "ord:customer.example:01JORDER",
+                marketplace_event_id,
+                event_type,
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+    }
+
+    let events = store
+        .order_events("ord:customer.example:01JORDER")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|event| event.event_type)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        events,
+        [
+            "io.marketplace.order.created",
+            "io.marketplace.order.accepted",
+            "io.marketplace.payment.intent.created",
+        ]
+    );
+}

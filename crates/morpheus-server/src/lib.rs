@@ -15,7 +15,7 @@ use morpheus_matrix::{AppServiceTransaction, validate_transaction_event_ids};
 use morpheus_protocol::{ValidationCode, ValidationError, parse_actor_id, validate_event_envelope};
 use morpheus_store::{
     AppServiceTransactionRecord, CatalogOfferProjectionRecord, CatalogProductRecord,
-    CatalogSellerRecord, EventStore, ProjectionErrorRecord, RawMatrixEventRecord,
+    CatalogSellerRecord, EventStore, OrderEventRecord, ProjectionErrorRecord, RawMatrixEventRecord,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -348,7 +348,7 @@ impl MatrixPublisher for SynapseMatrixPublisher {
     }
 
     fn ingest_after_publish(&self) -> bool {
-        true
+        false
     }
 }
 
@@ -634,8 +634,8 @@ where
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics))
         .route("/ui/admin", get(ui_admin))
-        .route("/ui/seller", get(ui_seller))
-        .route("/ui/buyer", get(ui_buyer))
+        .route("/ui/seller", get(ui_seller::<S, P>))
+        .route("/ui/buyer", get(ui_buyer::<S, P>))
         .route("/ui/assets/favicon.svg", get(ui_favicon_svg))
         .route("/ui/assets/app.css", get(ui_app_css))
         .route("/ui/assets/app.js", get(ui_app_js))
@@ -747,12 +747,39 @@ async fn ui_admin() -> impl IntoResponse {
     Html(include_str!("../ui/admin.html"))
 }
 
-async fn ui_seller() -> impl IntoResponse {
-    Html(include_str!("../ui/seller.html"))
+async fn ui_seller<S, P>(State(state): State<AppState<S, P>>) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    Html(render_ui_page(
+        include_str!("../ui/seller.html"),
+        &state.config,
+    ))
 }
 
-async fn ui_buyer() -> impl IntoResponse {
-    Html(include_str!("../ui/buyer.html"))
+async fn ui_buyer<S, P>(State(state): State<AppState<S, P>>) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    Html(render_ui_page(
+        include_str!("../ui/buyer.html"),
+        &state.config,
+    ))
+}
+
+fn render_ui_page(template: &str, config: &ServerConfig) -> String {
+    let ui_config = json!({
+        "instance_id": config.instance_id,
+        "matrix_server_name": config.matrix_server_name,
+        "catalog_room_id": config.catalog_room_id,
+    });
+    let script = format!(
+        r#"<script id="morpheus-ui-config" type="application/json">{}</script>"#,
+        serde_json::to_string(&ui_config).unwrap_or_else(|_| "{}".into())
+    );
+    template.replacen("</head>", &format!("    {script}\n  </head>"), 1)
 }
 
 async fn ui_favicon_svg() -> impl IntoResponse {
@@ -1591,6 +1618,18 @@ where
     ) {
         return response;
     }
+    match order_has_event(
+        &state.store,
+        &order_id,
+        "io.marketplace.payment.intent.created",
+        Some(("payment_id", &request.payment_id)),
+    )
+    .await
+    {
+        Ok(true) => return accepted_noop_order_response(&state, &order_id).await,
+        Ok(false) => {}
+        Err(err) => return store_error_response(err.message, err.code),
+    }
     order_event_response(
         &state,
         "io.marketplace.payment.intent.created",
@@ -1642,6 +1681,29 @@ where
         }
         Err(err) => return store_error_response(err.message, err.code),
     };
+    let existing_events = match state.store.order_events(&order_id).await {
+        Ok(events) => events,
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    let payment_id = request.payment_id.clone();
+    let authorized_exists = existing_events.iter().any(|event| {
+        order_event_matches(
+            event,
+            "io.marketplace.payment.authorized",
+            Some(("payment_id", &payment_id)),
+        )
+    });
+    let captured_exists = existing_events.iter().any(|event| {
+        order_event_matches(
+            event,
+            "io.marketplace.payment.captured",
+            Some(("payment_id", &payment_id)),
+        )
+    });
+    if captured_exists {
+        return accepted_noop_response(&room_id);
+    }
+
     if let Err(err) = state.publisher.ensure_room_joined(&room_id).await {
         return (
             StatusCode::BAD_GATEWAY,
@@ -1649,37 +1711,89 @@ where
         )
             .into_response();
     }
-    publish_generated(
-        &state,
-        vec![
-            marketplace_event(
-                &state.config,
-                "io.marketplace.payment.authorized",
-                &room_id,
-                &request.actor_id,
-                json!({
-                    "order_id": order_id,
-                    "payment_id": request.payment_id,
-                }),
-            ),
-            marketplace_event(
-                &state.config,
-                "io.marketplace.payment.captured",
-                &room_id,
-                &request.actor_id,
-                json!({
-                    "order_id": order_id,
-                    "payment_id": request.payment_id,
-                    "adapter": request.adapter,
-                    "amount": request.amount,
-                    "currency": request.currency,
-                    "provider_ref": request.provider_ref,
-                    "evidence": request.evidence,
-                }),
-            ),
-        ],
+    let mut events = Vec::new();
+    if !authorized_exists {
+        events.push(marketplace_event(
+            &state.config,
+            "io.marketplace.payment.authorized",
+            &room_id,
+            &request.actor_id,
+            json!({
+                "order_id": order_id,
+                "payment_id": payment_id.clone(),
+            }),
+        ));
+    }
+    events.push(marketplace_event(
+        &state.config,
+        "io.marketplace.payment.captured",
+        &room_id,
+        &request.actor_id,
+        json!({
+            "order_id": order_id,
+            "payment_id": payment_id,
+            "adapter": request.adapter,
+            "amount": request.amount,
+            "currency": request.currency,
+            "provider_ref": request.provider_ref,
+            "evidence": request.evidence,
+        }),
+    ));
+    publish_generated(&state, events).await
+}
+
+async fn order_has_event<S>(
+    store: &S,
+    order_id: &str,
+    event_type: &str,
+    body_field: Option<(&str, &str)>,
+) -> Result<bool, ValidationError>
+where
+    S: EventStore,
+{
+    Ok(store
+        .order_events(order_id)
+        .await?
+        .iter()
+        .any(|event| order_event_matches(event, event_type, body_field)))
+}
+
+fn order_event_matches(
+    event: &OrderEventRecord,
+    event_type: &str,
+    body_field: Option<(&str, &str)>,
+) -> bool {
+    event.event_type == event_type
+        && body_field.is_none_or(|(key, expected)| {
+            event.body.get(key).and_then(Value::as_str) == Some(expected)
+        })
+}
+
+async fn accepted_noop_order_response<S, P>(
+    state: &AppState<S, P>,
+    order_id: &str,
+) -> axum::response::Response
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    match state.store.order(order_id).await {
+        Ok(Some(order)) => accepted_noop_response(&order.room_id),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code": "ORDER_NOT_FOUND", "error": "order not found"})),
+        )
+            .into_response(),
+        Err(err) => store_error_response(err.message, err.code),
+    }
+}
+
+fn accepted_noop_response(room_id: &str) -> axum::response::Response {
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({ "status": "accepted", "room_id": room_id, "event_ids": [] })),
     )
-    .await
+        .into_response()
 }
 
 async fn seller_entitlement_grant<S, P>(
@@ -1938,7 +2052,7 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    match state.store.catalog_offers().await {
+    match valid_catalog_offers(&state.store).await {
         Ok(items) => Json(json!({ "items": items })).into_response(),
         Err(err) => store_error_response(err.message, err.code),
     }
@@ -1952,7 +2066,7 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    match state.store.catalog_offers().await {
+    match valid_catalog_offers(&state.store).await {
         Ok(items) => items
             .into_iter()
             .find(|offer| offer.offer_id == offer_id)
@@ -1966,6 +2080,35 @@ where
             }),
         Err(err) => store_error_response(err.message, err.code),
     }
+}
+
+async fn valid_catalog_offers<S>(
+    store: &S,
+) -> Result<Vec<CatalogOfferProjectionRecord>, ValidationError>
+where
+    S: EventStore,
+{
+    let seller_ids = store
+        .catalog_sellers()
+        .await?
+        .into_iter()
+        .map(|seller| seller.seller_id)
+        .collect::<BTreeSet<_>>();
+    let product_ids = store
+        .catalog_products()
+        .await?
+        .into_iter()
+        .map(|product| product.product_id)
+        .collect::<BTreeSet<_>>();
+
+    Ok(store
+        .catalog_offers()
+        .await?
+        .into_iter()
+        .filter(|offer| {
+            seller_ids.contains(&offer.seller_id) && product_ids.contains(&offer.product_id)
+        })
+        .collect())
 }
 
 async fn seller_simple_order_event<S, P>(

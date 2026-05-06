@@ -8,6 +8,7 @@ use morpheus_protocol::{
 };
 use morpheus_store::EventStore;
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 
 pub async fn validate_event_context<S>(
     store: &S,
@@ -77,9 +78,12 @@ where
     S: EventStore,
 {
     let mut catalog = CatalogIndex::new(instance_id);
+    let mut seller_ids = BTreeSet::new();
+    let mut product_ids = BTreeSet::new();
 
     for seller in store.catalog_sellers().await? {
         if parse_object_instance(&seller.seller_id)? == instance_id {
+            seller_ids.insert(seller.seller_id.clone());
             catalog.upsert_seller(SellerRecord {
                 seller_id: seller.seller_id,
                 status: seller.status,
@@ -88,7 +92,10 @@ where
     }
 
     for product in store.catalog_products().await? {
-        if parse_object_instance(&product.product_id)? == instance_id {
+        if parse_object_instance(&product.product_id)? == instance_id
+            && seller_ids.contains(&product.seller_id)
+        {
+            product_ids.insert(product.product_id.clone());
             catalog.upsert_product(ProductRecord {
                 product_id: product.product_id,
                 seller_id: product.seller_id,
@@ -99,7 +106,10 @@ where
     }
 
     for offer in store.catalog_offers().await? {
-        if parse_object_instance(&offer.offer_id)? == instance_id {
+        if parse_object_instance(&offer.offer_id)? == instance_id
+            && seller_ids.contains(&offer.seller_id)
+            && product_ids.contains(&offer.product_id)
+        {
             catalog.upsert_offer(OfferRecord {
                 offer_id: offer.offer_id,
                 product_id: offer.product_id,

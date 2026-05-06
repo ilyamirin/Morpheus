@@ -119,6 +119,9 @@ services:
     depends_on:
       - postgres-books
       - synapse-books
+      - federation-books
+      - federation-cases
+      - federation-fashion
     networks:
       morpheus-e2e:
         aliases: [morpheus-books]
@@ -136,6 +139,9 @@ services:
     depends_on:
       - postgres-cases
       - synapse-cases
+      - federation-books
+      - federation-cases
+      - federation-fashion
     networks:
       morpheus-e2e:
         aliases: [morpheus-cases]
@@ -153,6 +159,9 @@ services:
     depends_on:
       - postgres-fashion
       - synapse-fashion
+      - federation-books
+      - federation-cases
+      - federation-fashion
     networks:
       morpheus-e2e:
         aliases: [morpheus-fashion]

@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use http::{Request, StatusCode};
 use morpheus_protocol::ValidationError;
-use morpheus_server::{MatrixPublisher, ServerConfig, build_router, build_router_with_publisher};
+use morpheus_server::{
+    MatrixPublisher, ServerConfig, SynapseMatrixPublisher, build_router,
+    build_router_with_publisher,
+};
 use morpheus_store::{
     CatalogOfferProjectionRecord, EventStore, InMemoryEventStore, OrderProjectionRecord,
 };
@@ -300,6 +303,8 @@ async fn seller_ui_contains_storefront_anchors_and_hooks() {
             r#"id="seller-orders-rows""#,
             r#"id="seller-order-count""#,
             r#"id="result-panel""#,
+            r#"id="morpheus-ui-config""#,
+            r#""instance_id":"shop.example""#,
         ],
     );
     assert_contains_none(&body, &["Profile -&gt; Product -&gt; Offer -&gt; Publish"]);
@@ -334,9 +339,25 @@ async fn buyer_ui_contains_gallery_checkout_anchors_and_hooks() {
             r#"id="buyer-orders-rows""#,
             r#"id="buyer-order-count""#,
             r#"id="result-panel""#,
+            r#"id="morpheus-ui-config""#,
+            r#""instance_id":"shop.example""#,
         ],
     );
     assert_contains_none(&body, &["Selected offer"]);
+}
+
+#[tokio::test]
+async fn ui_javascript_does_not_ship_shop_example_as_runtime_default() {
+    let (status, content_type, body) = send_ui_body_request("/ui/assets/app.js").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("javascript")),
+        "{content_type:?}"
+    );
+    assert_contains_none(&body, &["shop.example"]);
 }
 
 #[tokio::test]
@@ -403,6 +424,17 @@ async fn ui_js_asset_returns_javascript_without_auth() {
             .is_some_and(|value| value.contains("javascript")),
         "{content_type:?}"
     );
+}
+
+#[tokio::test]
+async fn synapse_publisher_uses_network_loop_without_direct_ingest() {
+    let publisher = SynapseMatrixPublisher::new(
+        "http://synapse.test".into(),
+        "as-token".into(),
+        "@market:shop.example".into(),
+    );
+
+    assert!(!publisher.ingest_after_publish());
 }
 
 #[tokio::test]
@@ -813,6 +845,169 @@ async fn buyer_order_create_publishes_customer_binding_before_order_created() {
 }
 
 #[tokio::test]
+async fn buyer_order_create_rejects_foreign_customer_actor() {
+    let (status, body) = send_json_request(
+        store_with_admin_projection_data().await,
+        "POST",
+        "/api/v1/buyer/orders",
+        Some("Bearer buyer-token"),
+        json!({
+            "customer_id": "customer:other.example:01JCUST",
+            "customer_display_name": "Fixture Customer",
+            "order_id": "ord:shop.example:01JORDER4",
+            "seller_id": "seller:shop.example:01JSELLER",
+            "offer_id": "offer:shop.example:01JOFFER",
+            "offer_revision": 1,
+            "catalog_snapshot_id": "snap:shop.example:01JSNAP",
+            "price": {"amount": "100.00", "currency": "USD"},
+            "payment_adapter": "mock",
+            "payment_capture_policy": "before_entitlement",
+            "entitlement_type": "external_entitlement",
+            "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "arbiter_instance": "cases.example",
+            "arbiter_actor": "arbiter:cases.example:01JARBITER",
+            "arbitration_policy_id": "standard-digital-v1",
+            "arbitration_policy_version": "1",
+            "arbitration_window": "P14D",
+            "expires_at": "2026-05-06T10:30:00Z"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["code"], "ACTOR_FORBIDDEN");
+}
+
+#[tokio::test]
+async fn buyer_order_create_accepts_local_customer_for_remote_catalog_offer() {
+    let store = InMemoryEventStore::default();
+    store
+        .upsert_catalog_seller(
+            "seller:books.example:BOOKSSELLER01",
+            "books.example",
+            "active",
+            json!({ "status": "active" }),
+        )
+        .await
+        .unwrap();
+    store
+        .upsert_catalog_product(
+            "prod:books.example:BOOKSPROD0101",
+            "seller:books.example:BOOKSSELLER01",
+            1,
+            json!({ "revision": 1, "terms_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }),
+        )
+        .await
+        .unwrap();
+    store
+        .upsert_catalog_offer(CatalogOfferProjectionRecord {
+            offer_id: "offer:books.example:ORPHAN".into(),
+            product_id: "prod:books.example:MISSING".into(),
+            seller_id: "seller:books.example:BOOKSSELLER01".into(),
+            revision: 1,
+            price: json!({ "amount": "99.00", "currency": "USD" }),
+            inventory_kind: "unlimited".into(),
+            body: json!({
+                "revision": 1,
+                "payment_terms": {"capture_policy": "before_entitlement"},
+                "entitlement": {"type": "external_entitlement"},
+                "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            }),
+        })
+        .await
+        .unwrap();
+    store
+        .upsert_catalog_offer(CatalogOfferProjectionRecord {
+            offer_id: "offer:books.example:BOOKSOFFER0101".into(),
+            product_id: "prod:books.example:BOOKSPROD0101".into(),
+            seller_id: "seller:books.example:BOOKSSELLER01".into(),
+            revision: 1,
+            price: json!({ "amount": "26.00", "currency": "USD" }),
+            inventory_kind: "unlimited".into(),
+            body: json!({
+                "revision": 1,
+                "payment_terms": {"capture_policy": "before_entitlement"},
+                "entitlement": {"type": "external_entitlement"},
+                "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            }),
+        })
+        .await
+        .unwrap();
+
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/buyer/orders",
+        Some("Bearer buyer-token"),
+        json!({
+            "customer_id": "customer:shop.example:01JCUST",
+            "customer_display_name": "Fixture Customer",
+            "order_id": "ord:shop.example:01JORDER5",
+            "seller_id": "seller:books.example:BOOKSSELLER01",
+            "offer_id": "offer:books.example:BOOKSOFFER0101",
+            "offer_revision": 1,
+            "catalog_snapshot_id": "snap:books.example:01JSNAP",
+            "price": {"amount": "26.00", "currency": "USD"},
+            "payment_adapter": "mock",
+            "payment_capture_policy": "before_entitlement",
+            "entitlement_type": "external_entitlement",
+            "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "arbiter_instance": "cases.example",
+            "arbiter_actor": "arbiter:cases.example:01JARBITER",
+            "arbitration_policy_id": "standard-digital-v1",
+            "arbitration_policy_version": "1",
+            "arbitration_window": "P14D",
+            "expires_at": "2026-05-06T10:30:00Z"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(
+        store
+            .order("ord:shop.example:01JORDER5")
+            .await
+            .unwrap()
+            .unwrap()
+            .seller_id,
+        "seller:books.example:BOOKSSELLER01"
+    );
+}
+
+#[tokio::test]
+async fn buyer_catalog_offers_hide_orphan_offer_projections() {
+    let store = store_with_admin_projection_data().await;
+    store
+        .upsert_catalog_offer(CatalogOfferProjectionRecord {
+            offer_id: "offer:shop.example:ORPHAN".into(),
+            product_id: "prod:shop.example:MISSING".into(),
+            seller_id: "seller:shop.example:01JSELLER".into(),
+            revision: 1,
+            price: json!({ "amount": "99.00", "currency": "USD" }),
+            inventory_kind: "unlimited".into(),
+            body: json!({
+                "revision": 1,
+                "payment_terms": {"capture_policy": "before_entitlement"},
+                "entitlement": {"type": "external_entitlement"},
+                "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            }),
+        })
+        .await
+        .unwrap();
+
+    let (status, body) = send_admin_request(store, "GET", "/api/v1/catalog/offers", None).await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"].as_array().unwrap().len(), 1);
+    assert_eq!(body["items"][0]["offer_id"], "offer:shop.example:01JOFFER");
+}
+
+#[tokio::test]
 async fn seller_order_action_joins_order_room_before_publish() {
     let store = store_with_admin_projection_data().await;
     let publisher = RecordingPublisher::default();
@@ -982,4 +1177,118 @@ async fn seller_payment_capture_publishes_authorized_before_captured() {
         .collect::<Vec<_>>();
     assert!(events.contains(&"io.marketplace.payment.authorized".to_string()));
     assert!(events.contains(&"io.marketplace.payment.captured".to_string()));
+}
+
+#[tokio::test]
+async fn seller_payment_capture_retry_is_idempotent_after_capture() {
+    let store = store_with_admin_projection_data().await;
+    let order_id = "ord:shop.example:01JORDER4";
+    let create = json!({
+        "customer_id": "customer:shop.example:01JCUST",
+        "customer_display_name": "Fixture Customer",
+        "order_id": order_id,
+        "seller_id": "seller:shop.example:01JSELLER",
+        "offer_id": "offer:shop.example:01JOFFER",
+        "offer_revision": 1,
+        "catalog_snapshot_id": "snap:shop.example:01JSNAP",
+        "price": {"amount": "100.00", "currency": "USD"},
+        "payment_adapter": "mock",
+        "payment_capture_policy": "before_entitlement",
+        "entitlement_type": "external_entitlement",
+        "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "arbiter_instance": "cases.example",
+        "arbiter_actor": "arbiter:cases.example:01JARBITER",
+        "arbitration_policy_id": "standard-digital-v1",
+        "arbitration_policy_version": "1",
+        "arbitration_window": "P14D",
+        "expires_at": "2026-05-06T10:30:00Z"
+    });
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/buyer/orders",
+        Some("Bearer buyer-token"),
+        create,
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        &format!("/api/v1/seller/orders/{order_id}/accept"),
+        Some("Bearer seller-token"),
+        json!({
+            "actor_id": "seller:shop.example:01JSELLER",
+            "offer_revision": 1,
+            "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "payment_capture_policy": "before_entitlement",
+            "arbitration_policy_version": "1"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        &format!("/api/v1/seller/orders/{order_id}/payment-intent"),
+        Some("Bearer seller-token"),
+        json!({
+            "actor_id": "seller:shop.example:01JSELLER",
+            "payment_id": "pay:shop.example:01JPAY4",
+            "adapter": "mock",
+            "amount": "100.00",
+            "currency": "USD",
+            "capture_policy": "before_entitlement",
+            "idempotency_key": "idem:shop.example:01JPAY4",
+            "provider_ref": "mock:pi_01JPAY4",
+            "confirmation": {"method": "redirect", "uri": "https://shop.example/pay/confirm"},
+            "expires_at": "2026-05-06T10:30:00Z"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    for _ in 0..2 {
+        let (status, body) = send_json_request(
+            store.clone(),
+            "POST",
+            &format!("/api/v1/seller/orders/{order_id}/payment-capture"),
+            Some("Bearer seller-token"),
+            json!({
+                "actor_id": "seller:shop.example:01JSELLER",
+                "payment_id": "pay:shop.example:01JPAY4",
+                "adapter": "mock",
+                "amount": "100.00",
+                "currency": "USD",
+                "provider_ref": "mock:cap_01JPAY4",
+                "evidence": {
+                    "kind": "capture",
+                    "uri": "https://shop.example/evidence/capture",
+                    "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    }
+
+    let events = store.order_events(order_id).await.unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == "io.marketplace.payment.authorized")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == "io.marketplace.payment.captured")
+            .count(),
+        1
+    );
 }

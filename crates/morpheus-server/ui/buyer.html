@@ -48,7 +48,7 @@
         </div>
 
         <div class="product-gallery" id="buyer-offers" aria-label="Marketplace offers">
-          <article class="product-card is-featured" data-demo-offer="offer:shop.example:01JOFFER">
+          <article class="product-card is-featured">
             <img src="/ui/assets/products/sneakers.png" alt="Soft Runner sneakers">
             <div class="product-card-body">
               <span class="product-meta">fashion.example · Fixture Seller</span>
@@ -56,7 +56,7 @@
               <p>Lightweight everyday sneakers from a trusted seller.</p>
               <div class="product-card-footer">
                 <strong>100.00 USD</strong>
-                <button class="btn btn-primary" data-select-offer="offer:shop.example:01JOFFER" data-open-checkout>Buy</button>
+                <button class="btn btn-primary" data-demo-buy>Buy</button>
               </div>
             </div>
           </article>
@@ -144,16 +144,16 @@
           <section class="flow-panel">
             <h3>Create order payload</h3>
             <form id="buyer-create-order-form" class="stack-form" data-form="buyer-create-order">
-              <input type="hidden" name="customer_id" value="customer:shop.example:01JCUST">
+              <input type="hidden" name="customer_id" value="">
               <input type="hidden" name="amount" value="100.00">
               <input type="hidden" name="currency" value="USD">
               <label class="field">
                 <span class="label">Order id</span>
-                <input class="input" name="order_id" value="ord:shop.example:01JORDER2">
+                <input class="input" name="order_id" value="">
               </label>
               <label class="field">
                 <span class="label">Offer id</span>
-                <input class="input" name="offer_id" value="offer:shop.example:01JOFFER">
+                <input class="input" name="offer_id" value="">
               </label>
             </form>
           </section>
@@ -163,7 +163,7 @@
             <form class="stack-form" data-form="buyer-order-tools">
               <label class="field">
                 <span class="label">Order id</span>
-                <input class="input" name="order_id" value="ord:shop.example:01JORDER2">
+                <input class="input" name="order_id" value="">
               </label>
               <div class="button-row stretch">
                 <button class="btn" type="submit" data-step="show">Show</button>

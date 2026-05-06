@@ -39,7 +39,7 @@
             <button class="btn" data-action="seller-orders">Refresh orders</button>
           </div>
 
-          <div class="seller-product-grid" aria-label="Seller product cards">
+          <div class="seller-product-grid" id="seller-store-cards" aria-label="Seller product cards">
             <article class="seller-product-card is-live">
               <img src="/ui/assets/products/sneakers.png" alt="Soft Runner sneakers">
               <div class="seller-card-body">
@@ -85,9 +85,9 @@
           <p class="quick-add-copy">One product card, one price, one publish action.</p>
 
           <form class="stack-form compact-form" data-form="seller-announce">
-            <input type="hidden" name="seller_id" value="seller:shop.example:01JSELLER">
-            <input type="hidden" name="legal_profile_ref" value="https://shop.example/legal">
-            <input type="hidden" name="terms_ref" value="https://shop.example/terms">
+            <input type="hidden" name="seller_id" value="">
+            <input type="hidden" name="legal_profile_ref" value="">
+            <input type="hidden" name="terms_ref" value="">
             <label class="field">
               <span class="label">Seller name</span>
               <input class="input" name="display_name" value="Fixture Seller">
@@ -109,7 +109,7 @@
               <summary>Advanced product fields</summary>
               <label class="field">
                 <span class="label">Product id</span>
-                <input class="input" name="product_id" value="prod:shop.example:01JPROD">
+                <input class="input" name="product_id" value="">
               </label>
               <label class="field">
                 <span class="label">Revision</span>
@@ -135,11 +135,11 @@
               <summary>Advanced offer fields</summary>
               <label class="field">
                 <span class="label">Offer id</span>
-                <input class="input" name="offer_id" value="offer:shop.example:01JOFFER">
+                <input class="input" name="offer_id" value="">
               </label>
               <label class="field">
                 <span class="label">Product id</span>
-                <input class="input" name="product_id" value="prod:shop.example:01JPROD">
+                <input class="input" name="product_id" value="">
               </label>
               <label class="field">
                 <span class="label">Revision</span>
@@ -163,7 +163,7 @@
           <form class="inline-form" data-form="seller-order-action">
             <label class="field grow">
               <span class="label">Order id</span>
-              <input class="input" name="order_id" value="ord:shop.example:01JORDER2">
+              <input class="input" name="order_id" value="">
             </label>
             <button class="btn" type="submit" data-step="accept">Accept</button>
             <button class="btn" type="submit" data-step="payment-intent">Intent</button>

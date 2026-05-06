@@ -819,10 +819,11 @@ impl EventStore for SqliteEventStore {
 
     async fn order_events(&self, order_id: &str) -> Result<Vec<OrderEventRecord>, ValidationError> {
         let rows = sqlx::query(
-            "SELECT order_id, matrix_event_id, event_type, body
-             FROM order_events
-             WHERE order_id = ?
-             ORDER BY matrix_event_id",
+            "SELECT oe.order_id, oe.matrix_event_id, oe.event_type, oe.body
+             FROM order_events oe
+             LEFT JOIN marketplace_events me ON me.marketplace_event_id = oe.matrix_event_id
+             WHERE oe.order_id = ?
+             ORDER BY me.rowid, oe.rowid",
         )
         .bind(order_id)
         .fetch_all(&self.pool)
@@ -1556,10 +1557,11 @@ impl EventStore for PostgresEventStore {
 
     async fn order_events(&self, order_id: &str) -> Result<Vec<OrderEventRecord>, ValidationError> {
         let rows = sqlx::query(
-            "SELECT order_id, matrix_event_id, event_type, body
-             FROM order_events
-             WHERE order_id = $1
-             ORDER BY matrix_event_id",
+            "SELECT oe.order_id, oe.matrix_event_id, oe.event_type, oe.body
+             FROM order_events oe
+             LEFT JOIN marketplace_events me ON me.marketplace_event_id = oe.matrix_event_id
+             WHERE oe.order_id = $1
+             ORDER BY me.sequence_id, oe.ctid",
         )
         .bind(order_id)
         .fetch_all(&self.pool)
@@ -2054,16 +2056,14 @@ impl EventStore for InMemoryEventStore {
     }
 
     async fn order_events(&self, order_id: &str) -> Result<Vec<OrderEventRecord>, ValidationError> {
-        let mut events = self
+        Ok(self
             .inner
             .lock()
             .await
             .order_events
             .get(order_id)
             .cloned()
-            .unwrap_or_default();
-        events.sort_by(|left, right| left.marketplace_event_id.cmp(&right.marketplace_event_id));
-        Ok(events)
+            .unwrap_or_default())
     }
 
     async fn upsert_payment(

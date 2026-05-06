@@ -4,14 +4,17 @@
   const HASH_A = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const SELLER_TERMS_HASH = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
   const OFFER_TERMS_HASH = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+  const UI_CONFIG = readUiConfig();
+  const LOCAL_INSTANCE = UI_CONFIG.instance_id || "local.example";
+  const PAGE_NONCE = Date.now().toString(36).toUpperCase();
   const DEMO = {
-    sellerId: "seller:shop.example:01JSELLER",
-    productId: "prod:shop.example:01JPROD",
-    offerId: "offer:shop.example:01JOFFER",
-    customerId: "customer:shop.example:01JCUST",
-    orderId: "ord:shop.example:01JORDER2",
-    paymentId: "pay:shop.example:01JPAY",
-    entitlementId: "ent:shop.example:01JENT"
+    sellerId: protocolId("seller", LOCAL_INSTANCE, "SELLER01"),
+    productId: protocolId("prod", LOCAL_INSTANCE, `PROD_${PAGE_NONCE}`),
+    offerId: protocolId("offer", LOCAL_INSTANCE, `OFFER_${PAGE_NONCE}`),
+    customerId: protocolId("customer", LOCAL_INSTANCE, "CUSTOMER01"),
+    orderId: protocolId("ord", LOCAL_INSTANCE, `ORDER_${PAGE_NONCE}`),
+    paymentId: protocolId("pay", LOCAL_INSTANCE, `PAY_${PAGE_NONCE}`),
+    entitlementId: protocolId("ent", LOCAL_INSTANCE, `ENT_${PAGE_NONCE}`)
   };
   const PRODUCT_IMAGES = {
     books: "/ui/assets/products/books.png",
@@ -73,6 +76,39 @@
   const normalizeTitle = (value) => String(value || "")
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+  function readUiConfig() {
+    const node = document.getElementById("morpheus-ui-config");
+    if (!node) return {};
+    try {
+      return JSON.parse(node.textContent || "{}");
+    } catch (_error) {
+      return {};
+    }
+  }
+
+  function localId(seed) {
+    const normalized = String(seed || "ID")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "_")
+      .replace(/^_|_$/g, "") || "ID";
+    return normalized.slice(0, 64).padEnd(3, "0");
+  }
+
+  function protocolId(kind, instance, seed) {
+    return `${kind}:${instance || LOCAL_INSTANCE}:${localId(seed || kind)}`;
+  }
+
+  function objectInstance(id, fallback = LOCAL_INSTANCE) {
+    const parts = String(id || "").split(":");
+    return parts.length >= 2 && parts[1] ? parts[1] : fallback;
+  }
+
+  function orderScopedId(kind, orderId, fallback) {
+    const parts = String(orderId || "").split(":");
+    const seed = parts.length >= 3 ? parts[2] : fallback;
+    return protocolId(kind, LOCAL_INSTANCE, seed || fallback);
+  }
 
   function closestNamedItem(items, field, id) {
     if (!id) return null;
@@ -208,8 +244,8 @@
     return {
       seller_id: data.seller_id || DEMO.sellerId,
       display_name: data.display_name || "Fixture Seller",
-      legal_profile_ref: data.legal_profile_ref || "https://shop.example/legal",
-      terms_ref: data.terms_ref || "https://shop.example/terms",
+      legal_profile_ref: data.legal_profile_ref || `https://${LOCAL_INSTANCE}/legal`,
+      terms_ref: data.terms_ref || `https://${LOCAL_INSTANCE}/terms`,
       terms_hash: HASH_A,
       supported_payment_adapters: ["mock"],
       supported_entitlement_types: ["external_entitlement"]
@@ -218,15 +254,15 @@
 
   function sellerProduct(formEl) {
     const data = form(formEl);
-    const kind = data.kind || "digital_service";
+    const category = data.kind || "marketplace";
     return {
       seller_id: currentSellerId(),
       product_id: data.product_id || DEMO.productId,
       revision: int(data.revision, 1),
       title: data.title || "Soft Runner",
       description: data.description || "Operator workspace with marketplace workflow controls.",
-      kind,
-      categories: [kind, "marketplace"],
+      kind: "digital_service",
+      categories: [category, "marketplace"],
       tags: ["morpheus", "operator", "poc"],
       terms_hash: HASH_A
     };
@@ -250,15 +286,15 @@
 
   function sellerOrder(step, orderId) {
     orderId = orderId ? decodeURIComponent(orderId) : orderId;
-    const actorId = currentSellerId();
     const order = state.orders.find((item) => item.order_id === orderId) || {};
+    const actorId = objectInstance(order.seller_id) === LOCAL_INSTANCE ? order.seller_id : currentSellerId();
     const amount = pick(order, ["body", "price", "amount"], "100.00");
     const currency = pick(order, ["body", "price", "currency"], "USD");
-    const paymentId = orderId ? orderId.replace(/^ord:/, "pay:") : DEMO.paymentId;
-    const entitlementId = orderId ? orderId.replace(/^ord:/, "ent:") : DEMO.entitlementId;
+    const paymentId = orderId ? orderScopedId("pay", orderId, `PAY_${PAGE_NONCE}`) : DEMO.paymentId;
+    const entitlementId = orderId ? orderScopedId("ent", orderId, `ENT_${PAGE_NONCE}`) : DEMO.entitlementId;
     const evidence = {
       kind: "seller-ui-poc",
-      uri: "https://shop.example/evidence/seller-ui-poc",
+      uri: `https://${LOCAL_INSTANCE}/evidence/seller-ui-poc`,
       sha256: OFFER_TERMS_HASH
     };
     if (step === "accept") {
@@ -279,9 +315,9 @@
         amount,
         currency,
         capture_policy: "before_entitlement",
-        idempotency_key: "idem:shop.example:01JPAY",
-        provider_ref: "mock:pi_01JPAY",
-        confirmation: { method: "redirect", uri: "https://shop.example/pay/confirm" },
+        idempotency_key: `idem:${LOCAL_INSTANCE}:${localId(paymentId)}`,
+        provider_ref: `mock:pi_${localId(paymentId)}`,
+        confirmation: { method: "redirect", uri: `https://${LOCAL_INSTANCE}/pay/confirm` },
         expires_at: "2026-05-06T10:30:00Z"
       };
     }
@@ -292,7 +328,7 @@
         adapter: "mock",
         amount,
         currency,
-        provider_ref: "mock:cap_01JPAY",
+        provider_ref: `mock:cap_${localId(paymentId)}`,
         evidence
       };
     }
@@ -302,7 +338,7 @@
         payment_id: paymentId,
         entitlement_id: entitlementId,
         entitlement_type: "external_entitlement",
-        external_ref: "https://shop.example/entitlements/01JENT",
+        external_ref: `https://${LOCAL_INSTANCE}/entitlements/${localId(entitlementId)}`,
         evidence
       };
     }
@@ -322,9 +358,11 @@
 
   function buyerOrder(formEl) {
     const data = form(formEl);
-    const offer = selectedOffer(formEl);
+    const offer = selectedProjectedOffer(formEl);
+    if (!offer) return null;
     const body = (offer && offer.body) || {};
     const price = (offer && offer.price) || { amount: data.amount || "100.00", currency: data.currency || "USD" };
+    const sellerInstance = objectInstance(offer.offer_id || offer.seller_id);
     return {
       customer_id: data.customer_id || DEMO.customerId,
       customer_display_name: "Fixture Customer",
@@ -332,7 +370,7 @@
       seller_id: (offer && offer.seller_id) || DEMO.sellerId,
       offer_id: (offer && offer.offer_id) || data.offer_id || DEMO.offerId,
       offer_revision: int((offer && offer.revision) || body.revision, 1),
-      catalog_snapshot_id: "snap:shop.example:01JSNAP",
+      catalog_snapshot_id: protocolId("snap", sellerInstance, "CATALOG_SNAPSHOT"),
       price,
       payment_adapter: "mock",
       payment_capture_policy: pick(body, ["payment_terms", "capture_policy"], "before_entitlement"),
@@ -346,6 +384,12 @@
       arbitration_window: "P14D",
       expires_at: "2026-05-06T10:30:00Z"
     };
+  }
+
+  function selectedProjectedOffer(formEl) {
+    const id = (formEl.elements.offer_id && formEl.elements.offer_id.value.trim()) || "";
+    if (!id) return null;
+    return state.offers.find((offer) => offer.offer_id === id) || null;
   }
 
   function statusBadge(status) {
@@ -371,6 +415,7 @@
   function productKind(item) {
     const text = [
       pick(item, ["body", "kind"], ""),
+      Array.isArray(pick(item, ["body", "categories"], [])) ? pick(item, ["body", "categories"], []).join(" ") : "",
       pick(item, ["body", "title"], ""),
       item && item.product_id,
       item && item.offer_id
@@ -398,10 +443,10 @@
   function offerFromProductCard(card, offerId) {
     if (!card) return null;
     const title = ($("h3", card) || {}).textContent || "Marketplace offer";
-    const meta = (($(".product-meta", card) || {}).textContent || "shop.example · Seller").split("·").map((part) => part.trim());
+    const meta = (($(".product-meta", card) || {}).textContent || `${LOCAL_INSTANCE} · Seller`).split("·").map((part) => part.trim());
     const priceText = (($(".product-card-footer strong", card) || {}).textContent || "100.00 USD").trim().split(/\s+/);
     const image = $("img", card);
-    const instance = meta[0] || "shop.example";
+    const instance = meta[0] || LOCAL_INSTANCE;
     const sellerLabel = meta[1] || "Seller";
     const amount = priceText[0] || "100.00";
     const currency = priceText[1] || "USD";
@@ -424,8 +469,7 @@
 
   function itemInstance(item) {
     const id = item && (item.seller_id || item.product_id || item.offer_id || item.order_id || item.id);
-    const parts = String(id || "").split(":");
-    return parts.length >= 2 ? parts[1] : "local instance";
+    return objectInstance(id, "local instance");
   }
 
   function offerTitle(offer) {
@@ -497,6 +541,34 @@
     if (create.elements.offer_id) create.elements.offer_id.value = offer.offer_id || DEMO.offerId;
     if (create.elements.amount) create.elements.amount.value = pick(offer, ["price", "amount"], "100.00");
     if (create.elements.currency) create.elements.currency.value = pick(offer, ["price", "currency"], "USD");
+  }
+
+  function hydrateRuntimeDefaults() {
+    const sellerForm = $('[data-form="seller-announce"]');
+    if (sellerForm) {
+      if (sellerForm.elements.seller_id) sellerForm.elements.seller_id.value = DEMO.sellerId;
+      if (sellerForm.elements.legal_profile_ref) sellerForm.elements.legal_profile_ref.value = `https://${LOCAL_INSTANCE}/legal`;
+      if (sellerForm.elements.terms_ref) sellerForm.elements.terms_ref.value = `https://${LOCAL_INSTANCE}/terms`;
+    }
+    const productForm = $('[data-form="seller-product"]');
+    if (productForm) {
+      if (productForm.elements.product_id) productForm.elements.product_id.value = DEMO.productId;
+    }
+    const offerForm = $('[data-form="seller-offer"]');
+    if (offerForm) {
+      if (offerForm.elements.offer_id) offerForm.elements.offer_id.value = DEMO.offerId;
+      if (offerForm.elements.product_id) offerForm.elements.product_id.value = DEMO.productId;
+    }
+    const buyerForm = $('[data-form="buyer-create-order"]');
+    if (buyerForm) {
+      if (buyerForm.elements.customer_id) buyerForm.elements.customer_id.value = DEMO.customerId;
+      if (buyerForm.elements.order_id) buyerForm.elements.order_id.value = DEMO.orderId;
+      if (buyerForm.elements.offer_id) buyerForm.elements.offer_id.value = "";
+    }
+    const buyerTools = $('[data-form="buyer-order-tools"]');
+    if (buyerTools && buyerTools.elements.order_id) buyerTools.elements.order_id.value = DEMO.orderId;
+    const sellerOrder = $('[data-form="seller-order-action"]');
+    if (sellerOrder && sellerOrder.elements.order_id) sellerOrder.elements.order_id.value = DEMO.orderId;
   }
 
   function renderAdminSummary(body) {
@@ -593,6 +665,30 @@
     }).join("");
   }
 
+  function renderSellerStoreCards() {
+    const target = document.getElementById("seller-store-cards");
+    if (!target) return;
+    const localOffers = state.offers.filter((offer) => objectInstance(offer.seller_id || offer.offer_id) === LOCAL_INSTANCE);
+    if (!localOffers.length) return;
+    target.innerHTML = localOffers.map((offer) => {
+      const product = productForOffer(offer);
+      const title = offerTitle(offer);
+      const category = normalizeTitle(pick(product, ["body", "kind"], "marketplace"));
+      return `<article class="seller-product-card is-live">
+        <img src="${esc(offerImage(offer))}" alt="${esc(title)}">
+        <div class="seller-card-body">
+          <span class="status-pill accent-emerald">Published</span>
+          <h3>${esc(title)}</h3>
+          <p>${esc(LOCAL_INSTANCE)} · ${esc(category)}</p>
+          <div class="seller-card-footer">
+            <strong>${esc(offerPrice(offer))}</strong>
+            <span>Live</span>
+          </div>
+        </div>
+      </article>`;
+    }).join("");
+  }
+
   function orderTimeline(order) {
     const status = String(order.status || "created");
     const steps = [
@@ -639,7 +735,14 @@
         const title = displayId(order.order_id, "Order");
         const offer = displayId(order.offer_id, "Offer not attached");
         const actor = columns === 5 ? displayId(order.customer_id, "Customer not attached") : sellerName(order.seller_id);
-        return `<article class="order-card"><div class="section-head compact-head"><div><p class="eyebrow">${esc(actor)}</p><h3>${esc(title)}</h3><p class="mono">${esc(offer)}</p></div>${statusBadge(order.status)}</div>${orderTimeline(order)}</article>`;
+        const sellerActions = columns === 5 ? `<div class="button-row stretch order-action-row">
+          <button class="btn btn-small" type="button" data-seller-order-step="accept" data-order-id="${esc(order.order_id || "")}">Accept</button>
+          <button class="btn btn-small" type="button" data-seller-order-step="payment-intent" data-order-id="${esc(order.order_id || "")}">Intent</button>
+          <button class="btn btn-small" type="button" data-seller-order-step="payment-capture" data-order-id="${esc(order.order_id || "")}">Capture</button>
+          <button class="btn btn-small" type="button" data-seller-order-step="entitlement-grant" data-order-id="${esc(order.order_id || "")}">Grant</button>
+          <button class="btn btn-small btn-primary" type="button" data-seller-order-step="complete" data-order-id="${esc(order.order_id || "")}">Complete</button>
+        </div>` : "";
+        return `<article class="order-card"><div class="section-head compact-head"><div><p class="eyebrow">${esc(actor)}</p><h3>${esc(title)}</h3><p class="mono">${esc(offer)}</p></div>${statusBadge(order.status)}</div>${orderTimeline(order)}${sellerActions}</article>`;
       }).join("");
     }
     rows.innerHTML = state.orders.map((order) => {
@@ -683,6 +786,7 @@
       state.offers = Array.isArray(offers.body.items) ? offers.body.items : [];
       if (!state.selectedOffer && state.offers.length) state.selectedOffer = state.offers[0];
       renderCatalog("offers", state.offers);
+      renderSellerStoreCards();
       updateSelectedOfferDetail();
     }
   }
@@ -694,6 +798,24 @@
     state.orders = Array.isArray(result.body && result.body.orders) ? result.body.orders : [];
     if (role === "seller") renderOrders("seller-orders-rows", "seller-order-count", 5);
     if (role === "buyer") renderOrders("buyer-orders-rows", "buyer-order-count", 3);
+  }
+
+  function delay(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  async function pollCatalog(attempts = 8) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await refreshCatalog();
+      await delay(700);
+    }
+  }
+
+  async function pollOrders(role, attempts = 10) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await refreshOrders(role);
+      await delay(800);
+    }
   }
 
   function bindAdmin() {
@@ -744,17 +866,20 @@
     const product = $('[data-form="seller-product"]');
     const offer = $('[data-form="seller-offer"]');
     const order = $('[data-form="seller-order-action"]');
-    announce && announce.addEventListener("submit", (event) => {
+    announce && announce.addEventListener("submit", async (event) => {
       event.preventDefault();
-      api("/api/v1/seller/announce", { method: "POST", tokenRole: "seller", body: sellerAnnounce(announce), action: "POST /api/v1/seller/announce" });
+      const result = await api("/api/v1/seller/announce", { method: "POST", tokenRole: "seller", body: sellerAnnounce(announce), action: "POST /api/v1/seller/announce" });
+      if (result.ok) await pollCatalog();
     });
-    product && product.addEventListener("submit", (event) => {
+    product && product.addEventListener("submit", async (event) => {
       event.preventDefault();
-      api("/api/v1/seller/products", { method: "POST", tokenRole: "seller", body: sellerProduct(product), action: "POST /api/v1/seller/products" });
+      const result = await api("/api/v1/seller/products", { method: "POST", tokenRole: "seller", body: sellerProduct(product), action: "POST /api/v1/seller/products" });
+      if (result.ok) await pollCatalog();
     });
-    offer && offer.addEventListener("submit", (event) => {
+    offer && offer.addEventListener("submit", async (event) => {
       event.preventDefault();
-      api("/api/v1/seller/offers", { method: "POST", tokenRole: "seller", body: sellerOffer(offer), action: "POST /api/v1/seller/offers" });
+      const result = await api("/api/v1/seller/offers", { method: "POST", tokenRole: "seller", body: sellerOffer(offer), action: "POST /api/v1/seller/offers" });
+      if (result.ok) await pollCatalog();
     });
     order && order.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -767,9 +892,22 @@
       if (result.ok) await refreshOrders("seller");
     });
     document.addEventListener("click", (event) => {
+      const orderAction = event.target.closest("[data-seller-order-step]");
+      if (orderAction && order) {
+        const orderId = orderAction.dataset.orderId || DEMO.orderId;
+        if (order.elements.order_id) order.elements.order_id.value = orderId;
+        const step = orderAction.dataset.sellerOrderStep || "accept";
+        const pathId = encodeURIComponent(orderId);
+        const path = step === "complete" ? `/api/v1/seller/orders/${pathId}/complete` : `/api/v1/seller/orders/${pathId}/${step}`;
+        api(path, { method: "POST", tokenRole: "seller", body: sellerOrder(step, orderId), action: `POST ${path}` })
+          .then((result) => result.ok && pollOrders("seller"));
+        return;
+      }
       const button = event.target.closest("[data-action='seller-orders']");
       if (button) refreshOrders("seller");
     });
+    refreshCatalog();
+    refreshOrders("seller");
   }
 
   function bindBuyer() {
@@ -777,10 +915,17 @@
     const tools = $('[data-form="buyer-order-tools"]');
     create && create.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const result = await api("/api/v1/buyer/orders", { method: "POST", tokenRole: "buyer", body: buyerOrder(create), action: "POST /api/v1/buyer/orders" });
+      const payload = buyerOrder(create);
+      if (!payload) {
+        toast("Refresh catalog first", "error", "Choose a real projected offer before creating an order.");
+        showResult("POST /api/v1/buyer/orders", "not-submitted", { code: "OFFER_NOT_PROJECTED", error: "Choose a real projected offer before creating an order." });
+        return;
+      }
+      const result = await api("/api/v1/buyer/orders", { method: "POST", tokenRole: "buyer", body: payload, action: "POST /api/v1/buyer/orders" });
       if (result.ok) {
         setCheckoutOpen(false);
-        await refreshOrders("buyer");
+        await pollOrders("buyer");
+        if (create.elements.order_id) create.elements.order_id.value = protocolId("ord", LOCAL_INSTANCE, `ORDER_${Date.now().toString(36).toUpperCase()}`);
       }
     });
     tools && tools.addEventListener("submit", async (event) => {
@@ -842,11 +987,14 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") setCheckoutOpen(false);
     });
+    refreshCatalog();
+    refreshOrders("buyer");
   }
 
   function init() {
     resultPanel = document.getElementById("result-panel");
     document.documentElement.dataset.morpheusUi = "ready";
+    hydrateRuntimeDefaults();
     initTokens();
     initRoleTabs();
     updateSelectedOfferDetail();

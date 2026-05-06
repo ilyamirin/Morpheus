@@ -230,6 +230,42 @@ async fn store_upserts_catalog_and_order_projection_records() {
 }
 
 #[tokio::test]
+async fn in_memory_order_events_keep_recording_order_not_event_id_order() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:customer.example:01JORDER";
+    for (event_id, event_type) in [
+        ("evt:shop.example:ZORDER", "io.marketplace.order.created"),
+        ("evt:shop.example:AACCEPT", "io.marketplace.order.accepted"),
+        (
+            "evt:shop.example:BPAYMENT",
+            "io.marketplace.payment.intent.created",
+        ),
+    ] {
+        store
+            .record_order_event(order_id, event_id, event_type, serde_json::json!({}))
+            .await
+            .unwrap();
+    }
+
+    let events = store
+        .order_events(order_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|event| event.event_type)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        events,
+        [
+            "io.marketplace.order.created",
+            "io.marketplace.order.accepted",
+            "io.marketplace.payment.intent.created",
+        ]
+    );
+}
+
+#[tokio::test]
 async fn store_upserts_payment_entitlement_dispute_and_ruling_projection_records() {
     let store = InMemoryEventStore::default();
 
