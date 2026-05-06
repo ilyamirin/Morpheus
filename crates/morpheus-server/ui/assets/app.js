@@ -682,7 +682,7 @@
           <p>${esc(LOCAL_INSTANCE)} · ${esc(category)}</p>
           <div class="seller-card-footer">
             <strong>${esc(offerPrice(offer))}</strong>
-            <span>Live</span>
+            <button class="btn btn-small btn-danger" type="button" data-seller-offer-withdraw data-offer-id="${esc(offer.offer_id || "")}" data-seller-id="${esc(offer.seller_id || "")}" data-revision="${esc(offer.revision || pick(offer, ["body", "revision"], 1))}">Withdraw</button>
           </div>
         </div>
       </article>`;
@@ -999,6 +999,21 @@
         const path = step === "complete" ? `/api/v1/seller/orders/${pathId}/complete` : `/api/v1/seller/orders/${pathId}/${step}`;
         api(path, { method: "POST", tokenRole: "seller", body: sellerOrder(step, orderId), action: `POST ${path}` })
           .then((result) => result.ok && pollOrders("seller"));
+        return;
+      }
+      const withdraw = event.target.closest("[data-seller-offer-withdraw]");
+      if (withdraw) {
+        const offerId = withdraw.dataset.offerId || "";
+        const sellerId = withdraw.dataset.sellerId || currentSellerId();
+        const revision = Number(withdraw.dataset.revision || 1);
+        if (!offerId) return;
+        const path = `/api/v1/seller/offers/${encodeURIComponent(offerId)}/withdraw`;
+        api(path, {
+          method: "POST",
+          tokenRole: "seller",
+          body: { seller_id: sellerId, revision, reason: "seller_withdrawn" },
+          action: `POST ${path}`
+        }).then((result) => result.ok && pollCatalog());
         return;
       }
       const button = event.target.closest("[data-action='seller-orders']");

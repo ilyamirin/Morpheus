@@ -226,6 +226,53 @@ async fn start_remote_catalog_server(
     format!("http://{addr}")
 }
 
+async fn start_remote_catalog_server_without_offers() -> String {
+    let app = axum::Router::new()
+        .route(
+            "/api/v1/catalog/sellers",
+            axum::routing::get(|| async move {
+                axum::Json(json!({
+                    "items": [{
+                        "seller_id": "seller:remote.example:01JSELLER",
+                        "issuer_instance": "remote.example",
+                        "status": "active",
+                        "body": { "display_name": "Remote Seller" }
+                    }],
+                    "status": "live"
+                }))
+            }),
+        )
+        .route(
+            "/api/v1/catalog/products",
+            axum::routing::get(|| async move {
+                axum::Json(json!({
+                    "items": [{
+                        "product_id": "prod:remote.example:01JPROD",
+                        "seller_id": "seller:remote.example:01JSELLER",
+                        "revision": 1,
+                        "body": { "title": "Remote Product" }
+                    }],
+                    "status": "live"
+                }))
+            }),
+        )
+        .route(
+            "/api/v1/catalog/offers",
+            axum::routing::get(|| async move {
+                axum::Json(json!({
+                    "items": [],
+                    "status": "live"
+                }))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
+}
+
 fn assert_contains_all(body: &str, expected: &[&str]) {
     for text in expected {
         assert!(body.contains(text), "missing {text:?}");
@@ -382,6 +429,7 @@ async fn seller_ui_contains_storefront_anchors_and_hooks() {
         &[
             "My Store",
             "Quick Add",
+            "Withdraw",
             "Store",
             "Orders",
             "Advanced",
@@ -473,6 +521,7 @@ async fn ui_javascript_tracks_projection_pending_buyer_orders() {
             "Projection pending",
             "Refresh orders",
             "projection_timeout",
+            "data-seller-offer-withdraw",
         ],
     );
 }
@@ -923,6 +972,31 @@ async fn remote_catalog_sync_failure_keeps_cached_projection_items() {
 }
 
 #[tokio::test]
+async fn remote_catalog_live_sync_tombstones_missing_remote_offers() {
+    let store = InMemoryEventStore::default();
+    let live_base =
+        start_remote_catalog_server(StatusCode::OK, StatusCode::OK, StatusCode::OK).await;
+    let source = RemoteCatalogSource {
+        instance_id: "remote.example".into(),
+        morpheus_url: live_base,
+    };
+    let report = sync_remote_catalog_once(&store, &source).await.unwrap();
+    assert_eq!(report.status, "live");
+
+    let empty_base = start_remote_catalog_server_without_offers().await;
+    let source = RemoteCatalogSource {
+        instance_id: "remote.example".into(),
+        morpheus_url: empty_base,
+    };
+    let report = sync_remote_catalog_once(&store, &source).await.unwrap();
+    let (status, body) = send_admin_request(store, "GET", "/api/v1/catalog/offers", None).await;
+
+    assert_eq!(report.status, "live");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn remote_catalog_sync_failure_report_includes_source_and_actionable_error() {
     let store = InMemoryEventStore::default();
     let unavailable_base = start_remote_catalog_server(
@@ -1207,6 +1281,29 @@ async fn buyer_catalog_offers_hide_withdrawn_offer_projection() {
     assert_eq!(list_body["items"].as_array().unwrap().len(), 0);
     assert_eq!(show_status, StatusCode::NOT_FOUND, "{show_body}");
     assert_eq!(show_body["code"], "OFFER_NOT_FOUND");
+}
+
+#[tokio::test]
+async fn seller_offer_withdraw_publishes_tombstone_projection() {
+    let store = store_with_admin_projection_data().await;
+    let (withdraw_status, withdraw_body) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/seller/offers/offer:shop.example:01JOFFER/withdraw",
+        Some("Bearer seller-token"),
+        json!({
+            "seller_id": "seller:shop.example:01JSELLER",
+            "revision": 1,
+            "reason": "seller_withdrawn"
+        }),
+    )
+    .await;
+    let (list_status, list_body) =
+        send_admin_request(store, "GET", "/api/v1/catalog/offers", None).await;
+
+    assert_eq!(withdraw_status, StatusCode::ACCEPTED, "{withdraw_body}");
+    assert_eq!(list_status, StatusCode::OK, "{list_body}");
+    assert_eq!(list_body["items"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]

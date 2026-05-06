@@ -6,6 +6,9 @@ cd "$ROOT"
 
 COMPOSE=(docker compose -f docker-compose.e2e.yml)
 
+"${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+rm -rf .local/e2e/synapse-books .local/e2e/synapse-cases .local/e2e/synapse-fashion
+
 scripts/e2e/bootstrap-synapse.sh
 "${COMPOSE[@]}" up -d --build --force-recreate
 

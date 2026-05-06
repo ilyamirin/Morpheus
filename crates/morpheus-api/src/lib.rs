@@ -90,6 +90,7 @@ pub struct OfferUpsertRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfferWithdrawRequest {
     pub seller_id: String,
+    pub revision: i64,
     #[serde(default)]
     pub reason: Option<String>,
 }

@@ -12,14 +12,16 @@ use morpheus_api::{
     ProductUpsertRequest, SellerAnnounceRequest,
 };
 use morpheus_matrix::{AppServiceTransaction, validate_transaction_event_ids};
-use morpheus_protocol::{ValidationCode, ValidationError, parse_actor_id, validate_event_envelope};
+use morpheus_protocol::{
+    ValidationCode, ValidationError, parse_actor_id, parse_object_instance, validate_event_envelope,
+};
 use morpheus_store::{
     AppServiceTransactionRecord, CatalogOfferProjectionRecord, CatalogProductRecord,
     CatalogSellerRecord, EventStore, OrderEventRecord, ProjectionErrorRecord, RawMatrixEventRecord,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use ulid::Ulid;
 
 mod context_validation;
@@ -558,7 +560,7 @@ where
 {
     match fetch_remote_catalog_items(source).await {
         Ok(items) => {
-            apply_remote_catalog_items(store, items).await?;
+            apply_remote_catalog_items(store, source, items).await?;
             Ok(RemoteCatalogSyncReport {
                 source: source.clone(),
                 status: "live".into(),
@@ -610,11 +612,29 @@ async fn fetch_remote_catalog_items(
 
 async fn apply_remote_catalog_items<S>(
     store: &S,
+    source: &RemoteCatalogSource,
     items: RemoteCatalogItems,
 ) -> Result<(), ValidationError>
 where
     S: EventStore,
 {
+    let live_offer_ids = items
+        .offers
+        .iter()
+        .map(|offer| offer.offer_id.clone())
+        .collect::<HashSet<_>>();
+    let existing_offer_ids = store
+        .catalog_offers()
+        .await?
+        .into_iter()
+        .filter(|offer| {
+            parse_object_instance(&offer.offer_id)
+                .map(|instance| instance == source.instance_id)
+                .unwrap_or(false)
+        })
+        .map(|offer| offer.offer_id)
+        .collect::<Vec<_>>();
+
     for seller in items.sellers {
         store
             .upsert_catalog_seller(
@@ -639,6 +659,20 @@ where
 
     for offer in items.offers {
         store.upsert_catalog_offer(offer).await?;
+    }
+    for offer_id in existing_offer_ids {
+        if !live_offer_ids.contains(&offer_id) {
+            store
+                .tombstone_catalog_object(
+                    &offer_id,
+                    "offer",
+                    json!({
+                        "reason": "remote_catalog_missing",
+                        "source": source.instance_id,
+                    }),
+                )
+                .await?;
+        }
     }
     Ok(())
 }
@@ -1561,6 +1595,7 @@ where
             json!({
                 "offer_id": offer_id,
                 "seller_id": request.seller_id,
+                "revision": request.revision,
                 "reason": request.reason.unwrap_or_else(|| "seller_withdrawn".into()),
             }),
         )],
