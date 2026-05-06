@@ -524,13 +524,53 @@ fn publisher_error(message: &str) -> ValidationError {
     ValidationError::new(ValidationCode::PolicyViolation, message)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoteCatalogSource {
     pub instance_id: String,
     pub morpheus_url: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteCatalogSyncError {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteCatalogSyncReport {
+    pub source: RemoteCatalogSource,
+    pub status: String,
+    pub error: Option<RemoteCatalogSyncError>,
+}
+
 pub async fn sync_remote_catalog_once<S>(
+    store: &S,
+    source: &RemoteCatalogSource,
+) -> Result<RemoteCatalogSyncReport, ValidationError>
+where
+    S: EventStore,
+{
+    match sync_remote_catalog_items(store, source).await {
+        Ok(()) => Ok(RemoteCatalogSyncReport {
+            source: source.clone(),
+            status: "live".into(),
+            error: None,
+        }),
+        Err(err) => Ok(RemoteCatalogSyncReport {
+            source: source.clone(),
+            status: "cached".into(),
+            error: Some(RemoteCatalogSyncError {
+                code: "REMOTE_CATALOG_UNAVAILABLE".into(),
+                message: format!(
+                    "remote catalog sync for {} failed: {}",
+                    source.instance_id, err.message
+                ),
+            }),
+        }),
+    }
+}
+
+async fn sync_remote_catalog_items<S>(
     store: &S,
     source: &RemoteCatalogSource,
 ) -> Result<(), ValidationError>

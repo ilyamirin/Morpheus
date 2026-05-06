@@ -3,8 +3,8 @@ use axum::body::{Body, to_bytes};
 use http::{Request, StatusCode};
 use morpheus_protocol::ValidationError;
 use morpheus_server::{
-    MatrixPublisher, ServerConfig, SynapseMatrixPublisher, build_router,
-    build_router_with_publisher,
+    MatrixPublisher, RemoteCatalogSource, ServerConfig, SynapseMatrixPublisher, build_router,
+    build_router_with_publisher, sync_remote_catalog_once,
 };
 use morpheus_store::{
     CatalogOfferProjectionRecord, EventStore, InMemoryEventStore, OrderProjectionRecord,
@@ -154,6 +154,76 @@ async fn send_ui_body_request(uri: &str) -> (StatusCode, Option<String>, String)
     let body = String::from_utf8(bytes.to_vec()).unwrap();
 
     (status, content_type, body)
+}
+
+async fn start_remote_catalog_server(
+    sellers_status: StatusCode,
+    products_status: StatusCode,
+    offers_status: StatusCode,
+) -> String {
+    let app = axum::Router::new()
+        .route(
+            "/api/v1/catalog/sellers",
+            axum::routing::get(move || async move {
+                (
+                    sellers_status,
+                    axum::Json(json!({
+                        "items": [{
+                            "seller_id": "seller:remote.example:01JSELLER",
+                            "issuer_instance": "remote.example",
+                            "status": "active",
+                            "body": { "display_name": "Remote Seller" }
+                        }],
+                        "status": "live"
+                    })),
+                )
+            }),
+        )
+        .route(
+            "/api/v1/catalog/products",
+            axum::routing::get(move || async move {
+                (
+                    products_status,
+                    axum::Json(json!({
+                        "items": [{
+                            "product_id": "prod:remote.example:01JPROD",
+                            "seller_id": "seller:remote.example:01JSELLER",
+                            "revision": 1,
+                            "body": { "title": "Remote Product" }
+                        }],
+                        "status": "live"
+                    })),
+                )
+            }),
+        )
+        .route(
+            "/api/v1/catalog/offers",
+            axum::routing::get(move || async move {
+                (
+                    offers_status,
+                    axum::Json(json!({
+                        "items": [{
+                            "offer_id": "offer:remote.example:01JOFFER",
+                            "product_id": "prod:remote.example:01JPROD",
+                            "seller_id": "seller:remote.example:01JSELLER",
+                            "revision": 1,
+                            "price": { "amount": "10.00", "currency": "USD" },
+                            "inventory_kind": "unlimited",
+                            "body": { "revision": 1 }
+                        }],
+                        "status": "live",
+                        "code": "REMOTE_CATALOG_UNAVAILABLE",
+                        "error": "remote catalog temporarily unavailable"
+                    })),
+                )
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
 }
 
 fn assert_contains_all(body: &str, expected: &[&str]) {
@@ -794,6 +864,63 @@ async fn public_write_submits_without_local_projection_when_publisher_uses_synap
     assert_eq!(body["room_id"], "!catalog:shop.example");
     assert_eq!(body["event_ids"].as_array().unwrap().len(), 1);
     assert!(store.catalog_sellers().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn remote_catalog_sync_failure_keeps_cached_projection_items() {
+    let store = InMemoryEventStore::default();
+    let live_base =
+        start_remote_catalog_server(StatusCode::OK, StatusCode::OK, StatusCode::OK).await;
+    let source = RemoteCatalogSource {
+        instance_id: "remote.example".into(),
+        morpheus_url: live_base,
+    };
+    let report = sync_remote_catalog_once(&store, &source).await.unwrap();
+    assert_eq!(report.status, "live");
+    assert_eq!(store.catalog_sellers().await.unwrap().len(), 1);
+    assert_eq!(store.catalog_products().await.unwrap().len(), 1);
+    assert_eq!(store.catalog_offers().await.unwrap().len(), 1);
+
+    let unavailable_base = start_remote_catalog_server(
+        StatusCode::SERVICE_UNAVAILABLE,
+        StatusCode::OK,
+        StatusCode::OK,
+    )
+    .await;
+    let source = RemoteCatalogSource {
+        instance_id: "remote.example".into(),
+        morpheus_url: unavailable_base,
+    };
+    let report = sync_remote_catalog_once(&store, &source).await.unwrap();
+
+    assert_eq!(report.status, "cached");
+    assert_eq!(store.catalog_sellers().await.unwrap().len(), 1);
+    assert_eq!(store.catalog_products().await.unwrap().len(), 1);
+    assert_eq!(store.catalog_offers().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn remote_catalog_sync_failure_report_includes_source_and_actionable_error() {
+    let store = InMemoryEventStore::default();
+    let unavailable_base = start_remote_catalog_server(
+        StatusCode::SERVICE_UNAVAILABLE,
+        StatusCode::OK,
+        StatusCode::OK,
+    )
+    .await;
+    let source = RemoteCatalogSource {
+        instance_id: "remote.example".into(),
+        morpheus_url: unavailable_base,
+    };
+
+    let report = sync_remote_catalog_once(&store, &source).await.unwrap();
+
+    assert_eq!(report.source.instance_id, "remote.example");
+    assert_eq!(report.source.morpheus_url, source.morpheus_url);
+    assert_eq!(report.status, "cached");
+    let error = report.error.unwrap();
+    assert_eq!(error.code, "REMOTE_CATALOG_UNAVAILABLE");
+    assert!(error.message.contains("remote catalog returned 503"));
 }
 
 #[tokio::test]
