@@ -479,6 +479,7 @@ p {
 }
 
 .principle-grid,
+.role-grid,
 .journey-grid,
 .endpoint-grid,
 .ops-grid,
@@ -492,7 +493,12 @@ p {
   grid-template-columns: repeat(2, 1fr);
 }
 
+.role-grid {
+  grid-template-columns: repeat(4, 1fr);
+}
+
 .info-card,
+.role-card,
 .journey-card,
 .endpoint-grid article,
 .api-doc-grid article,
@@ -505,6 +511,7 @@ p {
 }
 
 .info-card h3,
+.role-card h3,
 .journey-card h3,
 .endpoint-grid h3,
 .api-doc-grid h3,
@@ -520,12 +527,73 @@ p {
 }
 
 .info-card p,
+.role-card p,
 .journey-card li,
 .runbook p,
 .steps p {
   color: #66768a;
   font-size: 14px;
   line-height: 1.65;
+}
+
+.role-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 250px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.96)),
+    #f8fafc;
+}
+
+.role-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: #66e0c0;
+}
+
+.role-card.admin-role::before {
+  background: #67e8f9;
+}
+
+.role-card.seller-role::before {
+  background: #66e0c0;
+}
+
+.role-card.buyer-role::before {
+  background: #f5b84b;
+}
+
+.role-card.developer-role::before {
+  background: #f87171;
+}
+
+.role-kicker {
+  width: max-content;
+  padding: 5px 8px;
+  color: #475569;
+  background: #eef3f8;
+  border: 1px solid #dbe5ef;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.role-links {
+  display: grid;
+  gap: 7px;
+  margin-top: 4px;
+}
+
+.role-links a {
+  width: fit-content;
+  font-size: 13px;
 }
 
 .split-section {
@@ -899,6 +967,7 @@ details p {
   }
 
   .principle-grid,
+  .role-grid,
   .journey-grid,
   .endpoint-grid,
   .api-doc-grid,
@@ -943,6 +1012,7 @@ details p {
 
   .status-strip,
   .principle-grid,
+  .role-grid,
   .journey-grid,
   .endpoint-grid,
   .api-doc-grid,

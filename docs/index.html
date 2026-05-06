@@ -24,11 +24,12 @@
           </span>
         </a>
         <nav class="topnav" aria-label="Main documentation navigation">
-          <a href="#principles">Принципы</a>
-          <a href="#install">Установка</a>
-          <a href="#config">Настройка</a>
-          <a href="#run">Запуск</a>
-          <a href="#e2e">Federation E2E</a>
+          <a href="#admin">Admin</a>
+          <a href="#seller">Seller</a>
+          <a href="#buyer">Buyer</a>
+          <a href="dev-environment.html">Developer</a>
+          <a href="protocol.md">Protocol</a>
+          <a href="#ops">Operations</a>
         </nav>
       </header>
 
@@ -43,9 +44,10 @@
               сохраняет raw timeline и строит локальные projections для admin, seller и buyer UI.
             </p>
             <div class="hero-actions">
-              <a class="btn primary" href="#install">Быстрый старт</a>
-              <a class="btn ghost" href="dev-environment.html">Mini dev env</a>
-              <a class="btn ghost" href="protocol.md">Protocol spec</a>
+              <a class="btn primary" href="#admin">Admin Console</a>
+              <a class="btn ghost" href="#seller">Seller Workspace</a>
+              <a class="btn ghost" href="#buyer">Buyer Marketplace</a>
+              <a class="btn ghost" href="dev-environment.html">Developer Setup</a>
             </div>
           </div>
 
@@ -84,24 +86,81 @@
         <div class="content-grid">
           <aside class="sidebar" aria-label="Documentation outline">
             <nav>
-              <a href="#principles">1. Принципы работы</a>
-              <a href="#architecture">2. Архитектура</a>
-              <a href="#journeys">3. Customer journeys</a>
-              <a href="#install">4. Установка</a>
-              <a href="#config">5. Настройка</a>
-              <a href="#run">6. Запуск одного сервера</a>
-              <a href="#e2e">7. Три federated сервера</a>
-              <a href="#ui">8. UI и API</a>
-              <a href="#ops">9. Операции</a>
+              <a href="#roles">1. Обзор ролей</a>
+              <a href="#admin">2. Admin journey</a>
+              <a href="#seller">3. Seller journey</a>
+              <a href="#buyer">4. Buyer journey</a>
+              <a href="dev-environment.html">5. Developer setup</a>
+              <a href="#e2e">6. Federation E2E</a>
+              <a href="#ui">7. CLI и API</a>
+              <a href="protocol.md">8. Protocol reference</a>
+              <a href="#ops">9. Operations</a>
               <a href="#troubleshooting">10. Troubleshooting</a>
             </nav>
           </aside>
 
           <div class="docs-flow">
+            <section id="roles" class="doc-section">
+              <div class="section-heading">
+                <p class="eyebrow">Role-based help center</p>
+                <h2>1. Выберите свой маршрут</h2>
+              </div>
+              <div class="role-grid">
+                <article id="admin" class="role-card admin-role">
+                  <span class="role-kicker">Operator</span>
+                  <h3>Admin</h3>
+                  <p>
+                    Операционный контроль instance: health, readiness, allowlist, projections,
+                    event stream, catalog rebuild и order replay.
+                  </p>
+                  <div class="role-links">
+                    <a class="inline-link" href="dev-environment.html#ui">Открыть admin UI</a>
+                    <a class="inline-link" href="#ops">Операционные проверки</a>
+                  </div>
+                </article>
+                <article id="seller" class="role-card seller-role">
+                  <span class="role-kicker">Merchant</span>
+                  <h3>Seller</h3>
+                  <p>
+                    Публикация seller actor, products и offers, обработка order queue,
+                    payment lifecycle, entitlement grant, completion и withdrawal.
+                  </p>
+                  <div class="role-links">
+                    <a class="inline-link" href="dev-environment.html#product-ui">Путь товара в UI</a>
+                    <a class="inline-link" href="dev-environment.html#cli">Seller CLI</a>
+                  </div>
+                </article>
+                <article id="buyer" class="role-card buyer-role">
+                  <span class="role-kicker">Customer</span>
+                  <h3>Buyer</h3>
+                  <p>
+                    Catalog discovery, checkout без ручного Matrix room id,
+                    order tracking и cancellation до необратимых lifecycle steps.
+                  </p>
+                  <div class="role-links">
+                    <a class="inline-link" href="dev-environment.html#product-ui">Buyer UI flow</a>
+                    <a class="inline-link" href="dev-environment.html#api">Buyer API</a>
+                  </div>
+                </article>
+                <article id="developer" class="role-card developer-role">
+                  <span class="role-kicker">Builder</span>
+                  <h3>Developer</h3>
+                  <p>
+                    Локальный запуск, Docker E2E, контейнеры, порты, API/CLI сценарии,
+                    Matrix federation smoke и troubleshooting.
+                  </p>
+                  <div class="role-links">
+                    <a class="inline-link" href="dev-environment.html">Developer Setup</a>
+                    <a class="inline-link" href="protocol.md">Protocol reference</a>
+                  </div>
+                </article>
+              </div>
+            </section>
+
             <section id="principles" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Protocol principles</p>
-                <h2>1. Принципы работы</h2>
+                <h2>2. Принципы работы</h2>
               </div>
               <div class="principle-grid">
                 <article class="info-card">
@@ -151,7 +210,7 @@
                 В mini dev окружении эти принципы можно проверить руками: seller publication меняет catalog projection,
                 buyer order creation создаёт Matrix order room на backend-е, seller lifecycle публикует события в эту room,
                 а admin UI показывает итоговые counters и validation stream.
-                Подробная инструкция: <a class="inline-link" href="dev-environment.html">Mini dev environment</a>.
+                Подробная инструкция: <a class="inline-link" href="dev-environment.html">Developer Setup</a>.
               </div>
             </section>
 
@@ -159,7 +218,7 @@
               <div>
                 <div class="section-heading">
                   <p class="eyebrow">Runtime architecture</p>
-                  <h2>2. Архитектура сервера</h2>
+                  <h2>3. Архитектура сервера</h2>
                 </div>
                 <p>
                   Production surface состоит из Axum backend, Matrix Application Service integration,
@@ -187,8 +246,8 @@
 
             <section id="journeys" class="doc-section">
               <div class="section-heading">
-                <p class="eyebrow">Protocol journeys</p>
-                <h2>3. Основные customer journeys</h2>
+                <p class="eyebrow">Role journeys</p>
+                <h2>4. Как роли проходят через protocol flow</h2>
               </div>
               <div class="journey-grid">
                 <article class="journey-card">
@@ -236,7 +295,7 @@
             <section id="install" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Developer setup</p>
-                <h2>4. Установка</h2>
+                <h2>5. Установка</h2>
               </div>
               <div class="steps">
                 <article>
@@ -264,7 +323,7 @@ cargo run -p morpheus-cli -- conformance run</code></pre>
             <section id="config" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Configuration</p>
-                <h2>5. Настройка instance</h2>
+                <h2>6. Настройка instance</h2>
               </div>
               <p>
                 Один Morpheus server описывается TOML-конфигом. Для локального запуска используется
@@ -318,7 +377,7 @@ cargo run -p morpheus-cli -- synapse registration \
             <section id="run" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Single server</p>
-                <h2>6. Запуск одного локального сервера</h2>
+                <h2>7. Запуск одного локального сервера</h2>
               </div>
               <div class="runbook">
                 <article>
@@ -356,7 +415,7 @@ cargo run -p morpheus-server -- --config config/local.toml</code></pre>
             <section id="e2e" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Federated E2E</p>
-                <h2>7. Запуск трёх federated серверов</h2>
+                <h2>8. Запуск трёх federated серверов</h2>
               </div>
                 <p>
                   E2E stack поднимает три независимых marketplace instances: `books.example`,
@@ -366,7 +425,7 @@ cargo run -p morpheus-server -- --config config/local.toml</code></pre>
                 </p>
                 <p>
                   Подробный runbook по контейнерам, UI кабинетам, CLI и API находится на странице
-                  <a class="inline-link" href="dev-environment.html">Mini dev environment</a>.
+                  <a class="inline-link" href="dev-environment.html">Developer Setup</a>.
                 </p>
               <div class="instance-grid">
                 <article><strong>books.example</strong><span>Morpheus: 18081</span><span>Synapse: 18008</span></article>
@@ -385,7 +444,7 @@ make e2e-three-synapse-down</code></pre>
             <section id="ui" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">UI and API</p>
-                <h2>8. Встроенные UI и основные endpoints</h2>
+                <h2>9. Встроенные UI и основные endpoints</h2>
               </div>
               <div class="link-grid">
                 <a href="../ui/admin"><strong>Admin UI</strong><span>/ui/admin</span></a>
@@ -423,7 +482,7 @@ make e2e-three-synapse-down</code></pre>
             <section id="ops" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Operations</p>
-                <h2>9. Операционный чеклист</h2>
+                <h2>10. Операционный чеклист</h2>
               </div>
               <div class="ops-grid">
                 <article>
@@ -449,7 +508,7 @@ cargo run -p morpheus-cli -- conformance run</code></pre>
             <section id="troubleshooting" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Troubleshooting</p>
-                <h2>10. Частые проблемы</h2>
+                <h2>11. Частые проблемы</h2>
               </div>
               <details open>
                 <summary>Synapse не отправляет transactions в Morpheus</summary>

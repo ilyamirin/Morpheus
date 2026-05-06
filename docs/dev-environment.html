@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark light">
-    <title>Morpheus Dev Environment | Mini Federation Runbook</title>
+    <title>Morpheus Developer Setup | Local Federation Runbook</title>
     <meta
       name="description"
       content="Подробная документация Morpheus mini dev окружения: Docker E2E, UI, CLI, API, product journey и expected state."
@@ -19,10 +19,11 @@
           <span class="brand-mark">M</span>
           <span>
             <strong>Morpheus</strong>
-            <small>Dev environment</small>
+            <small>Developer setup</small>
           </span>
         </a>
         <nav class="topnav" aria-label="Dev environment navigation">
+          <a href="#roles">Роли</a>
           <a href="#overview">Окружение</a>
           <a href="#containers">Контейнеры</a>
           <a href="#ui">UI</a>
@@ -36,7 +37,7 @@
       <main id="top">
         <section class="hero-section compact-hero">
           <div class="hero-copy">
-            <p class="eyebrow">Mini dev federation</p>
+            <p class="eyebrow">Developer setup</p>
             <h1>Локальная сеть из трёх Morpheus marketplace-серверов.</h1>
             <p class="lead">
               Это окружение поднимает books, cases и fashion instances с отдельными Synapse,
@@ -46,6 +47,7 @@
             </p>
             <div class="hero-actions">
               <a class="btn primary" href="#start">Запуск</a>
+              <a class="btn ghost" href="#roles">Открыть по роли</a>
               <a class="btn ghost" href="index.html">К общей документации</a>
             </div>
           </div>
@@ -71,24 +73,86 @@
         <div class="content-grid">
           <aside class="sidebar" aria-label="Dev documentation outline">
             <nav>
-              <a href="#overview">1. Что это за окружение</a>
-              <a href="#start">2. Запуск и остановка</a>
-              <a href="#containers">3. Контейнеры</a>
-              <a href="#expected">4. Что должен увидеть разработчик</a>
-              <a href="#ui">5. UI кабинеты</a>
-              <a href="#product-ui">6. Путь товара в UI</a>
-              <a href="#cli">7. CLI путь</a>
-              <a href="#api">8. API путь</a>
-              <a href="#internals">9. Как это работает внутри</a>
-              <a href="#troubleshooting">10. Диагностика</a>
+              <a href="#roles">1. Открыть по роли</a>
+              <a href="#overview">2. Что это за окружение</a>
+              <a href="#start">3. Запуск и остановка</a>
+              <a href="#containers">4. Контейнеры</a>
+              <a href="#expected">5. Что должен увидеть разработчик</a>
+              <a href="#ui">6. UI кабинеты</a>
+              <a href="#product-ui">7. Путь товара в UI</a>
+              <a href="#cli">8. CLI путь</a>
+              <a href="#api">9. API путь</a>
+              <a href="#internals">10. Как это работает внутри</a>
+              <a href="#troubleshooting">11. Диагностика</a>
             </nav>
           </aside>
 
           <div class="docs-flow">
+            <section id="roles" class="doc-section">
+              <div class="section-heading">
+                <p class="eyebrow">Open by role</p>
+                <h2>1. Куда идти разработчику, админу, seller и buyer</h2>
+              </div>
+              <div class="role-grid">
+                <article class="role-card admin-role">
+                  <span class="role-kicker">Admin</span>
+                  <h3>Операционный кабинет</h3>
+                  <p>
+                    Проверить health/readiness, tokens, allowlist, projection counters,
+                    validation stream, catalog rebuild и order replay.
+                  </p>
+                  <div class="role-links">
+                    <a class="inline-link" href="http://127.0.0.1:18081/ui/admin">books admin</a>
+                    <a class="inline-link" href="http://127.0.0.1:18082/ui/admin">cases admin</a>
+                    <a class="inline-link" href="http://127.0.0.1:18083/ui/admin">fashion admin</a>
+                  </div>
+                </article>
+                <article class="role-card seller-role">
+                  <span class="role-kicker">Seller</span>
+                  <h3>Рабочее место продавца</h3>
+                  <p>
+                    Announce seller, publish product/offer, увидеть order queue,
+                    принять order, провести payment/entitlement lifecycle и снять offer.
+                  </p>
+                  <div class="role-links">
+                    <a class="inline-link" href="http://127.0.0.1:18081/ui/seller">books seller</a>
+                    <a class="inline-link" href="http://127.0.0.1:18082/ui/seller">cases seller</a>
+                    <a class="inline-link" href="http://127.0.0.1:18083/ui/seller">fashion seller</a>
+                  </div>
+                </article>
+                <article class="role-card buyer-role">
+                  <span class="role-kicker">Buyer</span>
+                  <h3>Marketplace покупателя</h3>
+                  <p>
+                    Обновить catalog, выбрать offer, создать order, увидеть настоящий
+                    backend-owned Matrix room id и отследить/cancel order.
+                  </p>
+                  <div class="role-links">
+                    <a class="inline-link" href="http://127.0.0.1:18081/ui/buyer">books buyer</a>
+                    <a class="inline-link" href="http://127.0.0.1:18082/ui/buyer">cases buyer</a>
+                    <a class="inline-link" href="http://127.0.0.1:18083/ui/buyer">fashion buyer</a>
+                  </div>
+                </article>
+                <article class="role-card developer-role">
+                  <span class="role-kicker">Developer</span>
+                  <h3>Runbook и интеграция</h3>
+                  <p>
+                    Понять контейнеры, команды запуска, expected state, CLI/API сценарии,
+                    federation smoke и диагностику проблем.
+                  </p>
+                  <div class="role-links">
+                    <a class="inline-link" href="#start">Запуск</a>
+                    <a class="inline-link" href="#cli">CLI</a>
+                    <a class="inline-link" href="#api">API</a>
+                  </div>
+                </article>
+              </div>
+            </section>
+
             <section id="overview" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Purpose</p>
-                <h2>1. Что это за mini dev окружение</h2>
+                <h2>2. Что это за developer setup</h2>
               </div>
               <p>
                 `make e2e-three-synapse` поднимает локальную federation-сеть, которая не является чистым mock-ом:
@@ -120,7 +184,7 @@
             <section id="start" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Runbook</p>
-                <h2>2. Запуск, проверка и остановка</h2>
+                <h2>3. Запуск, проверка и остановка</h2>
               </div>
               <div class="steps">
                 <article>
@@ -156,7 +220,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
             <section id="containers" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Docker topology</p>
-                <h2>3. Какие контейнеры создаются и зачем</h2>
+                <h2>4. Какие контейнеры создаются и зачем</h2>
               </div>
               <div class="table-wrap">
                 <table>
@@ -221,7 +285,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
             <section id="expected" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Expected state</p>
-                <h2>4. Что разработчик должен увидеть после запуска</h2>
+                <h2>5. Что разработчик должен увидеть после запуска</h2>
               </div>
               <div class="journey-sequence">
                 <article>
@@ -258,7 +322,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
             <section id="ui" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Browser surfaces</p>
-                <h2>5. UI кабинеты: куда ходить и что проверять</h2>
+                <h2>6. UI кабинеты: куда ходить и что проверять</h2>
               </div>
               <p>
                 Все UI используют bearer token из input-а и хранят его только в `localStorage`. Для E2E placeholders:
@@ -330,7 +394,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
             <section id="product-ui" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">UI customer journey</p>
-                <h2>6. Путь товара в UI: публикация, покупка, lifecycle, снятие</h2>
+                <h2>7. Путь товара в UI: публикация, покупка, lifecycle, снятие</h2>
               </div>
               <div class="journey-grid">
                 <article class="journey-card">
@@ -393,7 +457,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
             <section id="cli" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">CLI journey</p>
-                <h2>7. То же через CLI</h2>
+                <h2>8. То же через CLI</h2>
               </div>
               <p>
                 CLI JSON-first. Глобальные флаги: `--server-url`, `--token`, `--pretty`. Если `--token`
@@ -490,7 +554,7 @@ cargo run -p morpheus-cli -- --server-url "$SERVER" seller offer upsert --json '
             <section id="api" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">HTTP API journey</p>
-                <h2>8. То же через HTTP API</h2>
+                <h2>9. То же через HTTP API</h2>
               </div>
               <p>
                 HTTP API использует role bearer tokens. Seller endpoints требуют `seller-token` и local seller actor.
@@ -563,7 +627,7 @@ curl -fsS -X POST -H "authorization: Bearer admin-token" "$SERVER/admin/catalog/
             <section id="internals" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Runtime internals</p>
-                <h2>9. Как это работает внутри</h2>
+                <h2>10. Как это работает внутри</h2>
               </div>
               <div class="pipeline wide-pipeline">
                 <div><span>01</span><strong>UI / CLI / HTTP client</strong><small>role token + JSON request</small></div>
@@ -582,7 +646,7 @@ curl -fsS -X POST -H "authorization: Bearer admin-token" "$SERVER/admin/catalog/
             <section id="troubleshooting" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Troubleshooting</p>
-                <h2>10. Диагностика mini dev окружения</h2>
+                <h2>11. Диагностика developer setup</h2>
               </div>
               <details open>
                 <summary>Сборка Docker снова качает Rust deps</summary>
