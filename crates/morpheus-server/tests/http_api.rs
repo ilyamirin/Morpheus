@@ -238,6 +238,30 @@ async fn store_with_admin_projection_data() -> InMemoryEventStore {
     store
 }
 
+fn fixture_buyer_order_request(order_id: &str, offer_id: &str) -> Value {
+    json!({
+        "customer_id": "customer:shop.example:01JCUST",
+        "customer_display_name": "Fixture Customer",
+        "order_id": order_id,
+        "seller_id": "seller:shop.example:01JSELLER",
+        "offer_id": offer_id,
+        "offer_revision": 1,
+        "catalog_snapshot_id": "snap:shop.example:01JSNAP",
+        "price": {"amount": "100.00", "currency": "USD"},
+        "payment_adapter": "mock",
+        "payment_capture_policy": "before_entitlement",
+        "entitlement_type": "external_entitlement",
+        "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "arbiter_instance": "cases.example",
+        "arbiter_actor": "arbiter:cases.example:01JARBITER",
+        "arbitration_policy_id": "standard-digital-v1",
+        "arbitration_policy_version": "1",
+        "arbitration_window": "P14D",
+        "expires_at": "2026-05-06T10:30:00Z"
+    })
+}
+
 #[tokio::test]
 async fn ui_html_routes_return_ok_without_auth() {
     for uri in ["/ui/admin", "/ui/seller", "/ui/buyer"] {
@@ -1005,6 +1029,63 @@ async fn buyer_catalog_offers_hide_orphan_offer_projections() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["items"].as_array().unwrap().len(), 1);
     assert_eq!(body["items"][0]["offer_id"], "offer:shop.example:01JOFFER");
+}
+
+#[tokio::test]
+async fn buyer_catalog_offers_hide_withdrawn_offer_projection() {
+    let store = store_with_admin_projection_data().await;
+    store
+        .tombstone_catalog_object(
+            "offer:shop.example:01JOFFER",
+            "offer",
+            json!({ "reason": "seller_withdrawn" }),
+        )
+        .await
+        .unwrap();
+
+    let (list_status, list_body) =
+        send_admin_request(store.clone(), "GET", "/api/v1/catalog/offers", None).await;
+    let (show_status, show_body) = send_admin_request(
+        store,
+        "GET",
+        "/api/v1/catalog/offers/offer:shop.example:01JOFFER",
+        None,
+    )
+    .await;
+
+    assert_eq!(list_status, StatusCode::OK, "{list_body}");
+    assert_eq!(list_body["items"].as_array().unwrap().len(), 0);
+    assert_eq!(show_status, StatusCode::NOT_FOUND, "{show_body}");
+    assert_eq!(show_body["code"], "OFFER_NOT_FOUND");
+}
+
+#[tokio::test]
+async fn buyer_order_create_rejects_withdrawn_offer_without_creating_order() {
+    let store = store_with_admin_projection_data().await;
+    store
+        .tombstone_catalog_object(
+            "offer:shop.example:01JOFFER",
+            "offer",
+            json!({ "reason": "seller_withdrawn" }),
+        )
+        .await
+        .unwrap();
+    let order_id = "ord:shop.example:01JWITHDRAWN";
+
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/buyer/orders",
+        Some("Bearer buyer-token"),
+        fixture_buyer_order_request(order_id, "offer:shop.example:01JOFFER"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "OFFER_WITHDRAWN");
+    assert_eq!(body["details"]["offer_id"], "offer:shop.example:01JOFFER");
+    assert!(store.order(order_id).await.unwrap().is_none());
+    assert!(store.order_events(order_id).await.unwrap().is_empty());
 }
 
 #[tokio::test]

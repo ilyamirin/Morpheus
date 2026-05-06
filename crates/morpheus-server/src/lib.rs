@@ -1850,6 +1850,12 @@ where
     ) {
         return response;
     }
+    if let Some(response) = match withdrawn_offer_response(&state.store, &request.offer_id).await {
+        Ok(response) => response,
+        Err(response) => return response,
+    } {
+        return response;
+    }
     let room_id = match buyer_order_room_id(&state, &request).await {
         Ok(room_id) => room_id,
         Err((status, err)) => {
@@ -1904,6 +1910,33 @@ where
         }),
     );
     publish_generated(&state, vec![customer_bound, order_created]).await
+}
+
+async fn withdrawn_offer_response<S>(
+    store: &S,
+    offer_id: &str,
+) -> Result<Option<axum::response::Response>, axum::response::Response>
+where
+    S: EventStore,
+{
+    let tombstones = store
+        .catalog_tombstones()
+        .await
+        .map_err(|err| store_error_response(err.message, err.code))?;
+    Ok(tombstones
+        .into_iter()
+        .any(|tombstone| tombstone.object_type == "offer" && tombstone.object_id == offer_id)
+        .then(|| {
+            (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "code": "OFFER_WITHDRAWN",
+                    "error": "offer has been withdrawn",
+                    "details": { "offer_id": offer_id },
+                })),
+            )
+                .into_response()
+        }))
 }
 
 async fn buyer_order_room_id<S, P>(
@@ -2100,13 +2133,27 @@ where
         .into_iter()
         .map(|product| product.product_id)
         .collect::<BTreeSet<_>>();
+    let tombstones = store.catalog_tombstones().await?;
+    let withdrawn_product_ids = tombstones
+        .iter()
+        .filter(|tombstone| tombstone.object_type == "product")
+        .map(|tombstone| tombstone.object_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let withdrawn_offer_ids = tombstones
+        .iter()
+        .filter(|tombstone| tombstone.object_type == "offer")
+        .map(|tombstone| tombstone.object_id.as_str())
+        .collect::<BTreeSet<_>>();
 
     Ok(store
         .catalog_offers()
         .await?
         .into_iter()
         .filter(|offer| {
-            seller_ids.contains(&offer.seller_id) && product_ids.contains(&offer.product_id)
+            seller_ids.contains(&offer.seller_id)
+                && product_ids.contains(&offer.product_id)
+                && !withdrawn_product_ids.contains(offer.product_id.as_str())
+                && !withdrawn_offer_ids.contains(offer.offer_id.as_str())
         })
         .collect())
 }
