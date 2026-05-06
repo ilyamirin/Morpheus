@@ -455,6 +455,29 @@ async fn ui_javascript_does_not_ship_shop_example_as_runtime_default() {
 }
 
 #[tokio::test]
+async fn ui_javascript_tracks_projection_pending_buyer_orders() {
+    let (status, content_type, body) = send_ui_body_request("/ui/assets/app.js").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("javascript")),
+        "{content_type:?}"
+    );
+    assert_contains_all(
+        &body,
+        &[
+            "pendingOrders",
+            "markBuyerOrderPending",
+            "Projection pending",
+            "Refresh orders",
+            "projection_timeout",
+        ],
+    );
+}
+
+#[tokio::test]
 async fn ui_css_asset_returns_text_css_without_auth() {
     let (status, content_type) = send_ui_request("/ui/assets/app.css").await;
 

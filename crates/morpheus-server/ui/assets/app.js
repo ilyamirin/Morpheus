@@ -52,7 +52,7 @@
     "prod:fashion.example:FASHIONPROD0501": "/ui/assets/products/seed/fashionprod0501.jpg",
     "prod:fashion.example:FASHIONPROD0502": "/ui/assets/products/seed/fashionprod0502.jpg"
   };
-  const state = { sellers: [], products: [], offers: [], orders: [], selectedOffer: null };
+  const state = { sellers: [], products: [], offers: [], orders: [], selectedOffer: null, pendingOrders: [] };
   let resultPanel = null;
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -396,7 +396,7 @@
     const value = String(status || "unknown");
     let accent = "accent-cyan";
     if (value.includes("cancel") || value.includes("reject")) accent = "accent-crimson";
-    if (value.includes("created") || value.includes("accepted")) accent = "accent-amber";
+    if (value.includes("created") || value.includes("accepted") || value.includes("pending") || value.includes("submitted")) accent = "accent-amber";
     if (value.includes("complete") || value.includes("grant")) accent = "accent-emerald";
     return `<span class="status-pill ${accent}">${esc(value)}</span>`;
   }
@@ -703,6 +703,94 @@
     ).join("")}</ol>`;
   }
 
+  function pendingOrderMessage(entry) {
+    if (entry.state === "timeout") {
+      return "Projection has not caught up yet. Refresh orders or try again after the AS/Synapse/Postgres projection loop settles.";
+    }
+    return "Order was submitted. Waiting for the buyer orders projection to include it.";
+  }
+
+  function pendingOrderAction(entry) {
+    if (entry.state !== "timeout") return "";
+    return `<button class="btn btn-small" type="button" data-action="buyer-orders">Refresh orders</button>`;
+  }
+
+  function pendingOrderCard(entry) {
+    const status = entry.state === "timeout" ? "projection_timeout" : "Projection pending";
+    return `<article class="order-card order-card-pending${entry.state === "timeout" ? " is-timeout" : ""}">
+      <div class="section-head compact-head">
+        <div>
+          <p class="eyebrow">${esc(entry.state === "timeout" ? "Projection delayed" : "Projection pending")}</p>
+          <h3>${esc(displayId(entry.order_id, "Submitted order"))}</h3>
+          <p class="mono">${esc(displayId(entry.offer_id, "Offer not attached"))}</p>
+        </div>
+        ${statusBadge(status)}
+      </div>
+      <p>${esc(pendingOrderMessage(entry))}</p>
+      ${pendingOrderAction(entry)}
+    </article>`;
+  }
+
+  function pendingOrderRow(entry) {
+    const status = entry.state === "timeout" ? "projection_timeout" : "Projection pending";
+    const guidance = entry.state === "timeout" ? "Refresh orders" : "Waiting for projection";
+    return `<tr class="pending-order-row${entry.state === "timeout" ? " is-timeout" : ""}">
+      <td class="mono">${esc(entry.order_id)}</td>
+      <td>${statusBadge(status)}<span class="pending-guidance">${esc(guidance)}</span></td>
+      <td class="mono">${esc(entry.offer_id)}</td>
+    </tr>`;
+  }
+
+  function unresolvedPendingOrders() {
+    const projected = new Set(state.orders.map((order) => order.order_id).filter(Boolean));
+    return state.pendingOrders.filter((entry) => entry && entry.order_id && !projected.has(entry.order_id));
+  }
+
+  function reconcilePendingOrders() {
+    const before = state.pendingOrders.length;
+    state.pendingOrders = unresolvedPendingOrders();
+    return before !== state.pendingOrders.length;
+  }
+
+  function hasProjectedOrder(orderId) {
+    return state.orders.some((order) => order && order.order_id === orderId);
+  }
+
+  function markBuyerOrderPending(payload) {
+    const orderId = payload && payload.order_id;
+    if (!orderId) return null;
+    state.pendingOrders = state.pendingOrders.filter((entry) => entry.order_id !== orderId);
+    const entry = {
+      order_id: orderId,
+      offer_id: payload.offer_id || "",
+      state: "pending",
+      submitted_at: new Date().toISOString()
+    };
+    state.pendingOrders.unshift(entry);
+    renderOrders("buyer-orders-rows", "buyer-order-count", 3);
+    showResult("POST /api/v1/buyer/orders", "submitted", {
+      order_id: orderId,
+      status: "Projection pending",
+      guidance: "The order was accepted for processing. Waiting for /api/v1/buyer/orders projection."
+    });
+    toast("Order submitted", "success", "Projection pending in buyer orders.");
+    return entry;
+  }
+
+  function markBuyerOrderProjectionTimeout(orderId) {
+    const entry = state.pendingOrders.find((item) => item.order_id === orderId);
+    if (!entry || hasProjectedOrder(orderId)) return;
+    entry.state = "timeout";
+    entry.timed_out_at = new Date().toISOString();
+    renderOrders("buyer-orders-rows", "buyer-order-count", 3);
+    showResult("GET /api/v1/buyer/orders", "projection_timeout", {
+      order_id: orderId,
+      status: "projection_timeout",
+      guidance: "Refresh orders or try again after projection catches up."
+    });
+    toast("Projection still pending", "neutral", "Refresh orders after the projection loop catches up.");
+  }
+
   function ensureOrderCards(rows, rowsId) {
     if (rowsId === "buyer-orders-rows") {
       const existing = document.getElementById("buyer-order-cards");
@@ -723,15 +811,19 @@
   function renderOrders(rowsId, countId, columns) {
     const rows = document.getElementById(rowsId);
     if (!rows) return;
-    if (countId) setText(countId, `${state.orders.length} orders`);
+    const pendingOrders = rowsId === "buyer-orders-rows" ? unresolvedPendingOrders() : [];
+    if (countId) {
+      const pendingText = pendingOrders.length ? `, ${pendingOrders.length} pending` : "";
+      setText(countId, `${state.orders.length} orders${pendingText}`);
+    }
     const cards = ensureOrderCards(rows, rowsId);
-    if (!state.orders.length) {
+    if (!state.orders.length && !pendingOrders.length) {
       rows.innerHTML = `<tr><td colspan="${columns}" class="empty-cell">No orders found. Create one from the buyer workspace, then refresh.</td></tr>`;
       if (cards) cards.innerHTML = `<div class="empty-state">No orders loaded yet.</div>`;
       return;
     }
     if (cards) {
-      cards.innerHTML = state.orders.map((order) => {
+      const projectedCards = state.orders.map((order) => {
         const title = displayId(order.order_id, "Order");
         const offer = displayId(order.offer_id, "Offer not attached");
         const actor = columns === 5 ? displayId(order.customer_id, "Customer not attached") : sellerName(order.seller_id);
@@ -743,14 +835,16 @@
           <button class="btn btn-small btn-primary" type="button" data-seller-order-step="complete" data-order-id="${esc(order.order_id || "")}">Complete</button>
         </div>` : "";
         return `<article class="order-card"><div class="section-head compact-head"><div><p class="eyebrow">${esc(actor)}</p><h3>${esc(title)}</h3><p class="mono">${esc(offer)}</p></div>${statusBadge(order.status)}</div>${orderTimeline(order)}${sellerActions}</article>`;
-      }).join("");
+      });
+      cards.innerHTML = pendingOrders.map(pendingOrderCard).concat(projectedCards).join("");
     }
-    rows.innerHTML = state.orders.map((order) => {
+    const projectedRows = state.orders.map((order) => {
       if (columns === 5) {
         return `<tr><td class="mono">${esc(order.order_id)}</td><td>${statusBadge(order.status)}</td><td class="mono">${esc(order.customer_id)}</td><td class="mono">${esc(order.offer_id)}</td><td class="mono">${esc(order.room_id)}</td></tr>`;
       }
       return `<tr><td class="mono">${esc(order.order_id)}</td><td>${statusBadge(order.status)}</td><td class="mono">${esc(order.offer_id)}</td></tr>`;
-    }).join("");
+    });
+    rows.innerHTML = pendingOrders.map(pendingOrderRow).concat(projectedRows).join("");
   }
 
   async function refreshAdmin({ silent = true } = {}) {
@@ -796,6 +890,7 @@
     const result = await api(path, { tokenRole: role, action: `GET ${path}` });
     if (!result.ok) return;
     state.orders = Array.isArray(result.body && result.body.orders) ? result.body.orders : [];
+    if (role === "buyer") reconcilePendingOrders();
     if (role === "seller") renderOrders("seller-orders-rows", "seller-order-count", 5);
     if (role === "buyer") renderOrders("buyer-orders-rows", "buyer-order-count", 3);
   }
@@ -811,11 +906,14 @@
     }
   }
 
-  async function pollOrders(role, attempts = 10) {
+  async function pollOrders(role, attempts = 10, { pendingOrderId } = {}) {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       await refreshOrders(role);
+      if (pendingOrderId && hasProjectedOrder(pendingOrderId)) return true;
       await delay(800);
     }
+    if (role === "buyer" && pendingOrderId) markBuyerOrderProjectionTimeout(pendingOrderId);
+    return false;
   }
 
   function bindAdmin() {
@@ -924,7 +1022,8 @@
       const result = await api("/api/v1/buyer/orders", { method: "POST", tokenRole: "buyer", body: payload, action: "POST /api/v1/buyer/orders" });
       if (result.ok) {
         setCheckoutOpen(false);
-        await pollOrders("buyer");
+        markBuyerOrderPending(payload);
+        await pollOrders("buyer", 12, { pendingOrderId: payload.order_id });
         if (create.elements.order_id) create.elements.order_id.value = protocolId("ord", LOCAL_INSTANCE, `ORDER_${Date.now().toString(36).toUpperCase()}`);
       }
     });

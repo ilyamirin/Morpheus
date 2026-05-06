@@ -1015,6 +1015,31 @@ body[data-page="buyer"] .metric-card strong {
   background: linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%);
 }
 
+.order-card-pending {
+  border-color: rgba(245, 158, 11, 0.44);
+  background: linear-gradient(180deg, #ffffff 0%, #fff7e6 100%);
+}
+
+.order-card-pending.is-timeout {
+  border-color: rgba(225, 29, 72, 0.34);
+  background: linear-gradient(180deg, #ffffff 0%, #fff1f2 100%);
+}
+
+.pending-order-row {
+  background: #fffbeb;
+}
+
+.pending-order-row.is-timeout {
+  background: #fff1f2;
+}
+
+.pending-guidance {
+  display: block;
+  margin-top: 5px;
+  color: var(--product-muted);
+  font-size: 12px;
+}
+
 .flow-panel h2,
 .flow-panel h3,
 .offer-card h3,
