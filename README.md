@@ -25,11 +25,19 @@ Implemented today:
 - Tailwind-powered admin, seller, and buyer PoC UIs served by `morpheus-server`.
 - Rust CLI for config, Synapse registration, conformance, DB migration, admin operations, seller publishing, and buyer catalog/order actions.
 - Real local publish loop in server runtime: `Morpheus API -> Synapse -> Morpheus AS ingest -> Postgres`.
+- Buyer resilience flows for stale offers, pending order projections, and temporarily unavailable trusted remote catalogs.
 - Three-instance Docker E2E stack: books, smartphone cases, and fashion marketplaces, each with its own Morpheus server, Synapse homeserver, and Postgres database.
 
 Important current limitation:
 
 - Trusted remote catalog visibility is implemented by a trusted Morpheus catalog indexer over peer Morpheus catalog APIs. Local writes do round-trip through Synapse; remote catalog indexing does not yet read remote Matrix room history directly.
+- When a trusted peer is temporarily unavailable, the indexer reports `cached` with `REMOTE_CATALOG_UNAVAILABLE` and keeps the last accepted catalog projections visible instead of failing buyer discovery.
+
+User-facing edge cases now covered:
+
+- Withdrawn offers are removed from buyer discovery and direct order creation returns `409 OFFER_WITHDRAWN`.
+- After `Create order`, the buyer UI shows a pending projection state until Synapse AS ingest catches up, then resolves to the projected order timeline.
+- If projection does not catch up inside the polling window, the UI surfaces `projection_timeout` and keeps the submitted room/event context in Advanced output.
 
 ## Documents
 

@@ -418,6 +418,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                     <li>Нажать `Buy` на offer. Checkout получает offer id, amount и currency из projection.</li>
                     <li>Нажать `Create order`: `POST /api/v1/buyer/orders` без editable `room_id`.</li>
                     <li>Backend создаёт private Matrix order room, приглашает seller/arbiter AS users и возвращает реальный `room_id`.</li>
+                    <li>До прихода AS projection UI показывает submitted/pending state и автоматически обновляет orders.</li>
                     <li>Buyer orders panel показывает created/accepted/payment/entitlement/completed timeline.</li>
                   </ol>
                 </article>
@@ -440,6 +441,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                     <li>В текущем PoC UI отдельной кнопки withdraw нет: снятие выполняется через CLI/API.</li>
                     <li>После `seller offer withdraw` вернуться в <a class="inline-link" href="http://127.0.0.1:18081/ui/buyer"><code>/ui/buyer</code></a> и нажать `Refresh catalog`.</li>
                     <li>Offer должен исчезнуть из discovery для новых покупателей.</li>
+                    <li>Если buyer успел открыть stale карточку и нажал `Create order`, backend возвращает `409 OFFER_WITHDRAWN`.</li>
                     <li>Открыть <a class="inline-link" href="http://127.0.0.1:18081/ui/admin"><code>/ui/admin</code></a>, нажать refresh/rebuild при необходимости и проверить catalog counters/events.</li>
                     <li>Уже созданные orders не переписываются: они продолжают lifecycle по зафиксированным terms/hash.</li>
                     <li>Это важное разделение: withdrawal влияет на будущий catalog discovery, а не отменяет прошлые сделки.</li>
@@ -451,6 +453,11 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                 Seller offer withdraw снимает offer из будущего catalog discovery, но уже созданные orders продолжают жить
                 по зафиксированным terms/hash. В UI это проверяется как наблюдаемый результат: после CLI/API withdraw
                 buyer catalog больше не показывает снятый offer.
+              </div>
+              <div class="callout">
+                Remote catalog indexer работает устойчиво к временной недоступности trusted peer. Если peer API не отвечает,
+                sync report помечается как `cached` с кодом `REMOTE_CATALOG_UNAVAILABLE`, а buyer discovery продолжает
+                показывать последние успешно принятые projections вместо пустого каталога.
               </div>
             </section>
 

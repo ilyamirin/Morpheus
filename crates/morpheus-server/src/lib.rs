@@ -543,6 +543,12 @@ pub struct RemoteCatalogSyncReport {
     pub error: Option<RemoteCatalogSyncError>,
 }
 
+struct RemoteCatalogItems {
+    sellers: Vec<CatalogSellerRecord>,
+    products: Vec<CatalogProductRecord>,
+    offers: Vec<CatalogOfferProjectionRecord>,
+}
+
 pub async fn sync_remote_catalog_once<S>(
     store: &S,
     source: &RemoteCatalogSource,
@@ -550,12 +556,15 @@ pub async fn sync_remote_catalog_once<S>(
 where
     S: EventStore,
 {
-    match sync_remote_catalog_items(store, source).await {
-        Ok(()) => Ok(RemoteCatalogSyncReport {
-            source: source.clone(),
-            status: "live".into(),
-            error: None,
-        }),
+    match fetch_remote_catalog_items(source).await {
+        Ok(items) => {
+            apply_remote_catalog_items(store, items).await?;
+            Ok(RemoteCatalogSyncReport {
+                source: source.clone(),
+                status: "live".into(),
+                error: None,
+            })
+        }
         Err(err) => Ok(RemoteCatalogSyncReport {
             source: source.clone(),
             status: "cached".into(),
@@ -570,13 +579,9 @@ where
     }
 }
 
-async fn sync_remote_catalog_items<S>(
-    store: &S,
+async fn fetch_remote_catalog_items(
     source: &RemoteCatalogSource,
-) -> Result<(), ValidationError>
-where
-    S: EventStore,
-{
+) -> Result<RemoteCatalogItems, ValidationError> {
     let client = reqwest::Client::new();
     let sellers = fetch_catalog_items::<CatalogSellerRecord>(
         &client,
@@ -584,7 +589,33 @@ where
         "/api/v1/catalog/sellers",
     )
     .await?;
-    for seller in sellers {
+    let products = fetch_catalog_items::<CatalogProductRecord>(
+        &client,
+        &source.morpheus_url,
+        "/api/v1/catalog/products",
+    )
+    .await?;
+    let offers = fetch_catalog_items::<CatalogOfferProjectionRecord>(
+        &client,
+        &source.morpheus_url,
+        "/api/v1/catalog/offers",
+    )
+    .await?;
+    Ok(RemoteCatalogItems {
+        sellers,
+        products,
+        offers,
+    })
+}
+
+async fn apply_remote_catalog_items<S>(
+    store: &S,
+    items: RemoteCatalogItems,
+) -> Result<(), ValidationError>
+where
+    S: EventStore,
+{
+    for seller in items.sellers {
         store
             .upsert_catalog_seller(
                 &seller.seller_id,
@@ -595,13 +626,7 @@ where
             .await?;
     }
 
-    let products = fetch_catalog_items::<CatalogProductRecord>(
-        &client,
-        &source.morpheus_url,
-        "/api/v1/catalog/products",
-    )
-    .await?;
-    for product in products {
+    for product in items.products {
         store
             .upsert_catalog_product(
                 &product.product_id,
@@ -612,13 +637,7 @@ where
             .await?;
     }
 
-    let offers = fetch_catalog_items::<CatalogOfferProjectionRecord>(
-        &client,
-        &source.morpheus_url,
-        "/api/v1/catalog/offers",
-    )
-    .await?;
-    for offer in offers {
+    for offer in items.offers {
         store.upsert_catalog_offer(offer).await?;
     }
     Ok(())

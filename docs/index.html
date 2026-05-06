@@ -525,6 +525,23 @@ cargo run -p morpheus-cli -- conformance run</code></pre>
                 </p>
               </details>
               <details>
+                <summary>Create order показывает pending или projection_timeout</summary>
+                <p>
+                  Public API возвращает submitted сразу после публикации Matrix events, а orders projection появляется
+                  только после обратного AS ingest. UI показывает pending и poll-ит orders. Если projection не догнал
+                  за отведённое окно, появится `projection_timeout`: проверьте Synapse transaction delivery, AS token,
+                  appservice URL и `/admin/projections/events`.
+                </p>
+              </details>
+              <details>
+                <summary>Order create возвращает OFFER_WITHDRAWN</summary>
+                <p>
+                  Buyer использовал stale offer, который seller уже снял с продажи. Обновите buyer catalog и выберите
+                  актуальную карточку. Существующие orders по старым terms продолжают lifecycle, но новые orders по
+                  withdrawn offer запрещены.
+                </p>
+              </details>
+              <details>
                 <summary>Seller не видит remote order</summary>
                 <p>
                   Проверьте, что seller AS user был приглашён и join прошёл. В backend order create
@@ -535,7 +552,9 @@ cargo run -p morpheus-cli -- conformance run</code></pre>
                 <summary>Remote catalog не появился мгновенно</summary>
                 <p>
                   На текущем этапе trusted remote catalog visibility строится через Morpheus peer API indexer.
-                  Проверьте allowlist entry, `morpheus_url`, network reachability и catalog rebuild.
+                  Проверьте allowlist entry, `morpheus_url`, network reachability и catalog rebuild. При временной
+                  недоступности peer sync report вернёт `cached` и `REMOTE_CATALOG_UNAVAILABLE`, а buyer catalog
+                  сохранит последние успешно принятые projections.
                 </p>
               </details>
             </section>
