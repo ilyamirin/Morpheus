@@ -30,11 +30,13 @@ impl MatrixPublisher for SubmittedOnlyPublisher {
 #[derive(Clone, Default)]
 struct RecordingPublisher {
     joined_rooms: Arc<Mutex<Vec<String>>>,
+    published_events: Arc<Mutex<Vec<Value>>>,
 }
 
 #[async_trait]
 impl MatrixPublisher for RecordingPublisher {
     async fn publish(&self, events: Vec<Value>) -> Result<Vec<Value>, ValidationError> {
+        self.published_events.lock().unwrap().extend(events.clone());
         Ok(events)
     }
 
@@ -431,6 +433,10 @@ async fn seller_ui_contains_storefront_anchors_and_hooks() {
             "Quick Add",
             "Publish listing also activates the seller and saves the product.",
             "Product image",
+            "Image upload only attaches a cover.",
+            r#"placeholder="e.g. Custom Cover Book""#,
+            r#"placeholder="books""#,
+            r#"placeholder="19.90""#,
             r#"data-product-image-input"#,
             r#"data-product-image-preview"#,
             r#"data-product-image-clear"#,
@@ -454,7 +460,14 @@ async fn seller_ui_contains_storefront_anchors_and_hooks() {
             r#""instance_id":"shop.example""#,
         ],
     );
-    assert_contains_none(&body, &["Profile -&gt; Product -&gt; Offer -&gt; Publish"]);
+    assert_contains_none(
+        &body,
+        &[
+            "Profile -&gt; Product -&gt; Offer -&gt; Publish",
+            r#"name="title" value="Soft Runner""#,
+            r#"name="amount" value="100.00""#,
+        ],
+    );
 }
 
 #[tokio::test]
@@ -531,6 +544,8 @@ async fn ui_javascript_tracks_projection_pending_buyer_orders() {
             "resetSellerDraftIds",
             "compressProductImage",
             "primaryMediaImage",
+            "validateSellerListing",
+            "LISTING_FORM_INCOMPLETE",
         ],
     );
 }
@@ -1503,6 +1518,47 @@ async fn seller_order_complete_retry_is_idempotent_without_room_join() {
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["event_ids"], json!([]));
     assert!(joined_rooms.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn seller_order_complete_withdraws_purchased_offer() {
+    let store = store_with_admin_projection_data().await;
+    let publisher = RecordingPublisher::default();
+    let joined_rooms = publisher.joined_rooms.clone();
+    let published_events = publisher.published_events.clone();
+    let app = build_router_with_publisher(server_config(), store, publisher);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/seller/orders/ord:customer.example:01JORDER/complete")
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "actor_id": "seller:shop.example:01JSELLER" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        joined_rooms.lock().unwrap().as_slice(),
+        ["!order:customer.example"]
+    );
+    let events = published_events.lock().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["type"], "io.marketplace.order.completed");
+    assert_eq!(events[0]["room_id"], "!order:customer.example");
+    assert_eq!(events[1]["type"], "io.marketplace.offer.withdrawn");
+    assert_eq!(events[1]["room_id"], "!catalog:shop.example");
+    assert_eq!(
+        events[1]["content"]["body"]["offer_id"],
+        "offer:shop.example:01JOFFER"
+    );
+    assert_eq!(events[1]["content"]["body"]["revision"], 1);
+    assert_eq!(events[1]["content"]["body"]["reason"], "sold");
 }
 
 #[tokio::test]

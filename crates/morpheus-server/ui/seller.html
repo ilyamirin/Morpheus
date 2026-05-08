@@ -99,11 +99,11 @@
           <form class="stack-form compact-form" data-form="seller-product">
             <label class="field">
               <span class="label">Product title</span>
-              <input class="input" name="title" value="Soft Runner">
+              <input class="input" name="title" value="" placeholder="e.g. Custom Cover Book" autocomplete="off" required>
             </label>
             <label class="field">
               <span class="label">Category</span>
-              <input class="input" name="kind" value="fashion">
+              <input class="input" name="kind" value="" placeholder="books" autocomplete="off" required>
             </label>
             <div class="image-upload-panel">
               <label class="field">
@@ -115,6 +115,7 @@
                 <img src="/ui/assets/products/sneakers.png" alt="Product image preview">
                 <button class="btn btn-small" type="button" data-product-image-clear>Use category image</button>
               </div>
+              <p class="muted-text">Image upload only attaches a cover. The listing is published only after title, category, price, and Publish listing.</p>
             </div>
             <input type="hidden" name="description" value="Lightweight everyday product from Morpheus seller UI.">
             <details class="advanced-panel mini-advanced">
@@ -135,7 +136,7 @@
             <div class="two-col">
               <label class="field">
                 <span class="label">Price</span>
-                <input class="input" name="amount" value="100.00">
+                <input class="input" name="amount" value="" placeholder="19.90" inputmode="decimal" required>
               </label>
               <label class="field">
                 <span class="label">Currency</span>

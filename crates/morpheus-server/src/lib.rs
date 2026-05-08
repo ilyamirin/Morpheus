@@ -1696,12 +1696,77 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    seller_simple_order_event(
-        state,
-        headers,
-        order_id,
-        request,
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.seller_token,
+        "seller",
+        &state.config.instance_id,
+        &request.actor_id,
+    ) {
+        return response;
+    }
+    match order_has_event(
+        &state.store,
+        &order_id,
         "io.marketplace.order.completed",
+        None,
+    )
+    .await
+    {
+        Ok(true) => return accepted_noop_order_response(&state, &order_id).await,
+        Ok(false) => {}
+        Err(err) => return store_error_response(err.message, err.code),
+    }
+    let order = match state.store.order(&order_id).await {
+        Ok(Some(order)) => order,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"code": "ORDER_NOT_FOUND", "error": "order not found"})),
+            )
+                .into_response();
+        }
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    if let Err(err) = state.publisher.ensure_room_joined(&order.room_id).await {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "code": err.code, "error": err.message, "details": err.details })),
+        )
+            .into_response();
+    }
+    let offer_revision = match state.store.catalog_offers().await {
+        Ok(offers) => offers
+            .into_iter()
+            .find(|offer| offer.offer_id == order.offer_id)
+            .map(|offer| offer.revision)
+            .or_else(|| order.body.get("offer_revision").and_then(Value::as_i64))
+            .unwrap_or(1),
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    publish_generated(
+        &state,
+        vec![
+            marketplace_event(
+                &state.config,
+                "io.marketplace.order.completed",
+                &order.room_id,
+                &request.actor_id,
+                json!({ "order_id": order_id }),
+            ),
+            marketplace_event(
+                &state.config,
+                "io.marketplace.offer.withdrawn",
+                &state.config.catalog_room_id,
+                &request.actor_id,
+                json!({
+                    "offer_id": order.offer_id,
+                    "seller_id": order.seller_id,
+                    "revision": offer_revision,
+                    "reason": "sold",
+                }),
+            ),
+        ],
     )
     .await
 }

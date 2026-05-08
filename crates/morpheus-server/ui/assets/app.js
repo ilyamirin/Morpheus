@@ -258,12 +258,12 @@
 
   function sellerProduct(formEl) {
     const data = form(formEl);
-    const category = data.kind || "marketplace";
+    const category = String(data.kind || "").trim();
     return {
       seller_id: currentSellerId(),
       product_id: data.product_id || DEMO.productId,
       revision: int(data.revision, 1),
-      title: data.title || "Soft Runner",
+      title: String(data.title || "").trim(),
       description: data.description || "Operator workspace with marketplace workflow controls.",
       kind: "digital_service",
       categories: [category, "marketplace"],
@@ -280,7 +280,7 @@
       product_id: data.product_id || DEMO.productId,
       offer_id: data.offer_id || DEMO.offerId,
       revision: int(data.revision, 1),
-      price: { amount: data.amount || "100.00", currency: data.currency || "USD" },
+      price: { amount: String(data.amount || "").trim(), currency: data.currency || "USD" },
       payment_capture_policy: data.payment_capture_policy || "before_entitlement",
       seller_terms_hash: SELLER_TERMS_HASH,
       offer_terms_hash: OFFER_TERMS_HASH,
@@ -639,15 +639,28 @@
     if (!file || !file.type || !file.type.startsWith("image/")) throw new Error("Choose an image file.");
     const dataUrl = await readFileAsDataUrl(file);
     const image = await loadImage(dataUrl);
-    const maxSide = 960;
-    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round((image.naturalWidth || 1) * scale));
-    canvas.height = Math.max(1, Math.round((image.naturalHeight || 1) * scale));
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("Could not prepare image preview.");
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.82);
+    const maxDataUrlLength = 18000;
+    let maxSide = 320;
+    let quality = 0.72;
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round((image.naturalWidth || 1) * scale));
+      canvas.height = Math.max(1, Math.round((image.naturalHeight || 1) * scale));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Could not prepare image preview.");
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const compressed = canvas.toDataURL("image/jpeg", quality);
+      if (compressed.length <= maxDataUrlLength) return compressed;
+      if (quality > 0.44) {
+        quality -= 0.12;
+      } else {
+        maxSide = Math.max(96, Math.round(maxSide * 0.72));
+      }
+    }
+
+    throw new Error("Image is too detailed for an inline protocol preview. Use a simpler or smaller image.");
   }
 
   async function handleProductImageFile(file) {
@@ -656,7 +669,7 @@
       const productForm = $('[data-form="seller-product"]');
       if (productForm && productForm.elements.image_src) productForm.elements.image_src.value = imageSrc;
       setProductImagePreview(imageSrc);
-      toast("Image attached", "success", "This image will be published with the product.");
+      toast("Image attached", "success", "Fill title and price, then click Publish listing.");
     } catch (error) {
       clearSellerImage();
       toast("Image not attached", "error", error.message || "Could not use this image.");
@@ -1021,7 +1034,65 @@
     }
   }
 
+  function markFieldInvalid(field, message) {
+    if (!field) return false;
+    field.setCustomValidity(message);
+    field.reportValidity();
+    window.setTimeout(() => field.setCustomValidity(""), 0);
+    return false;
+  }
+
+  function validateSellerProductForm(product) {
+    if (!product) return false;
+    const title = product.elements.title;
+    const kind = product.elements.kind;
+    if (!String((title && title.value) || "").trim()) {
+      return markFieldInvalid(title, "Enter the product title before publishing.");
+    }
+    if (!String((kind && kind.value) || "").trim()) {
+      return markFieldInvalid(kind, "Enter the product category before publishing.");
+    }
+    return product.reportValidity();
+  }
+
+  function validateSellerOfferForm(offer) {
+    if (!offer) return false;
+    const amount = offer.elements.amount;
+    const rawAmount = String((amount && amount.value) || "").trim();
+    if (!rawAmount) return markFieldInvalid(amount, "Enter the listing price before publishing.");
+    const numericAmount = Number(rawAmount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return markFieldInvalid(amount, "Enter a positive listing price.");
+    }
+    return offer.reportValidity();
+  }
+
+  function validateSellerListing(product, offer) {
+    const validProduct = validateSellerProductForm(product);
+    if (!validProduct) {
+      toast("Listing not published", "error", "Fill product title and category first.");
+      showResult("POST /api/v1/seller/offers", "not-submitted", {
+        code: "LISTING_FORM_INCOMPLETE",
+        error: "Product title and category are required before publishing."
+      });
+      return false;
+    }
+    const validOffer = validateSellerOfferForm(offer);
+    if (!validOffer) {
+      toast("Listing not published", "error", "Fill a positive price first.");
+      showResult("POST /api/v1/seller/offers", "not-submitted", {
+        code: "LISTING_FORM_INCOMPLETE",
+        error: "A positive listing price is required before publishing."
+      });
+      return false;
+    }
+    return true;
+  }
+
   async function publishSellerListing(announce, product, offer) {
+    if (!validateSellerListing(product, offer)) {
+      return { ok: false, status: "not-submitted", body: { code: "LISTING_FORM_INCOMPLETE" } };
+    }
     const announceResult = await api("/api/v1/seller/announce", {
       method: "POST",
       tokenRole: "seller",
@@ -1118,6 +1189,7 @@
     });
     product && product.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (!validateSellerProductForm(product)) return;
       const result = await api("/api/v1/seller/products", { method: "POST", tokenRole: "seller", body: sellerProduct(product), action: "POST /api/v1/seller/products" });
       if (result.ok) await pollCatalog();
     });
