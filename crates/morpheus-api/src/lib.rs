@@ -70,6 +70,8 @@ pub struct ProductUpsertRequest {
     pub kind: String,
     pub categories: Vec<String>,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub image_src: Option<String>,
     pub terms_hash: String,
 }
 

@@ -319,6 +319,12 @@ pre {
   flex: 1 1 120px;
 }
 
+.muted-text {
+  color: var(--product-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .admin-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1331,6 +1337,35 @@ body[data-page="buyer"] .metric-card strong {
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--product-line);
+}
+
+.image-upload-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.file-input {
+  padding: 10px;
+}
+
+.image-preview {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--product-line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.image-preview img {
+  display: block;
+  width: 86px;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #ffffff;
 }
 
 .mini-advanced {

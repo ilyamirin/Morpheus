@@ -99,6 +99,10 @@
     return `${kind}:${instance || LOCAL_INSTANCE}:${localId(seed || kind)}`;
   }
 
+  function freshDraftId(kind) {
+    return protocolId(kind, LOCAL_INSTANCE, `${kind}_${Date.now().toString(36).toUpperCase()}`);
+  }
+
   function objectInstance(id, fallback = LOCAL_INSTANCE) {
     const parts = String(id || "").split(":");
     return parts.length >= 2 && parts[1] ? parts[1] : fallback;
@@ -264,6 +268,7 @@
       kind: "digital_service",
       categories: [category, "marketplace"],
       tags: ["morpheus", "operator", "poc"],
+      image_src: data.image_src || undefined,
       terms_hash: HASH_A
     };
   }
@@ -428,9 +433,20 @@
   }
 
   function productImage(item) {
+    const directImage = item && (item.image_src || pick(item, ["body", "image_src"], ""));
+    if (directImage) return directImage;
+    const mediaImage = primaryMediaImage(item);
+    if (mediaImage) return mediaImage;
     const productId = item && item.product_id;
     if (productId && SEEDED_PRODUCT_IMAGES[productId]) return SEEDED_PRODUCT_IMAGES[productId];
     return PRODUCT_IMAGES[productKind(item)] || PRODUCT_IMAGES.sneakers;
+  }
+
+  function primaryMediaImage(item) {
+    const media = pick(item, ["body", "media"], item && item.media);
+    if (!Array.isArray(media)) return "";
+    const image = media.find((entry) => entry && (entry.kind === "image" || entry.type === "image") && entry.uri);
+    return image ? image.uri : "";
   }
 
   function offerImage(offer) {
@@ -569,6 +585,82 @@
     if (buyerTools && buyerTools.elements.order_id) buyerTools.elements.order_id.value = DEMO.orderId;
     const sellerOrder = $('[data-form="seller-order-action"]');
     if (sellerOrder && sellerOrder.elements.order_id) sellerOrder.elements.order_id.value = DEMO.orderId;
+  }
+
+  function resetSellerDraftIds() {
+    const productForm = $('[data-form="seller-product"]');
+    const offerForm = $('[data-form="seller-offer"]');
+    DEMO.productId = freshDraftId("prod");
+    DEMO.offerId = freshDraftId("offer");
+    if (productForm && productForm.elements.product_id) productForm.elements.product_id.value = DEMO.productId;
+    if (offerForm) {
+      if (offerForm.elements.product_id) offerForm.elements.product_id.value = DEMO.productId;
+      if (offerForm.elements.offer_id) offerForm.elements.offer_id.value = DEMO.offerId;
+    }
+  }
+
+  function setProductImagePreview(src) {
+    const preview = $("[data-product-image-preview]");
+    if (!preview) return;
+    const image = $("img", preview);
+    if (!image) return;
+    const productForm = $('[data-form="seller-product"]');
+    const category = productForm && productForm.elements.kind ? productForm.elements.kind.value : "marketplace";
+    image.src = src || PRODUCT_IMAGES[productKind({ body: { categories: [category], kind: category } })] || PRODUCT_IMAGES.sneakers;
+  }
+
+  function clearSellerImage() {
+    const productForm = $('[data-form="seller-product"]');
+    const input = $("[data-product-image-input]");
+    if (productForm && productForm.elements.image_src) productForm.elements.image_src.value = "";
+    if (input) input.value = "";
+    setProductImagePreview("");
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || new Error("Could not read image file."));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Could not decode image file."));
+      image.src = src;
+    });
+  }
+
+  async function compressProductImage(file) {
+    if (!file || !file.type || !file.type.startsWith("image/")) throw new Error("Choose an image file.");
+    const dataUrl = await readFileAsDataUrl(file);
+    const image = await loadImage(dataUrl);
+    const maxSide = 960;
+    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round((image.naturalWidth || 1) * scale));
+    canvas.height = Math.max(1, Math.round((image.naturalHeight || 1) * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Could not prepare image preview.");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.82);
+  }
+
+  async function handleProductImageFile(file) {
+    try {
+      const imageSrc = await compressProductImage(file);
+      const productForm = $('[data-form="seller-product"]');
+      if (productForm && productForm.elements.image_src) productForm.elements.image_src.value = imageSrc;
+      setProductImagePreview(imageSrc);
+      toast("Image attached", "success", "This image will be published with the product.");
+    } catch (error) {
+      clearSellerImage();
+      toast("Image not attached", "error", error.message || "Could not use this image.");
+    }
   }
 
   function renderAdminSummary(body) {
@@ -808,6 +900,35 @@
     return cards;
   }
 
+  function sellerOrderActions(status) {
+    const normalized = String(status || "").toLowerCase();
+    const actionsByStatus = {
+      created: [{ step: "accept", label: "Accept", primary: false }],
+      accepted: [{ step: "payment-intent", label: "Intent", primary: false }],
+      payment_intent_created: [{ step: "payment-capture", label: "Capture", primary: false }],
+      payment_authorized: [{ step: "payment-capture", label: "Capture", primary: false }],
+      payment_captured: [{ step: "entitlement-grant", label: "Grant", primary: false }],
+      entitlement_granted: [{ step: "complete", label: "Complete", primary: true }],
+      entitlement_activated: [{ step: "complete", label: "Complete", primary: true }],
+      entitlement_completed: [{ step: "complete", label: "Complete", primary: true }]
+    };
+    return actionsByStatus[normalized] || [];
+  }
+
+  function sellerOrderActionRow(order) {
+    const status = String((order && order.status) || "").toLowerCase();
+    const actions = sellerOrderActions(status);
+    if (!actions.length) {
+      const label = status ? status.replaceAll("_", " ") : "unknown status";
+      return `<div class="button-row stretch order-action-row"><span class="muted-text">No seller action available for ${esc(label)}.</span></div>`;
+    }
+    const orderId = esc((order && order.order_id) || "");
+    return `<div class="button-row stretch order-action-row">${actions.map((action) => {
+      const className = action.primary ? "btn btn-small btn-primary" : "btn btn-small";
+      return `<button class="${className}" type="button" data-seller-order-step="${esc(action.step)}" data-order-id="${orderId}">${esc(action.label)}</button>`;
+    }).join("")}</div>`;
+  }
+
   function renderOrders(rowsId, countId, columns) {
     const rows = document.getElementById(rowsId);
     if (!rows) return;
@@ -827,13 +948,7 @@
         const title = displayId(order.order_id, "Order");
         const offer = displayId(order.offer_id, "Offer not attached");
         const actor = columns === 5 ? displayId(order.customer_id, "Customer not attached") : sellerName(order.seller_id);
-        const sellerActions = columns === 5 ? `<div class="button-row stretch order-action-row">
-          <button class="btn btn-small" type="button" data-seller-order-step="accept" data-order-id="${esc(order.order_id || "")}">Accept</button>
-          <button class="btn btn-small" type="button" data-seller-order-step="payment-intent" data-order-id="${esc(order.order_id || "")}">Intent</button>
-          <button class="btn btn-small" type="button" data-seller-order-step="payment-capture" data-order-id="${esc(order.order_id || "")}">Capture</button>
-          <button class="btn btn-small" type="button" data-seller-order-step="entitlement-grant" data-order-id="${esc(order.order_id || "")}">Grant</button>
-          <button class="btn btn-small btn-primary" type="button" data-seller-order-step="complete" data-order-id="${esc(order.order_id || "")}">Complete</button>
-        </div>` : "";
+        const sellerActions = columns === 5 ? sellerOrderActionRow(order) : "";
         return `<article class="order-card"><div class="section-head compact-head"><div><p class="eyebrow">${esc(actor)}</p><h3>${esc(title)}</h3><p class="mono">${esc(offer)}</p></div>${statusBadge(order.status)}</div>${orderTimeline(order)}${sellerActions}</article>`;
       });
       cards.innerHTML = pendingOrders.map(pendingOrderCard).concat(projectedCards).join("");
@@ -906,6 +1021,38 @@
     }
   }
 
+  async function publishSellerListing(announce, product, offer) {
+    const announceResult = await api("/api/v1/seller/announce", {
+      method: "POST",
+      tokenRole: "seller",
+      body: sellerAnnounce(announce),
+      action: "POST /api/v1/seller/announce"
+    });
+    if (!announceResult.ok) return announceResult;
+
+    const productResult = await api("/api/v1/seller/products", {
+      method: "POST",
+      tokenRole: "seller",
+      body: sellerProduct(product),
+      action: "POST /api/v1/seller/products"
+    });
+    if (!productResult.ok) return productResult;
+
+    const offerResult = await api("/api/v1/seller/offers", {
+      method: "POST",
+      tokenRole: "seller",
+      body: sellerOffer(offer),
+      action: "POST /api/v1/seller/offers"
+    });
+    if (offerResult.ok) {
+      await pollCatalog(10);
+      resetSellerDraftIds();
+      clearSellerImage();
+      toast("Listing published", "success", "The product card should appear after projection catches up.");
+    }
+    return offerResult;
+  }
+
   async function pollOrders(role, attempts = 10, { pendingOrderId } = {}) {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       await refreshOrders(role);
@@ -976,8 +1123,15 @@
     });
     offer && offer.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const result = await api("/api/v1/seller/offers", { method: "POST", tokenRole: "seller", body: sellerOffer(offer), action: "POST /api/v1/seller/offers" });
-      if (result.ok) await pollCatalog();
+      await publishSellerListing(announce, product, offer);
+    });
+    const imageInput = $("[data-product-image-input]");
+    imageInput && imageInput.addEventListener("change", async () => {
+      const file = imageInput.files && imageInput.files[0];
+      if (file) await handleProductImageFile(file);
+    });
+    product && product.elements.kind && product.elements.kind.addEventListener("input", () => {
+      if (!product.elements.image_src || !product.elements.image_src.value) setProductImagePreview("");
     });
     order && order.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -1018,6 +1172,8 @@
       }
       const button = event.target.closest("[data-action='seller-orders']");
       if (button) refreshOrders("seller");
+      const clearImage = event.target.closest("[data-product-image-clear]");
+      if (clearImage) clearSellerImage();
     });
     refreshCatalog();
     refreshOrders("seller");

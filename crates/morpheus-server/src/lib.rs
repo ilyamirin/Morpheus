@@ -1495,6 +1495,18 @@ where
     ) {
         return response;
     }
+    let media = request
+        .image_src
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+        .map(|image_src| {
+            json!([{
+                "kind": "image",
+                "uri": image_src,
+                "role": "primary"
+            }])
+        })
+        .unwrap_or_else(|| json!([]));
     publish_generated(
         &state,
         vec![marketplace_event(
@@ -1512,7 +1524,8 @@ where
                 "description": request.description,
                 "categories": request.categories,
                 "tags": request.tags,
-                "media": [],
+                "media": media,
+                "image_src": request.image_src,
                 "terms_hash": request.terms_hash,
             }),
         )],
@@ -2271,6 +2284,11 @@ where
         &request.actor_id,
     ) {
         return response;
+    }
+    match order_has_event(&state.store, &order_id, event_type, None).await {
+        Ok(true) => return accepted_noop_order_response(&state, &order_id).await,
+        Ok(false) => {}
+        Err(err) => return store_error_response(err.message, err.code),
     }
     order_event_response(
         &state,

@@ -429,6 +429,11 @@ async fn seller_ui_contains_storefront_anchors_and_hooks() {
         &[
             "My Store",
             "Quick Add",
+            "Publish listing also activates the seller and saves the product.",
+            "Product image",
+            r#"data-product-image-input"#,
+            r#"data-product-image-preview"#,
+            r#"data-product-image-clear"#,
             "Withdraw",
             "Store",
             "Orders",
@@ -522,6 +527,32 @@ async fn ui_javascript_tracks_projection_pending_buyer_orders() {
             "Refresh orders",
             "projection_timeout",
             "data-seller-offer-withdraw",
+            "publishSellerListing",
+            "resetSellerDraftIds",
+            "compressProductImage",
+            "primaryMediaImage",
+        ],
+    );
+}
+
+#[tokio::test]
+async fn ui_javascript_renders_status_aware_seller_order_actions() {
+    let (status, content_type, body) = send_ui_body_request("/ui/assets/app.js").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("javascript")),
+        "{content_type:?}"
+    );
+    assert_contains_all(
+        &body,
+        &[
+            "function sellerOrderActions(status)",
+            "entitlement_granted",
+            "function sellerOrderActionRow(order)",
+            "No seller action available",
         ],
     );
 }
@@ -899,6 +930,59 @@ async fn seller_announce_requires_seller_token_and_local_seller_actor() {
     assert_eq!(unauthorized, StatusCode::UNAUTHORIZED);
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     assert_eq!(store.catalog_sellers().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn seller_product_upsert_preserves_uploaded_product_image_metadata() {
+    let store = InMemoryEventStore::default();
+    let seller = json!({
+        "seller_id": "seller:shop.example:01JSELLER",
+        "display_name": "Fixture Seller",
+        "legal_profile_ref": "https://shop.example/legal",
+        "terms_ref": "https://shop.example/terms",
+        "terms_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "supported_payment_adapters": ["mock"],
+        "supported_entitlement_types": ["external_entitlement"]
+    });
+    let image_src = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD";
+    let product = json!({
+        "seller_id": "seller:shop.example:01JSELLER",
+        "product_id": "prod:shop.example:01JPRODIMG",
+        "revision": 1,
+        "title": "Book with cover",
+        "description": "A product with an uploaded image.",
+        "kind": "digital_service",
+        "categories": ["books"],
+        "tags": ["morpheus"],
+        "image_src": image_src,
+        "terms_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    });
+
+    let (seller_status, _) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/seller/announce",
+        Some("Bearer seller-token"),
+        seller,
+    )
+    .await;
+    let (product_status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/seller/products",
+        Some("Bearer seller-token"),
+        product,
+    )
+    .await;
+
+    assert_eq!(seller_status, StatusCode::ACCEPTED);
+    assert_eq!(product_status, StatusCode::ACCEPTED, "{body}");
+    let products = store.catalog_products().await.unwrap();
+    assert_eq!(products.len(), 1);
+    assert_eq!(products[0].body["image_src"], image_src);
+    assert_eq!(products[0].body["media"][0]["kind"], "image");
+    assert_eq!(products[0].body["media"][0]["uri"], image_src);
+    assert_eq!(products[0].body["media"][0]["role"], "primary");
 }
 
 #[tokio::test]
@@ -1369,6 +1453,56 @@ async fn seller_order_action_joins_order_room_before_publish() {
         joined_rooms.lock().unwrap().as_slice(),
         ["!order:customer.example"]
     );
+}
+
+#[tokio::test]
+async fn seller_order_complete_retry_is_idempotent_without_room_join() {
+    let store = store_with_admin_projection_data().await;
+    store
+        .upsert_order(OrderProjectionRecord {
+            order_id: "ord:customer.example:01JORDER".into(),
+            room_id: "!order:customer.example".into(),
+            customer_id: "customer:customer.example:01JCUST".into(),
+            seller_id: "seller:shop.example:01JSELLER".into(),
+            offer_id: "offer:shop.example:01JOFFER".into(),
+            status: "completed".into(),
+            body: json!({ "order_id": "ord:customer.example:01JORDER" }),
+        })
+        .await
+        .unwrap();
+    store
+        .record_order_event(
+            "ord:customer.example:01JORDER",
+            "evt:shop.example:01JCOMPLETE",
+            "io.marketplace.order.completed",
+            json!({ "order_id": "ord:customer.example:01JORDER" }),
+        )
+        .await
+        .unwrap();
+
+    let publisher = RecordingPublisher::default();
+    let joined_rooms = publisher.joined_rooms.clone();
+    let app = build_router_with_publisher(server_config(), store, publisher);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/seller/orders/ord:customer.example:01JORDER/complete")
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "actor_id": "seller:shop.example:01JSELLER" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["event_ids"], json!([]));
+    assert!(joined_rooms.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

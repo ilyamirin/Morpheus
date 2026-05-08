@@ -44,6 +44,7 @@ User-facing edge cases now covered:
 - [Full HTML Documentation](https://ilyamirin.github.io/Morpheus) is the broad GitHub Pages documentation for principles, installation, configuration, operation, and federated E2E.
 - [Protocol](docs/protocol.md) describes the Morpheus wire protocol, event model, lifecycles, authority rules, and conformance expectations.
 - [Rust Implementation](docs/rust-implementation.md) describes the workspace architecture, crates, runtime flow, storage, config, tests, and operational scope.
+- [TODO](TODO.md) tracks near-term product and implementation follow-ups.
 
 ## Stack
 

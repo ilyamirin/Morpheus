@@ -319,6 +319,12 @@ pre {
   flex: 1 1 120px;
 }
 
+.muted-text {
+  color: var(--product-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .admin-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

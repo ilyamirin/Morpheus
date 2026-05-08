@@ -83,7 +83,7 @@
         <aside class="quick-add-panel" aria-labelledby="quick-add-title">
           <p class="eyebrow">Quick Add</p>
           <h2 id="quick-add-title">Create a listing</h2>
-          <p class="quick-add-copy">One product card, one price, one publish action.</p>
+          <p class="quick-add-copy">One product card, one price, one publish action. Publish listing also activates the seller and saves the product.</p>
 
           <form class="stack-form compact-form" data-form="seller-announce">
             <input type="hidden" name="seller_id" value="">
@@ -105,6 +105,17 @@
               <span class="label">Category</span>
               <input class="input" name="kind" value="fashion">
             </label>
+            <div class="image-upload-panel">
+              <label class="field">
+                <span class="label">Product image</span>
+                <input class="input file-input" type="file" accept="image/*" data-product-image-input>
+              </label>
+              <input type="hidden" name="image_src" value="">
+              <div class="image-preview" data-product-image-preview>
+                <img src="/ui/assets/products/sneakers.png" alt="Product image preview">
+                <button class="btn btn-small" type="button" data-product-image-clear>Use category image</button>
+              </div>
+            </div>
             <input type="hidden" name="description" value="Lightweight everyday product from Morpheus seller UI.">
             <details class="advanced-panel mini-advanced">
               <summary>Advanced product fields</summary>
