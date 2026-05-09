@@ -451,7 +451,6 @@ async fn seller_ui_contains_storefront_anchors_and_hooks() {
             r#"data-form="seller-announce""#,
             r#"data-form="seller-product""#,
             r#"data-form="seller-offer""#,
-            r#"data-form="seller-order-action""#,
             r#"data-action="seller-orders""#,
             r#"id="seller-orders-rows""#,
             r#"id="seller-order-count""#,
@@ -465,6 +464,8 @@ async fn seller_ui_contains_storefront_anchors_and_hooks() {
         &[
             "Profile -&gt; Product -&gt; Offer -&gt; Publish",
             "Save product",
+            r#"data-form="seller-order-action""#,
+            "seller-order-action-card",
             r#"name="title" value="Soft Runner""#,
             r#"name="amount" value="100.00""#,
         ],

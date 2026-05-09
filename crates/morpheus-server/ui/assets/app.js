@@ -1207,7 +1207,6 @@
     const announce = $('[data-form="seller-announce"]');
     const product = $('[data-form="seller-product"]');
     const offer = $('[data-form="seller-offer"]');
-    const order = $('[data-form="seller-order-action"]');
     announce && announce.addEventListener("submit", async (event) => {
       event.preventDefault();
       const result = await api("/api/v1/seller/announce", { method: "POST", tokenRole: "seller", body: sellerAnnounce(announce), action: "POST /api/v1/seller/announce" });
@@ -1225,21 +1224,10 @@
     product && product.elements.kind && product.elements.kind.addEventListener("input", () => {
       if (!product.elements.image_src || !product.elements.image_src.value) setProductImagePreview("");
     });
-    order && order.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const data = form(order);
-      const step = event.submitter ? event.submitter.dataset.step : "accept";
-      const rawOrderId = decodeURIComponent(data.order_id || DEMO.orderId);
-      const orderId = encodeURIComponent(rawOrderId);
-      const path = step === "complete" ? `/api/v1/seller/orders/${orderId}/complete` : `/api/v1/seller/orders/${orderId}/${step}`;
-      const result = await api(path, { method: "POST", tokenRole: "seller", body: sellerOrder(step, rawOrderId), action: `POST ${path}` });
-      if (result.ok) await refreshOrders("seller");
-    });
     document.addEventListener("click", (event) => {
       const orderAction = event.target.closest("[data-seller-order-step]");
-      if (orderAction && order) {
+      if (orderAction) {
         const orderId = orderAction.dataset.orderId || DEMO.orderId;
-        if (order.elements.order_id) order.elements.order_id.value = orderId;
         const step = orderAction.dataset.sellerOrderStep || "accept";
         const pathId = encodeURIComponent(orderId);
         const path = step === "complete" ? `/api/v1/seller/orders/${pathId}/complete` : `/api/v1/seller/orders/${pathId}/${step}`;
