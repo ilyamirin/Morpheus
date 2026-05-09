@@ -22,10 +22,11 @@ Implemented today:
 - Standalone `morpheus-server --config <path>` runtime backed by Postgres.
 - In-memory, SQLite, and Postgres storage implementations.
 - Public HTTP APIs for admins, sellers, and buyers.
-- Tailwind-powered admin, seller, and buyer PoC UIs served by `morpheus-server`.
+- Static admin, seller, and buyer UIs served by `morpheus-server`: admin auto-refresh, seller storefront with Quick Add and per-order lifecycle actions, buyer gallery with checkout sheet and pending projection state.
 - Rust CLI for config, Synapse registration, conformance, DB migration, admin operations, seller publishing, and buyer catalog/order actions.
 - Real local publish loop in server runtime: `Morpheus API -> Synapse -> Morpheus AS ingest -> Postgres`.
 - Buyer resilience flows for stale offers, pending order projections, and temporarily unavailable trusted remote catalogs.
+- Seller product image upload in the dev UI: images are compressed in-browser and published as product media metadata, with category images as fallback.
 - Three-instance Docker E2E stack: books, smartphone cases, and fashion marketplaces, each with its own Morpheus server, Synapse homeserver, and Postgres database.
 
 Important current limitation:
@@ -52,8 +53,8 @@ User-facing edge cases now covered:
 - Federation: [Matrix](https://matrix.org/) Application Service events on [Element Synapse](https://github.com/element-hq/synapse).
 - Storage: [PostgreSQL](https://www.postgresql.org/) for server deployments; [SQLite](https://www.sqlite.org/) and in-memory stores for local/dev/test flows.
 - Local infrastructure: [Docker](https://www.docker.com/) Compose, [nginx](https://nginx.org/) TLS federation proxies, and generated local CA certificates for E2E.
-- UI: static HTML, vanilla JavaScript, and [Tailwind CSS](https://v3.tailwindcss.com/) with committed generated CSS.
-- Dev assets: product images were generated through [Replicate](https://replicate.com/) and checked in as compressed static JPEGs.
+- UI: static HTML, vanilla JavaScript, and committed CSS. There is no React, npm, Tailwind runtime, or frontend build step in the active workflow.
+- Dev assets: product images were generated through [Replicate](https://replicate.com/) and checked in as compressed static PNG/JPEG assets.
 
 ## Quick Start
 
@@ -144,6 +145,18 @@ This starts:
 - one Postgres database per instance.
 
 The E2E seeds 4-5 sellers per instance, publishes products/offers through the seller CLI, verifies Synapse AS ingest and Postgres projections, checks trusted remote catalog visibility, and exercises idempotent/conflicting transaction behavior.
+
+Local UI URLs after the stack is running:
+
+```text
+books.example    http://127.0.0.1:18081/ui/admin   /ui/seller   /ui/buyer
+cases.example    http://127.0.0.1:18082/ui/admin   /ui/seller   /ui/buyer
+fashion.example  http://127.0.0.1:18083/ui/admin   /ui/seller   /ui/buyer
+```
+
+Demo tokens are `admin-token`, `seller-token`, and `buyer-token`.
+
+The seller UI publishes a listing with one `Publish listing` action. It activates the seller, saves the product, publishes the offer, and then waits for projection catch-up. Product image upload is optional; uploaded covers are compressed locally before being included in product metadata. Seller order lifecycle actions are shown only inside each order card, so the visible next action always belongs to that specific order.
 
 Stop the stack:
 

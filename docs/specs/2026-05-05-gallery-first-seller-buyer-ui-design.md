@@ -139,6 +139,19 @@ The previous profile/product/offer step cards should be compressed into one frie
 - Listing status badge
 - Seller order action card
 
+## Implementation Status
+
+Implemented in the current static UI:
+
+- buyer `Discover` renders offers as gallery cards with product images;
+- buyer `Buy` opens a checkout sheet and `Create order` shows pending projection state until AS ingest catches up;
+- seller `My Store` renders product cards with `Withdraw` actions;
+- seller `Quick Add` supports optional image upload, title, category, price, and one `Publish listing` action;
+- seller order lifecycle actions are shown only on each order card, not as a separate manual order-id control panel;
+- protocol ids and raw responses remain in `Advanced`.
+
+Product image upload is dev-oriented: the browser compresses the selected cover and publishes it as product media metadata. Category-derived images remain the fallback when a product has no custom image.
+
 ## Data Flow
 
 No backend API changes are required for this UI redesign.
@@ -205,9 +218,9 @@ Browser QA should verify:
 
 ## Open Implementation Notes
 
-- Product image assets should be committed under the UI asset tree during implementation.
-- The UI can start with demo images and later bind real product image URLs when the protocol supports product media metadata.
-- If product media is not yet part of the protocol payload, the UI should derive demo images by category for local/dev use only.
+- Product image assets are committed under the UI asset tree.
+- Product media metadata is supported for local/dev covers, but production deployments still need object storage, content safety rules, and stable external media URLs before accepting arbitrary remote media.
+- If a product has no media metadata, the UI derives demo images by category for local/dev use only.
 
 ## Self-Review
 

@@ -130,13 +130,15 @@ Catalog state is a projection of snapshots and deltas:
 3. `io.marketplace.catalog.snapshot.published` publishes snapshot metadata and canonical hash.
 4. `io.marketplace.actor.seller.announced` activates a seller actor.
 5. `io.marketplace.actor.seller.suspended` removes seller eligibility from the local catalog view.
-6. `io.marketplace.product.upserted` adds or revises a product.
+6. `io.marketplace.product.upserted` adds or revises a product. Product media is metadata: v0.1 accepts image references in `media[]`, but delivery artifacts, license secrets, bearer URLs, private files, and credentials remain outside marketplace events.
 7. `io.marketplace.product.withdrawn` removes a product and its offers.
 8. `io.marketplace.offer.upserted` adds or revises an offer with price, terms, entitlement type, and payment capture policy.
 9. `io.marketplace.offer.withdrawn` removes an offer.
 10. `io.marketplace.inventory.updated` updates advisory availability metadata.
 
 Validation requires active sellers, same-instance catalog references, monotonic product/offer revisions, valid product kinds, valid entitlement types, canonical snapshot hash checks, and contiguous delta replay.
+
+Local/dev UI may publish small compressed product cover images as product media metadata. Production deployments should prefer external object storage with stable content hashes and safety policy; the protocol still forbids using marketplace events as a secret or artifact delivery channel.
 
 Rust entry points:
 

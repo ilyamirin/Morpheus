@@ -8,9 +8,11 @@ The Morpheus Rust workspace is the production implementation surface for `io.mar
 crates/
   morpheus-protocol      Wire protocol, IDs, envelope validation, schemas, policies
   morpheus-core          Pure catalog/order/payment/entitlement/dispute/arbitration logic
+  morpheus-config        Shared TOML config loading and validation
+  morpheus-api           Shared HTTP DTOs for server and CLI
   morpheus-matrix        Matrix AS transaction helpers and Synapse registration generation
   morpheus-store         EventStore trait, in-memory store, SQLite store, Postgres store, SQL migrations
-  morpheus-server        Axum runtime routes and projection pipeline
+  morpheus-server        Axum runtime, Synapse publisher, AS ingest, projections, UI
   morpheus-cli           Operator CLI
   morpheus-conformance   Required protocol vectors and runner
 ```
@@ -85,6 +87,23 @@ morpheus_matrix::validate_application_service_sender(sender, context)
 morpheus_matrix::generate_synapse_registration(...)
 ```
 
+### `morpheus-config`
+
+Responsibilities:
+
+- shared TOML config deserialization for CLI and server;
+- validation for instance, appservice, database, admin, auth, and allowlist sections;
+- runtime fields for catalog room aliases, order room aliases, Synapse publisher URL/token, role token env vars, and trusted peer catalog indexing.
+
+### `morpheus-api`
+
+Responsibilities:
+
+- request/response DTOs shared by `morpheus-server` and `morpheus-cli`;
+- admin, seller, and buyer API shapes;
+- projection summaries and event DTOs;
+- stable error envelope shape for public API clients.
+
 ### `morpheus-store`
 
 Responsibilities:
@@ -111,6 +130,10 @@ Idempotency policy:
 Responsibilities:
 
 - Axum router construction through `build_router(config, store)`;
+- standalone `morpheus-server --config <path>` runtime;
+- public admin, seller, and buyer APIs;
+- static admin, seller, and buyer UI routes under `/ui/*`;
+- Synapse Matrix publisher for public write APIs;
 - `PUT /_matrix/app/v1/transactions/{txn_id}`;
 - homeserver token validation on the Matrix AS endpoint;
 - Matrix transaction event ID validation;
@@ -120,6 +143,7 @@ Responsibilities:
 - accepted marketplace event projection;
 - projection error recording;
 - health, readiness, metrics, and admin routes.
+- trusted remote catalog indexing over configured Morpheus peer APIs.
 
 HTTP routes:
 
@@ -130,19 +154,42 @@ GET  /metrics
 PUT  /_matrix/app/v1/transactions/{txn_id}
 GET  /admin/config
 GET  /admin/allowlist
+GET  /admin/projections/summary
+GET  /admin/events
+POST /admin/rooms/bootstrap
 POST /admin/catalog/rebuild
 POST /admin/orders/{order_id}/replay
+POST /api/v1/seller/announce
+POST /api/v1/seller/products
+POST /api/v1/seller/offers
+POST /api/v1/seller/offers/{offer_id}/withdraw
+GET  /api/v1/seller/orders
+POST /api/v1/seller/orders/{order_id}/accept
+POST /api/v1/seller/orders/{order_id}/payment-intent
+POST /api/v1/seller/orders/{order_id}/payment-capture
+POST /api/v1/seller/orders/{order_id}/entitlement-grant
+POST /api/v1/seller/orders/{order_id}/complete
+GET  /api/v1/catalog/sellers
+GET  /api/v1/catalog/products
+GET  /api/v1/catalog/offers
+POST /api/v1/buyer/orders
+GET  /api/v1/buyer/orders
+GET  /api/v1/buyer/orders/{order_id}
+POST /api/v1/buyer/orders/{order_id}/cancel
 ```
 
-Admin routes require `Authorization: Bearer <admin-token>`.
+Admin, seller, and buyer routes require their matching static role bearer token. Admin tokens do not authorize seller/buyer routes.
 
 The server crate exposes both a reusable router and a standalone binary. The binary runs as:
 
 ```bash
-MORPHEUS_ADMIN_TOKEN=admin-token cargo run -p morpheus-server -- --config config/local.toml
+MORPHEUS_ADMIN_TOKEN=admin-token \
+MORPHEUS_SELLER_TOKEN=seller-token \
+MORPHEUS_BUYER_TOKEN=buyer-token \
+cargo run -p morpheus-server -- --config config/local.toml
 ```
 
-It loads TOML config, reads the admin bearer token from the configured env var, runs Postgres migrations, constructs `PostgresEventStore`, and binds the configured address.
+It loads TOML config, reads role bearer tokens from configured env vars, runs Postgres migrations, constructs `PostgresEventStore`, configures the Synapse publisher, starts remote catalog indexing, and binds the configured address.
 
 ### `morpheus-cli`
 
@@ -155,6 +202,9 @@ morpheus conformance run
 morpheus snapshot verify
 morpheus db migrate
 morpheus catalog rebuild
+morpheus admin health/config/allowlist/projections/events/rooms bootstrap
+morpheus seller announce/product upsert/offer upsert/offer withdraw/orders/order/payment/entitlement
+morpheus buyer catalog/order
 ```
 
 Examples:
@@ -183,6 +233,16 @@ cargo run -p morpheus-cli -- conformance run
 ```
 
 ## Runtime Flow
+
+Public write APIs use the network loop in server runtime:
+
+1. Admin/seller/buyer UI, CLI, or HTTP client calls `morpheus-server` with a role bearer token.
+2. The server validates the role and actor instance.
+3. The server builds valid `io.marketplace.*` event bodies and publishes them to Synapse through the Matrix Client API using the Application Service token.
+4. Synapse delivers the events back to Morpheus through the Application Service transaction endpoint.
+5. Only AS ingest validates and updates projections.
+
+Tests can still use an in-process publisher, but standalone server runtime does not bypass Synapse for local writes.
 
 The Application Service ingest path is:
 
@@ -229,6 +289,7 @@ Main sections:
 [appservice]
 [database]
 [admin]
+[auth]
 [[allowlist.instances]]
 ```
 
@@ -335,11 +396,13 @@ Coverage policy:
 Implemented now:
 
 - protocol/core/matrix/conformance Rust parity surface;
-- AppService transaction route and admin/ops routes as an Axum router and standalone binary;
+- AppService transaction route, public role APIs, static UIs, and admin/ops routes as an Axum router and standalone binary;
 - raw event retention and projection behavior;
 - in-memory, SQLite, and Postgres store implementations;
 - SQL migration text for SQLite and Postgres;
-- CLI operator tools;
+- CLI operator, seller, and buyer tools;
+- Synapse-backed local publish loop and trusted peer catalog indexing;
+- seller/buyer UI flows for product image upload, stale/withdrawn offers, pending order projections, cached remote catalog state, and per-order lifecycle actions;
 - Rust-only tests and coverage gate.
 
 Not yet production-hardening:

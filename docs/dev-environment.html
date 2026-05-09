@@ -157,7 +157,7 @@
               <p>
                 `make e2e-three-synapse` поднимает локальную federation-сеть, которая не является чистым mock-ом:
                 seller writes проходят через Morpheus API, Matrix publisher, Synapse, Application Service ingest,
-                protocol validation и Postgres projections. При этом payment adapter в PoC остаётся `mock`,
+                protocol validation и Postgres projections. При этом payment adapter в dev runtime остаётся `mock`,
                 а remote catalog visibility сейчас строится trusted Morpheus peer indexer-ом по API.
                 Order flow использует настоящие backend-owned Matrix order rooms.
               </p>
@@ -344,7 +344,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                   </div>
                   <figcaption>
                     <strong>Seller Store</strong>
-                    <span>Объявить seller actor, сохранить product, опубликовать offer, смотреть orders и выполнять lifecycle.</span>
+                    <span>Загрузить cover, заполнить Quick Add, опубликовать listing, смотреть orders и выполнять lifecycle на карточке заказа.</span>
                   </figcaption>
                 </figure>
                 <figure class="screenshot-card">
@@ -378,7 +378,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                       <td>Seller</td>
                       <td><a class="inline-link" href="http://127.0.0.1:18081/ui/seller"><code>/ui/seller</code></a></td>
                       <td><code>seller-token</code></td>
-                      <td>Storefront cards, quick add listing, seller orders, Accept -> Intent -> Capture -> Grant -> Complete.</td>
+                      <td>Storefront cards, optional cover upload, quick add listing, seller orders, per-order Accept -> Intent -> Capture -> Grant -> Complete.</td>
                     </tr>
                     <tr>
                       <td>Buyer</td>
@@ -403,9 +403,9 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                   <ol>
                     <li>Открыть <a class="inline-link" href="http://127.0.0.1:18081/ui/seller"><code>http://127.0.0.1:18081/ui/seller</code></a>.</li>
                     <li>Проверить token `seller-token` или ввести свой seller bearer.</li>
-                    <li>Нажать `Activate seller`: UI отправляет `POST /api/v1/seller/announce`.</li>
-                    <li>Заполнить title/category и нажать `Save product`: `POST /api/v1/seller/products`.</li>
-                    <li>Заполнить price/currency и нажать `Publish listing`: `POST /api/v1/seller/offers`.</li>
+                    <li>При необходимости загрузить cover image. UI сожмёт картинку в браузере и добавит её в product media metadata.</li>
+                    <li>Заполнить title/category и price/currency.</li>
+                    <li>Нажать `Publish listing`: UI одним действием активирует seller, сохраняет product и публикует offer.</li>
                     <li>После projection refresh карточка появляется в storefront и в buyer catalog.</li>
                   </ol>
                 </article>
@@ -427,22 +427,22 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                   <h3>Seller закрывает lifecycle</h3>
                   <ol>
                     <li>Открыть seller UI того instance, которому принадлежит seller id.</li>
-                    <li>Нажать `Refresh orders`: `GET /api/v1/seller/orders`.</li>
-                    <li>Нажать `Accept`: seller backend lazily join-ится в order room перед publish.</li>
-                    <li>Нажать `Intent`, затем `Capture`: публикуются payment intent/authorized/captured events.</li>
-                    <li>Нажать `Grant`: entitlement grant event фиксирует внешний доступ или license ref.</li>
-                    <li>Нажать `Complete`: order становится completed, admin counters обновляются.</li>
+                    <li>Открыть вкладку `Orders`. Верхней ручной формы order id больше нет: управлять нужно кнопкой внутри конкретной карточки заказа.</li>
+                    <li>Нажать `Accept` на нужной карточке: seller backend lazily join-ится в order room перед publish.</li>
+                    <li>На той же карточке нажать следующий доступный шаг: `Intent`, затем `Capture`.</li>
+                    <li>Затем нажать `Grant`: entitlement grant event фиксирует внешний доступ или license ref.</li>
+                    <li>Нажать `Complete`: order становится completed, купленный offer автоматически снимается с будущей продажи, admin counters обновляются.</li>
                   </ol>
                 </article>
                 <article class="journey-card">
                   <span class="journey-index">W</span>
                   <h3>Seller снимает offer с продажи</h3>
                   <ol>
-                    <li>В текущем PoC UI отдельной кнопки withdraw нет: снятие выполняется через CLI/API.</li>
-                    <li>После `seller offer withdraw` вернуться в <a class="inline-link" href="http://127.0.0.1:18081/ui/buyer"><code>/ui/buyer</code></a> и нажать `Refresh catalog`.</li>
+                    <li>В seller storefront нажать `Withdraw` на карточке offer или выполнить `seller offer withdraw` через CLI/API.</li>
+                    <li>Вернуться в <a class="inline-link" href="http://127.0.0.1:18081/ui/buyer"><code>/ui/buyer</code></a>; catalog обновляется автоматически, при необходимости нажать `Refresh catalog`.</li>
                     <li>Offer должен исчезнуть из discovery для новых покупателей.</li>
                     <li>Если buyer успел открыть stale карточку и нажал `Create order`, backend возвращает `409 OFFER_WITHDRAWN`.</li>
-                    <li>Открыть <a class="inline-link" href="http://127.0.0.1:18081/ui/admin"><code>/ui/admin</code></a>, нажать refresh/rebuild при необходимости и проверить catalog counters/events.</li>
+                    <li>Открыть <a class="inline-link" href="http://127.0.0.1:18081/ui/admin"><code>/ui/admin</code></a> и проверить auto-refresh counters/events; `rebuild catalog` нужен только для ручной переиндексации.</li>
                     <li>Уже созданные orders не переписываются: они продолжают lifecycle по зафиксированным terms/hash.</li>
                     <li>Это важное разделение: withdrawal влияет на будущий catalog discovery, а не отменяет прошлые сделки.</li>
                   </ol>
@@ -451,8 +451,8 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
               <div class="callout">
                 Cancellation и withdrawal имеют разные смыслы. Buyer cancel валиден только до payment/entitlement/completion.
                 Seller offer withdraw снимает offer из будущего catalog discovery, но уже созданные orders продолжают жить
-                по зафиксированным terms/hash. В UI это проверяется как наблюдаемый результат: после CLI/API withdraw
-                buyer catalog больше не показывает снятый offer.
+                по зафиксированным terms/hash. В UI это проверяется как наблюдаемый результат: после withdraw
+                buyer catalog больше не показывает снятый offer, а direct stale order create получает `409 OFFER_WITHDRAWN`.
               </div>
               <div class="callout">
                 Remote catalog indexer работает устойчиво к временной недоступности trusted peer. Если peer API не отвечает,

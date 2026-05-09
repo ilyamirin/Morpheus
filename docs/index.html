@@ -407,7 +407,7 @@ docker run --rm \
 MORPHEUS_SELLER_TOKEN=seller-token \
 MORPHEUS_BUYER_TOKEN=buyer-token \
 cargo run -p morpheus-server -- --config config/local.toml</code></pre>
-                  <p>После старта API и PoC UI доступны на <a class="inline-link" href="http://127.0.0.1:8080"><code>http://127.0.0.1:8080</code></a>.</p>
+                  <p>После старта API и встроенные UI доступны на <a class="inline-link" href="http://127.0.0.1:8080"><code>http://127.0.0.1:8080</code></a>.</p>
                 </article>
               </div>
             </section>
@@ -465,7 +465,12 @@ make e2e-three-synapse-down</code></pre>
                   <code>POST /api/v1/seller/announce</code>
                   <code>POST /api/v1/seller/products</code>
                   <code>POST /api/v1/seller/offers</code>
+                  <code>POST /api/v1/seller/offers/{offer_id}/withdraw</code>
                   <code>GET /api/v1/seller/orders</code>
+                  <code>POST /api/v1/seller/orders/{order_id}/accept</code>
+                  <code>POST /api/v1/seller/orders/{order_id}/payment-intent</code>
+                  <code>POST /api/v1/seller/orders/{order_id}/payment-capture</code>
+                  <code>POST /api/v1/seller/orders/{order_id}/entitlement-grant</code>
                   <code>POST /api/v1/seller/orders/{order_id}/complete</code>
                 </article>
                 <article>
