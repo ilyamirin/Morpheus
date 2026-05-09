@@ -464,6 +464,7 @@ async fn seller_ui_contains_storefront_anchors_and_hooks() {
         &body,
         &[
             "Profile -&gt; Product -&gt; Offer -&gt; Publish",
+            "Save product",
             r#"name="title" value="Soft Runner""#,
             r#"name="amount" value="100.00""#,
         ],
@@ -546,6 +547,19 @@ async fn ui_javascript_tracks_projection_pending_buyer_orders() {
             "primaryMediaImage",
             "validateSellerListing",
             "LISTING_FORM_INCOMPLETE",
+            "function silentGet",
+            "silent: true",
+            "const publishOptions = { silent: true, result: false }",
+            "Publish listing",
+        ],
+    );
+    assert_contains_none(
+        &body,
+        &[
+            r#"api("/api/v1/catalog/sellers", { action: "GET /api/v1/catalog/sellers" })"#,
+            r#"api("/api/v1/catalog/products", { action: "GET /api/v1/catalog/products" })"#,
+            r#"api("/api/v1/catalog/offers", { action: "GET /api/v1/catalog/offers" })"#,
+            r#"api(path, { tokenRole: role, action: `GET ${path}` })"#,
         ],
     );
 }
@@ -567,6 +581,7 @@ async fn ui_javascript_renders_status_aware_seller_order_actions() {
             "function sellerOrderActions(status)",
             "entitlement_granted",
             "function sellerOrderActionRow(order)",
+            "Completed - no further seller action needed.",
             "No seller action available",
         ],
     );

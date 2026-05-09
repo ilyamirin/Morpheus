@@ -238,6 +238,10 @@
     }
   }
 
+  function silentGet(path, { tokenRole, action } = {}) {
+    return api(path, { tokenRole, action, silent: true, result: false });
+  }
+
   function currentSellerId() {
     const input = $('[data-form="seller-announce"] [name="seller_id"]');
     return (input && input.value.trim()) || DEMO.sellerId;
@@ -932,6 +936,9 @@
     const status = String((order && order.status) || "").toLowerCase();
     const actions = sellerOrderActions(status);
     if (!actions.length) {
+      if (status === "completed") {
+        return `<div class="button-row stretch order-action-row"><span class="muted-text">Completed - no further seller action needed.</span></div>`;
+      }
       const label = status ? status.replaceAll("_", " ") : "unknown status";
       return `<div class="button-row stretch order-action-row"><span class="muted-text">No seller action available for ${esc(label)}.</span></div>`;
     }
@@ -993,17 +1000,17 @@
   }
 
   async function refreshCatalog() {
-    const sellers = await api("/api/v1/catalog/sellers", { action: "GET /api/v1/catalog/sellers" });
+    const sellers = await silentGet("/api/v1/catalog/sellers", { action: "GET /api/v1/catalog/sellers" });
     if (sellers.ok) {
       state.sellers = Array.isArray(sellers.body.items) ? sellers.body.items : [];
       renderCatalog("sellers", state.sellers);
     }
-    const products = await api("/api/v1/catalog/products", { action: "GET /api/v1/catalog/products" });
+    const products = await silentGet("/api/v1/catalog/products", { action: "GET /api/v1/catalog/products" });
     if (products.ok) {
       state.products = Array.isArray(products.body.items) ? products.body.items : [];
       renderCatalog("products", state.products);
     }
-    const offers = await api("/api/v1/catalog/offers", { action: "GET /api/v1/catalog/offers" });
+    const offers = await silentGet("/api/v1/catalog/offers", { action: "GET /api/v1/catalog/offers" });
     if (offers.ok) {
       state.offers = Array.isArray(offers.body.items) ? offers.body.items : [];
       if (!state.selectedOffer && state.offers.length) state.selectedOffer = state.offers[0];
@@ -1015,7 +1022,7 @@
 
   async function refreshOrders(role) {
     const path = role === "seller" ? "/api/v1/seller/orders" : "/api/v1/buyer/orders";
-    const result = await api(path, { tokenRole: role, action: `GET ${path}` });
+    const result = await silentGet(path, { tokenRole: role, action: `GET ${path}` });
     if (!result.ok) return;
     state.orders = Array.isArray(result.body && result.body.orders) ? result.body.orders : [];
     if (role === "buyer") reconcilePendingOrders();
@@ -1093,33 +1100,52 @@
     if (!validateSellerListing(product, offer)) {
       return { ok: false, status: "not-submitted", body: { code: "LISTING_FORM_INCOMPLETE" } };
     }
+    const publishOptions = { silent: true, result: false };
     const announceResult = await api("/api/v1/seller/announce", {
       method: "POST",
       tokenRole: "seller",
       body: sellerAnnounce(announce),
-      action: "POST /api/v1/seller/announce"
+      action: "POST /api/v1/seller/announce",
+      ...publishOptions
     });
-    if (!announceResult.ok) return announceResult;
+    if (!announceResult.ok) {
+      showResult("POST /api/v1/seller/announce", announceResult.status, announceResult.body);
+      toast("Listing not published", "error", "Seller activation failed.");
+      return announceResult;
+    }
 
     const productResult = await api("/api/v1/seller/products", {
       method: "POST",
       tokenRole: "seller",
       body: sellerProduct(product),
-      action: "POST /api/v1/seller/products"
+      action: "POST /api/v1/seller/products",
+      ...publishOptions
     });
-    if (!productResult.ok) return productResult;
+    if (!productResult.ok) {
+      showResult("POST /api/v1/seller/products", productResult.status, productResult.body);
+      toast("Listing not published", "error", "Product save failed.");
+      return productResult;
+    }
 
     const offerResult = await api("/api/v1/seller/offers", {
       method: "POST",
       tokenRole: "seller",
       body: sellerOffer(offer),
-      action: "POST /api/v1/seller/offers"
+      action: "POST /api/v1/seller/offers",
+      ...publishOptions
     });
     if (offerResult.ok) {
       await pollCatalog(10);
       resetSellerDraftIds();
       clearSellerImage();
+      showResult("Publish listing", offerResult.status, {
+        status: "submitted",
+        detail: "Seller, product, and offer events were submitted."
+      });
       toast("Listing published", "success", "The product card should appear after projection catches up.");
+    } else {
+      showResult("POST /api/v1/seller/offers", offerResult.status, offerResult.body);
+      toast("Listing not published", "error", "Offer publish failed.");
     }
     return offerResult;
   }
@@ -1185,12 +1211,6 @@
     announce && announce.addEventListener("submit", async (event) => {
       event.preventDefault();
       const result = await api("/api/v1/seller/announce", { method: "POST", tokenRole: "seller", body: sellerAnnounce(announce), action: "POST /api/v1/seller/announce" });
-      if (result.ok) await pollCatalog();
-    });
-    product && product.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      if (!validateSellerProductForm(product)) return;
-      const result = await api("/api/v1/seller/products", { method: "POST", tokenRole: "seller", body: sellerProduct(product), action: "POST /api/v1/seller/products" });
       if (result.ok) await pollCatalog();
     });
     offer && offer.addEventListener("submit", async (event) => {
@@ -1281,7 +1301,7 @@
         if (result.ok) await refreshOrders("buyer");
         return;
       }
-      api(`/api/v1/buyer/orders/${orderId}`, { tokenRole: "buyer", action: "GET /api/v1/buyer/orders/{order_id}" });
+      silentGet(`/api/v1/buyer/orders/${orderId}`, { tokenRole: "buyer", action: "GET /api/v1/buyer/orders/{order_id}" });
     });
     document.addEventListener("click", (event) => {
       if (event.target.closest("[data-checkout-close]") || event.target.closest("[data-checkout-overlay]")) {
