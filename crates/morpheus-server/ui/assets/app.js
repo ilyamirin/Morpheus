@@ -52,7 +52,7 @@
     "prod:fashion.example:FASHIONPROD0501": "/ui/assets/products/seed/fashionprod0501.jpg",
     "prod:fashion.example:FASHIONPROD0502": "/ui/assets/products/seed/fashionprod0502.jpg"
   };
-  const state = { sellers: [], products: [], offers: [], orders: [], selectedOffer: null, pendingOrders: [] };
+  const state = { sellers: [], products: [], offers: [], orders: [], selectedOffer: null, pendingOrders: [], pendingListings: [] };
   let resultPanel = null;
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -182,6 +182,59 @@
     });
   }
 
+  function setSellerSettingsOpen(open) {
+    const panel = $("[data-seller-settings-panel]");
+    const overlay = $("[data-seller-settings-overlay]");
+    const toggle = $("[data-seller-settings-toggle]");
+    if (!panel || !overlay) return;
+    panel.hidden = !open;
+    overlay.hidden = !open;
+    document.body.classList.toggle("settings-open", open);
+    if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function initSellerSettings() {
+    const toggle = $("[data-seller-settings-toggle]");
+    if (!toggle) return;
+    toggle.addEventListener("click", () => setSellerSettingsOpen(true));
+    document.addEventListener("click", (event) => {
+      if (event.target.closest("[data-seller-settings-close]") || event.target.closest("[data-seller-settings-overlay]")) {
+        setSellerSettingsOpen(false);
+      }
+      if (event.target.closest(".role-tab-debug")) {
+        setSellerSettingsOpen(false);
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") setSellerSettingsOpen(false);
+    });
+  }
+
+  function setSellerQuickAddOpen(open) {
+    const panel = $("[data-seller-quick-add-panel]");
+    const overlay = $("[data-seller-quick-add-overlay]");
+    const toggles = $$("[data-seller-quick-add-toggle]");
+    if (!panel || !overlay) return;
+    panel.hidden = !open;
+    overlay.hidden = !open;
+    document.body.classList.toggle("quick-add-open", open);
+    toggles.forEach((toggle) => toggle.setAttribute("aria-expanded", open ? "true" : "false"));
+  }
+
+  function initSellerQuickAdd() {
+    const toggles = $$("[data-seller-quick-add-toggle]");
+    if (!toggles.length) return;
+    toggles.forEach((toggle) => toggle.addEventListener("click", () => setSellerQuickAddOpen(true)));
+    document.addEventListener("click", (event) => {
+      if (event.target.closest("[data-seller-quick-add-close]") || event.target.closest("[data-seller-quick-add-overlay]")) {
+        setSellerQuickAddOpen(false);
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") setSellerQuickAddOpen(false);
+    });
+  }
+
   function initTokens() {
     $$("[data-token]").forEach((input) => {
       const role = input.dataset.token;
@@ -210,6 +263,13 @@
   function setText(idOrKey, text) {
     const el = document.getElementById(idOrKey) || $(`[data-text="${idOrKey}"]`);
     if (el) el.textContent = text;
+  }
+
+  function setSellerSyncStatus(text, accent = "accent-cyan") {
+    const node = document.getElementById("seller-sync-status");
+    if (!node) return;
+    node.textContent = text;
+    node.className = `status-pill ${accent}`;
   }
 
   function showResult(action, status, response) {
@@ -621,6 +681,13 @@
       if (sellerForm.elements.legal_profile_ref) sellerForm.elements.legal_profile_ref.value = `https://${LOCAL_INSTANCE}/legal`;
       if (sellerForm.elements.terms_ref) sellerForm.elements.terms_ref.value = `https://${LOCAL_INSTANCE}/terms`;
     }
+    const sellerDisplayName = $("[data-seller-display-name]");
+    if (sellerDisplayName && sellerForm && sellerForm.elements.display_name) {
+      sellerDisplayName.value = sellerForm.elements.display_name.value || "Fixture Seller";
+      sellerDisplayName.addEventListener("input", () => {
+        sellerForm.elements.display_name.value = sellerDisplayName.value || "Fixture Seller";
+      });
+    }
     const productForm = $('[data-form="seller-product"]');
     if (productForm) {
       if (productForm.elements.product_id) productForm.elements.product_id.value = DEMO.productId;
@@ -828,12 +895,72 @@
     }).join("");
   }
 
+  function sellerOrdersNeedingAction() {
+    return state.orders.filter((order) => sellerOrderActions(order && order.status).length > 0).length;
+  }
+
+  function updateSellerMetrics() {
+    const localOffers = state.offers.filter((offer) => objectInstance(offer.seller_id || offer.offer_id) === LOCAL_INSTANCE);
+    setText("seller-published-count", String(localOffers.length));
+    setText("seller-draft-count", String(state.pendingListings.length));
+    setText("seller-action-count", String(sellerOrdersNeedingAction()));
+  }
+
+  function sellerEmptyStore() {
+    return `<div class="empty-state order-empty-state seller-empty-store">
+      <strong>No live listings yet</strong>
+      <span>Create a listing or refresh after projection catches up. Demo previews are shown only before a successful catalog sync.</span>
+      <button class="btn btn-primary" type="button" data-seller-quick-add-toggle>Add listing</button>
+    </div>`;
+  }
+
+  function pendingSellerListingCard(entry) {
+    return `<article class="seller-product-card listing-pending">
+      <img src="${esc(entry.image_src || PRODUCT_IMAGES[entry.kind] || PRODUCT_IMAGES.sneakers)}" alt="${esc(entry.title)}">
+      <div class="seller-card-body">
+        <span class="status-pill accent-amber">Projection pending</span>
+        <h3>${esc(entry.title)}</h3>
+        <p>${esc(LOCAL_INSTANCE)} · ${esc(normalizeTitle(entry.kind || "marketplace"))}</p>
+        <div class="seller-card-footer">
+          <strong>${esc(entry.price)}</strong>
+          <button class="btn btn-small" type="button" data-action="seller-catalog">Refresh catalog</button>
+        </div>
+      </div>
+    </article>`;
+  }
+
+  function markSellerListingPending(product, offer) {
+    if (!product || !offer) return null;
+    const productData = form(product);
+    const offerData = form(offer);
+    const offerId = offerData.offer_id || DEMO.offerId;
+    const entry = {
+      offer_id: offerId,
+      title: productData.title || "Submitted listing",
+      kind: productKind({ body: { categories: [productData.kind], kind: productData.kind } }),
+      image_src: productData.image_src || "",
+      price: `${offerData.amount || "0.00"} ${offerData.currency || "USD"}`,
+      submitted_at: new Date().toISOString()
+    };
+    state.pendingListings = state.pendingListings.filter((item) => item.offer_id !== offerId);
+    state.pendingListings.unshift(entry);
+    renderSellerStoreCards();
+    showResult("Publish listing", "projection_pending", {
+      offer_id: offerId,
+      status: "Projection pending",
+      guidance: "The listing was submitted. Waiting for /api/v1/catalog/offers projection."
+    });
+    toast("Listing submitted", "success", "Projection pending in My Store.");
+    return entry;
+  }
+
   function renderSellerStoreCards() {
     const target = document.getElementById("seller-store-cards");
     if (!target) return;
     const localOffers = state.offers.filter((offer) => objectInstance(offer.seller_id || offer.offer_id) === LOCAL_INSTANCE);
-    if (!localOffers.length) return;
-    target.innerHTML = localOffers.map((offer) => {
+    const projectedIds = new Set(localOffers.map((offer) => offer.offer_id).filter(Boolean));
+    state.pendingListings = state.pendingListings.filter((entry) => entry && entry.offer_id && !projectedIds.has(entry.offer_id));
+    const liveCards = localOffers.map((offer) => {
       const product = productForOffer(offer);
       const title = offerTitle(offer);
       const category = normalizeTitle(pick(product, ["body", "kind"], "marketplace"));
@@ -849,7 +976,15 @@
           </div>
         </div>
       </article>`;
-    }).join("");
+    });
+    const pendingCards = state.pendingListings.map(pendingSellerListingCard);
+    const cards = pendingCards.concat(liveCards);
+    updateSellerMetrics();
+    if (!cards.length) {
+      if (target.dataset.catalogSynced === "true") target.innerHTML = sellerEmptyStore();
+      return;
+    }
+    target.innerHTML = cards.join("");
   }
 
   function orderTimeline(order) {
@@ -974,14 +1109,14 @@
   function sellerOrderActions(status) {
     const normalized = String(status || "").toLowerCase();
     const actionsByStatus = {
-      created: [{ step: "accept", label: "Accept", primary: false }],
-      accepted: [{ step: "payment-intent", label: "Intent", primary: false }],
-      payment_intent_created: [{ step: "payment-capture", label: "Capture", primary: false }],
-      payment_authorized: [{ step: "payment-capture", label: "Capture", primary: false }],
-      payment_captured: [{ step: "entitlement-grant", label: "Grant", primary: false }],
-      entitlement_granted: [{ step: "complete", label: "Complete", primary: true }],
-      entitlement_activated: [{ step: "complete", label: "Complete", primary: true }],
-      entitlement_completed: [{ step: "complete", label: "Complete", primary: true }]
+      created: [{ step: "accept", label: "Accept order", primary: false }],
+      accepted: [{ step: "payment-intent", label: "Request payment", primary: false }],
+      payment_intent_created: [{ step: "payment-capture", label: "Confirm payment", primary: false }],
+      payment_authorized: [{ step: "payment-capture", label: "Confirm payment", primary: false }],
+      payment_captured: [{ step: "entitlement-grant", label: "Grant access", primary: false }],
+      entitlement_granted: [{ step: "complete", label: "Complete order", primary: true }],
+      entitlement_activated: [{ step: "complete", label: "Complete order", primary: true }],
+      entitlement_completed: [{ step: "complete", label: "Complete order", primary: true }]
     };
     return actionsByStatus[normalized] || [];
   }
@@ -1006,6 +1141,7 @@
   function renderOrders(rowsId, countId, columns) {
     const rows = document.getElementById(rowsId);
     if (!rows) return;
+    const isSeller = rowsId === "seller-orders-rows";
     const pendingOrders = rowsId === "buyer-orders-rows" ? unresolvedPendingOrders() : [];
     if (countId) {
       const pendingText = pendingOrders.length ? `, ${pendingOrders.length} pending` : "";
@@ -1013,8 +1149,13 @@
     }
     const cards = ensureOrderCards(rows, rowsId);
     if (!state.orders.length && !pendingOrders.length) {
-      rows.innerHTML = `<tr><td colspan="${columns}" class="empty-cell">No orders found. Create one from the buyer workspace, then refresh.</td></tr>`;
-      if (cards) cards.innerHTML = `<div class="empty-state order-empty-state"><strong>No orders yet</strong><span>Browse catalog and choose a live projected offer to start an order.</span><a class="btn btn-primary" href="#discover" data-action="buyer-discover">Browse catalog</a></div>`;
+      rows.innerHTML = `<tr><td colspan="${columns}" class="empty-cell">${isSeller ? "No seller orders need action." : "No orders found. Create one from the buyer workspace, then refresh."}</td></tr>`;
+      if (cards) {
+        cards.innerHTML = isSeller
+          ? `<div class="empty-state order-empty-state"><strong>No orders need seller action</strong><span>New buyer orders will appear here after they are projected.</span><a class="btn btn-primary" href="#store" data-action="seller-store">Back to store</a></div>`
+          : `<div class="empty-state order-empty-state"><strong>No orders yet</strong><span>Browse catalog and choose a live projected offer to start an order.</span><a class="btn btn-primary" href="#discover" data-action="buyer-discover">Browse catalog</a></div>`;
+      }
+      if (isSeller) updateSellerMetrics();
       return;
     }
     if (cards) {
@@ -1034,6 +1175,7 @@
       return `<tr><td class="mono">${esc(order.order_id)}</td><td>${statusBadge(order.status)}</td><td class="mono">${esc(order.offer_id)}</td></tr>`;
     });
     rows.innerHTML = pendingOrders.map(pendingOrderRow).concat(projectedRows).join("");
+    if (isSeller) updateSellerMetrics();
   }
 
   async function refreshAdmin({ silent = true } = {}) {
@@ -1055,6 +1197,7 @@
 
   async function refreshCatalog() {
     setBuyerSyncStatus("Syncing catalog", "accent-amber");
+    setSellerSyncStatus("Syncing catalog", "accent-amber");
     const sellers = await silentGet("/api/v1/catalog/sellers", { action: "GET /api/v1/catalog/sellers" });
     if (sellers.ok) {
       state.sellers = Array.isArray(sellers.body.items) ? sellers.body.items : [];
@@ -1070,12 +1213,16 @@
       state.offers = Array.isArray(offers.body.items) ? offers.body.items : [];
       if (!state.selectedOffer && state.offers.length) state.selectedOffer = state.offers[0];
       renderCatalog("offers", state.offers);
+      const sellerTarget = document.getElementById("seller-store-cards");
+      if (sellerTarget) sellerTarget.dataset.catalogSynced = "true";
       renderSellerStoreCards();
       updateSelectedOfferDetail();
       const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       setBuyerSyncStatus(state.offers.length ? `Updated ${stamp}` : "No live offers", state.offers.length ? "accent-emerald" : "accent-amber");
+      setSellerSyncStatus(state.offers.length ? `Updated ${stamp}` : "No live listings", state.offers.length ? "accent-emerald" : "accent-amber");
     } else {
       setBuyerSyncStatus("Demo preview", "accent-cyan");
+      setSellerSyncStatus("Demo preview", "accent-cyan");
     }
   }
 
@@ -1085,7 +1232,10 @@
     if (!result.ok) return;
     state.orders = Array.isArray(result.body && result.body.orders) ? result.body.orders : [];
     if (role === "buyer") reconcilePendingOrders();
-    if (role === "seller") renderOrders("seller-orders-rows", "seller-order-count", 5);
+    if (role === "seller") {
+      renderOrders("seller-orders-rows", "seller-order-count", 5);
+      updateSellerMetrics();
+    }
     if (role === "buyer") renderOrders("buyer-orders-rows", "buyer-order-count", 3);
   }
 
@@ -1194,9 +1344,11 @@
       ...publishOptions
     });
     if (offerResult.ok) {
+      markSellerListingPending(product, offer);
       await pollCatalog(10);
       resetSellerDraftIds();
       clearSellerImage();
+      setSellerQuickAddOpen(false);
       showResult("Publish listing", offerResult.status, {
         status: "submitted",
         detail: "Seller, product, and offer events were submitted."
@@ -1263,6 +1415,8 @@
   }
 
   function bindSeller() {
+    initSellerSettings();
+    initSellerQuickAdd();
     const announce = $('[data-form="seller-announce"]');
     const product = $('[data-form="seller-product"]');
     const offer = $('[data-form="seller-offer"]');
@@ -1284,6 +1438,11 @@
       if (!product.elements.image_src || !product.elements.image_src.value) setProductImagePreview("");
     });
     document.addEventListener("click", (event) => {
+      const quickAddToggle = event.target.closest("[data-seller-quick-add-toggle]");
+      if (quickAddToggle) {
+        setSellerQuickAddOpen(true);
+        return;
+      }
       const orderAction = event.target.closest("[data-seller-order-step]");
       if (orderAction) {
         const orderId = orderAction.dataset.orderId || DEMO.orderId;
@@ -1311,11 +1470,24 @@
       }
       const button = event.target.closest("[data-action='seller-orders']");
       if (button) refreshOrders("seller");
+      const catalogButton = event.target.closest("[data-action='seller-catalog']");
+      if (catalogButton) refreshCatalog();
+      const storeButton = event.target.closest("[data-action='seller-store']");
+      if (storeButton) {
+        const storeTab = $('.role-tab[href="#store"]');
+        if (storeTab) storeTab.click();
+      }
       const clearImage = event.target.closest("[data-product-image-clear]");
       if (clearImage) clearSellerImage();
     });
     refreshCatalog();
     refreshOrders("seller");
+    window.setInterval(() => {
+      if (document.visibilityState !== "hidden") {
+        refreshCatalog();
+        refreshOrders("seller");
+      }
+    }, 15000);
   }
 
   function bindBuyer() {

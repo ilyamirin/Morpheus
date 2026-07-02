@@ -9,15 +9,16 @@
   </head>
   <body data-page="seller" class="app-shell light-theme">
     <header class="topbar light-topbar">
-      <div class="page-wrap topbar-grid">
+      <div class="page-wrap topbar-grid seller-topbar-grid">
         <div>
           <p class="eyebrow">Seller storefront</p>
           <h1 class="page-title">My Store</h1>
         </div>
-        <label class="token-field" title="Stored locally only">
-          <span>Seller bearer token</span>
-          <input class="input" data-token="seller" placeholder="seller-token" autocomplete="off">
-        </label>
+        <div class="topbar-actions">
+          <span class="status-pill accent-cyan" id="seller-sync-status">Demo preview</span>
+          <button class="btn btn-primary" type="button" data-seller-quick-add-toggle aria-controls="seller-quick-add-panel" aria-expanded="false">Add listing</button>
+          <button class="btn btn-small" type="button" data-seller-settings-toggle aria-controls="seller-settings-panel" aria-expanded="false" title="Seller settings" aria-label="Seller settings">Settings</button>
+        </div>
       </div>
     </header>
 
@@ -25,7 +26,6 @@
       <nav class="role-tabs" aria-label="Seller sections">
         <a class="role-tab" href="#store">Store</a>
         <a class="role-tab" href="#orders">Orders</a>
-        <a class="role-tab" href="#advanced">Advanced</a>
       </nav>
 
       <section class="store-layout" id="store" aria-labelledby="store-title">
@@ -36,56 +36,77 @@
               <h2 id="store-title">My Store</h2>
               <p>Manage listings as product cards. Keep protocol details in Advanced.</p>
             </div>
-            <button class="btn" data-action="seller-orders">Refresh orders</button>
+            <div class="seller-toolbar">
+              <button class="btn btn-primary" type="button" data-seller-quick-add-toggle aria-controls="seller-quick-add-panel" aria-expanded="false">Add listing</button>
+              <button class="btn" data-action="seller-orders">Refresh orders</button>
+            </div>
+          </div>
+
+          <div class="store-summary-strip" aria-label="Store summary">
+            <div class="metric-card compact-metric">
+              <span class="status-pill accent-emerald">Published listings</span>
+              <strong id="seller-published-count">0</strong>
+            </div>
+            <div class="metric-card compact-metric">
+              <span class="status-pill accent-amber">Pending listings</span>
+              <strong id="seller-draft-count">0</strong>
+            </div>
+            <div class="metric-card compact-metric">
+              <span class="status-pill accent-cyan">Orders needing action</span>
+              <strong id="seller-action-count">0</strong>
+            </div>
           </div>
 
           <div class="seller-product-grid" id="seller-store-cards" aria-label="Seller product cards">
-            <article class="seller-product-card is-live">
+            <article class="seller-product-card is-demo-preview">
               <img src="/ui/assets/products/sneakers.png" alt="Soft Runner sneakers">
               <div class="seller-card-body">
-                <span class="status-pill accent-emerald">Published</span>
+                <span class="status-pill accent-cyan">Demo preview</span>
                 <h3>Soft Runner</h3>
-                <p>fashion.example · external entitlement</p>
+                <p>Preview product card. Refresh catalog to show live projected listings.</p>
                 <div class="seller-card-footer">
                   <strong>100.00 USD</strong>
                   <span id="seller-order-count">0 orders</span>
-                  <button class="btn btn-small btn-danger" type="button">Withdraw</button>
+                  <button class="btn btn-small" type="button" disabled>Preview only</button>
                 </div>
               </div>
             </article>
-            <article class="seller-product-card">
+            <article class="seller-product-card is-demo-preview">
               <img src="/ui/assets/products/books.png" alt="Technical books">
               <div class="seller-card-body">
-                <span class="status-pill accent-amber">Draft</span>
+                <span class="status-pill accent-cyan">Demo preview</span>
                 <h3>Rust Systems Set</h3>
-                <p>books.example · ready to publish</p>
+                <p>Draft-style example only. Use Add listing to create a real listing.</p>
                 <div class="seller-card-footer">
                   <strong>84.00 USD</strong>
-                  <span>No orders</span>
+                  <button class="btn btn-small" type="button" disabled>Preview only</button>
                 </div>
               </div>
             </article>
-            <article class="seller-product-card">
+            <article class="seller-product-card is-demo-preview">
               <img src="/ui/assets/products/cases.png" alt="Smartphone cases">
               <div class="seller-card-body">
-                <span class="status-pill accent-emerald">Published</span>
+                <span class="status-pill accent-cyan">Demo preview</span>
                 <h3>Shield Case</h3>
-                <p>cases.example · unlimited inventory</p>
+                <p>Static sample. Withdraw appears only on live projected offers.</p>
                 <div class="seller-card-footer">
                   <strong>32.00 USD</strong>
-                  <span>1 order</span>
+                  <button class="btn btn-small" type="button" disabled>Preview only</button>
                 </div>
               </div>
             </article>
           </div>
         </div>
+      </section>
 
-        <aside class="quick-add-panel" aria-labelledby="quick-add-title">
+      <div class="seller-quick-add-overlay" data-seller-quick-add-overlay hidden></div>
+      <aside class="quick-add-panel seller-quick-add-panel" id="seller-quick-add-panel" data-seller-quick-add-panel hidden aria-labelledby="quick-add-title" aria-modal="true">
+          <button class="checkout-close" type="button" data-seller-quick-add-close aria-label="Close listing form">×</button>
           <p class="eyebrow">Quick Add</p>
           <h2 id="quick-add-title">Create a listing</h2>
           <p class="quick-add-copy">One product card, one price, one publish action. Publish listing also activates the seller and saves the product.</p>
 
-          <form class="stack-form compact-form" data-form="seller-announce">
+          <form class="stack-form compact-form seller-profile-form" data-form="seller-announce">
             <input type="hidden" name="seller_id" value="">
             <input type="hidden" name="legal_profile_ref" value="">
             <input type="hidden" name="terms_ref" value="">
@@ -93,7 +114,6 @@
               <span class="label">Seller name</span>
               <input class="input" name="display_name" value="Fixture Seller">
             </label>
-            <button class="btn" type="submit">Activate seller</button>
           </form>
 
           <form class="stack-form compact-form" data-form="seller-product">
@@ -160,8 +180,7 @@
             </details>
             <button class="btn btn-primary" type="submit">Publish listing</button>
           </form>
-        </aside>
-      </section>
+      </aside>
 
       <section class="flow-panel quiet-panel" id="orders" aria-labelledby="orders-title">
         <div class="section-head">
@@ -172,6 +191,9 @@
         </div>
 
         <article class="order-card">
+          <div id="seller-orders-rows-cards" class="timeline-list order-card-list">
+            <div class="empty-state order-empty-state"><strong>No orders need seller action</strong><span>New buyer orders will appear here after they are projected.</span><a class="btn btn-primary" href="#store" data-action="seller-store">Back to store</a></div>
+          </div>
           <div class="table-wrap advanced-table">
             <table class="data-table light-table">
               <thead>
@@ -195,6 +217,29 @@
         <pre class="json-panel light-json" id="result-panel">{ "status": "idle" }</pre>
       </section>
     </main>
+
+    <div class="token-settings-overlay" data-seller-settings-overlay hidden></div>
+    <aside class="token-settings-panel seller-settings-panel" id="seller-settings-panel" data-seller-settings-panel hidden aria-labelledby="seller-settings-title" aria-modal="true">
+      <button class="checkout-close" type="button" data-seller-settings-close aria-label="Close seller settings">×</button>
+      <div class="settings-head">
+        <p class="eyebrow">Seller settings</p>
+        <h2 id="seller-settings-title">Store controls</h2>
+        <p>Token and protocol diagnostics stay outside the daily store workflow.</p>
+      </div>
+      <label class="token-field" title="Stored locally only">
+        <span>Seller bearer token</span>
+        <input class="input" data-token="seller" placeholder="seller-token" autocomplete="off">
+      </label>
+      <form class="stack-form compact-form" data-form="seller-settings-profile">
+        <label class="field">
+          <span class="label">Seller display name</span>
+          <input class="input" data-seller-display-name value="Fixture Seller">
+        </label>
+      </form>
+      <div class="settings-actions">
+        <a class="role-tab role-tab-debug" href="#advanced">Advanced tools</a>
+      </div>
+    </aside>
 
     <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
     <script src="/ui/assets/app.js" defer></script>
