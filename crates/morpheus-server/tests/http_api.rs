@@ -485,6 +485,15 @@ async fn buyer_ui_contains_gallery_checkout_anchors_and_hooks() {
             "Gallery",
             "Buy",
             "checkout-sheet",
+            "buyer-sync-status",
+            "buyer-settings-panel",
+            r#"data-token-settings-toggle"#,
+            r#"data-token-settings-panel"#,
+            "Debug tools",
+            "Demo preview",
+            "Load catalog to buy",
+            "Live projected offer",
+            "Browse catalog",
             "Discover",
             "Orders",
             "Advanced",
@@ -505,7 +514,7 @@ async fn buyer_ui_contains_gallery_checkout_anchors_and_hooks() {
             r#""instance_id":"shop.example""#,
         ],
     );
-    assert_contains_none(&body, &["Selected offer"]);
+    assert_contains_none(&body, &["Selected offer", r#"data-demo-buy"#]);
 }
 
 #[tokio::test]
@@ -538,6 +547,13 @@ async fn ui_javascript_tracks_projection_pending_buyer_orders() {
         &[
             "pendingOrders",
             "markBuyerOrderPending",
+            "initBuyerSettings",
+            "setBuyerSettingsOpen",
+            "setBuyerSyncStatus",
+            "isLiveProjectedOffer",
+            "Live offer unavailable",
+            "Browse catalog",
+            "Order submitted. Confirmation may take a few seconds.",
             "Projection pending",
             "Refresh orders",
             "projection_timeout",

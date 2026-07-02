@@ -9,15 +9,15 @@
   </head>
   <body data-page="buyer" class="app-shell light-theme">
     <header class="topbar light-topbar">
-      <div class="page-wrap topbar-grid">
+      <div class="page-wrap topbar-grid buyer-topbar-grid">
         <div>
           <p class="eyebrow">Buyer marketplace</p>
           <h1 class="page-title">Marketplace</h1>
         </div>
-        <label class="token-field" title="Stored locally only">
-          <span>Buyer bearer token</span>
-          <input class="input" data-token="buyer" placeholder="buyer-token" autocomplete="off">
-        </label>
+        <div class="topbar-actions" aria-label="Buyer connection">
+          <span class="status-pill accent-emerald" id="buyer-sync-status">Catalog ready</span>
+          <button class="btn btn-small" type="button" data-token-settings-toggle aria-expanded="false" aria-controls="buyer-settings-panel">Buyer settings</button>
+        </div>
       </div>
     </header>
 
@@ -25,7 +25,6 @@
       <nav class="role-tabs" aria-label="Marketplace sections">
         <a class="role-tab" href="#discover">Discover</a>
         <a class="role-tab" href="#orders">Orders</a>
-        <a class="role-tab" href="#advanced">Advanced</a>
       </nav>
 
       <section class="market-hero" id="discover" aria-labelledby="market-title">
@@ -38,61 +37,57 @@
             <button class="btn" data-action="buyer-orders">Refresh orders</button>
           </div>
         </div>
-        <div class="market-hero-product">
-          <img src="/ui/assets/products/sneakers.png" alt="Soft Runner sneakers">
-          <div>
-            <span class="status-pill accent-emerald">Featured</span>
-            <strong>Soft Runner</strong>
-            <span>fashion.example · 118 USD</span>
-          </div>
-        </div>
 
         <div class="product-gallery" id="buyer-offers" aria-label="Marketplace offers">
-          <article class="product-card is-featured">
+          <article class="product-card is-demo-preview">
             <img src="/ui/assets/products/sneakers.png" alt="Soft Runner sneakers">
             <div class="product-card-body">
-              <span class="product-meta">fashion.example · Fixture Seller</span>
+              <span class="status-pill accent-cyan">Demo preview</span>
+              <span class="product-meta">fashion.example · Fixture Seller · trusted source</span>
               <h3>Soft Runner</h3>
               <p>Lightweight everyday sneakers from a trusted seller.</p>
               <div class="product-card-footer">
                 <strong>100.00 USD</strong>
-                <button class="btn btn-primary" data-demo-buy>Buy</button>
+                <button class="btn" type="button" disabled>Load catalog to buy</button>
               </div>
             </div>
           </article>
-          <article class="product-card">
+          <article class="product-card is-demo-preview">
             <img src="/ui/assets/products/books.png" alt="Technical books">
             <div class="product-card-body">
-              <span class="product-meta">books.example · Technical Books</span>
+              <span class="status-pill accent-cyan">Demo preview</span>
+              <span class="product-meta">books.example · Technical Books · trusted source</span>
               <h3>Rust Systems Set</h3>
               <p>Curated technical reading bundle for distributed systems.</p>
               <div class="product-card-footer">
                 <strong>84.00 USD</strong>
-                <button class="btn" data-demo-buy>Buy</button>
+                <button class="btn" type="button" disabled>Load catalog to buy</button>
               </div>
             </div>
           </article>
-          <article class="product-card">
+          <article class="product-card is-demo-preview">
             <img src="/ui/assets/products/cases.png" alt="Smartphone cases">
             <div class="product-card-body">
-              <span class="product-meta">cases.example · Shield Cases</span>
+              <span class="status-pill accent-cyan">Demo preview</span>
+              <span class="product-meta">cases.example · Shield Cases · trusted source</span>
               <h3>Shield Case</h3>
               <p>Protective smartphone case with clean everyday styling.</p>
               <div class="product-card-footer">
                 <strong>32.00 USD</strong>
-                <button class="btn" data-demo-buy>Buy</button>
+                <button class="btn" type="button" disabled>Load catalog to buy</button>
               </div>
             </div>
           </article>
-          <article class="product-card">
+          <article class="product-card is-demo-preview">
             <img src="/ui/assets/products/clothing.png" alt="Light jacket and shirt">
             <div class="product-card-body">
-              <span class="product-meta">fashion.example · Urban Apparel</span>
+              <span class="status-pill accent-cyan">Demo preview</span>
+              <span class="product-meta">fashion.example · Urban Apparel · trusted source</span>
               <h3>Light Jacket</h3>
               <p>Minimal outerwear set with external entitlement demo flow.</p>
               <div class="product-card-footer">
                 <strong>146.00 USD</strong>
-                <button class="btn" data-demo-buy>Buy</button>
+                <button class="btn" type="button" disabled>Load catalog to buy</button>
               </div>
             </div>
           </article>
@@ -108,7 +103,11 @@
           <span class="status-pill accent-amber" id="buyer-order-count">0 orders</span>
         </div>
         <div class="timeline-list order-card-list" id="buyer-order-cards" aria-label="Buyer order cards">
-          <div class="empty-state">No orders yet. Buy a product to start an order.</div>
+          <div class="empty-state order-empty-state">
+            <strong>No orders yet</strong>
+            <span>Browse catalog and choose a live projected offer to start an order.</span>
+            <a class="btn btn-primary" href="#discover" data-action="buyer-discover">Browse catalog</a>
+          </div>
         </div>
         <div class="table-wrap advanced-table">
           <table class="data-table light-table compact-table">
@@ -200,8 +199,30 @@
         <span>Total</span>
         <strong data-checkout-price>100.00 USD</strong>
       </div>
+      <div class="checkout-assurance" data-checkout-assurance>
+        <span class="status-pill accent-emerald">Live projected offer</span>
+        <span>Seller trusted. Price snapshot ready.</span>
+      </div>
       <button class="btn btn-primary checkout-submit" type="submit" form="buyer-create-order-form">Create order</button>
       <p class="checkout-note">Protocol details are kept in Advanced.</p>
+    </aside>
+
+    <div class="token-settings-overlay" data-token-settings-overlay hidden></div>
+    <aside class="token-settings-panel" id="buyer-settings-panel" data-token-settings-panel hidden aria-label="Buyer settings">
+      <button class="checkout-close" type="button" data-token-settings-close aria-label="Close buyer settings">×</button>
+      <div class="settings-head">
+        <p class="eyebrow">Settings</p>
+        <h2>Buyer settings</h2>
+        <p>Access tokens and debug tools stay out of the shopping path.</p>
+      </div>
+      <label class="token-field" title="Stored locally only">
+        <span>Buyer bearer token</span>
+        <input class="input" data-token="buyer" placeholder="buyer-token" autocomplete="off">
+      </label>
+      <div class="settings-actions">
+        <a class="btn role-tab role-tab-debug" href="#advanced">Advanced</a>
+        <span class="muted-text">Debug tools for payloads, ids, and raw API responses.</span>
+      </div>
     </aside>
 
     <div class="toast-stack" id="toast-stack" aria-live="polite"></div>

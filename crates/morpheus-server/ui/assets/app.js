@@ -154,6 +154,34 @@
     if (initial) activate(initial);
   }
 
+  function setBuyerSettingsOpen(open) {
+    const panel = $("[data-token-settings-panel]");
+    const overlay = $("[data-token-settings-overlay]");
+    const toggle = $("[data-token-settings-toggle]");
+    if (!panel || !overlay) return;
+    panel.hidden = !open;
+    overlay.hidden = !open;
+    document.body.classList.toggle("settings-open", open);
+    if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function initBuyerSettings() {
+    const toggle = $("[data-token-settings-toggle]");
+    if (!toggle) return;
+    toggle.addEventListener("click", () => setBuyerSettingsOpen(true));
+    document.addEventListener("click", (event) => {
+      if (event.target.closest("[data-token-settings-close]") || event.target.closest("[data-token-settings-overlay]")) {
+        setBuyerSettingsOpen(false);
+      }
+      if (event.target.closest(".role-tab-debug")) {
+        setBuyerSettingsOpen(false);
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") setBuyerSettingsOpen(false);
+    });
+  }
+
   function initTokens() {
     $$("[data-token]").forEach((input) => {
       const role = input.dataset.token;
@@ -410,6 +438,13 @@
     return `<span class="status-pill ${accent}">${esc(value)}</span>`;
   }
 
+  function setBuyerSyncStatus(text, accent = "accent-emerald") {
+    const target = document.getElementById("buyer-sync-status");
+    if (!target) return;
+    target.textContent = text;
+    target.className = `status-pill ${accent}`;
+  }
+
   function offerPrice(offer, fallback = "100.00 USD") {
     const amount = pick(offer, ["price", "amount"], pick(offer, ["body", "price", "amount"], ""));
     const currency = pick(offer, ["price", "currency"], pick(offer, ["body", "price", "currency"], ""));
@@ -506,6 +541,10 @@
     return pick(offer, ["body", "seller_display_name"], sellerName(offer && offer.seller_id));
   }
 
+  function isLiveProjectedOffer(offer) {
+    return Boolean(offer && offer.offer_id && state.offers.some((item) => item.offer_id === offer.offer_id));
+  }
+
   function updateSelectedOfferDetail() {
     const offer = state.selectedOffer;
     const drawer = $(".detail-drawer");
@@ -545,6 +584,18 @@
     price.textContent = offerPrice(selected);
     image.src = offerImage(selected);
     image.alt = offerTitle(selected);
+    const live = isLiveProjectedOffer(selected);
+    const assurance = $("[data-checkout-assurance]");
+    if (assurance) {
+      assurance.innerHTML = live
+        ? `<span class="status-pill accent-emerald">Live projected offer</span><span>Seller trusted. Price snapshot ready.</span>`
+        : `<span class="status-pill accent-amber">Live offer unavailable</span><span>Load catalog and choose a projected offer before creating an order.</span>`;
+    }
+    const submit = $(".checkout-submit");
+    if (submit) {
+      submit.disabled = !live;
+      submit.textContent = live ? "Create order" : "Load catalog to buy";
+    }
   }
 
   function setCheckoutOpen(open) {
@@ -733,7 +784,9 @@
     const target = document.getElementById(`buyer-${kind}`);
     if (!target) return;
     if (!items.length) {
-      target.innerHTML = `<div class="empty-state">No ${esc(kind)} found. Refresh after projection data exists.</div>`;
+      target.innerHTML = kind === "offers"
+        ? `<div class="empty-state order-empty-state"><strong>No live offers yet</strong><span>Catalog sync did not return projected offers. Demo previews stay visible only before the first successful sync.</span><button class="btn btn-primary" type="button" data-action="buyer-catalog">Refresh catalog</button></div>`
+        : `<div class="empty-state">No ${esc(kind)} found. Refresh after projection data exists.</div>`;
       return;
     }
     if (kind === "offers") {
@@ -745,12 +798,13 @@
         return `<article class="product-card${selected}" data-catalog-kind="offers" data-catalog-id="${esc(item.offer_id || "")}">
           <img src="${esc(offerImage(item))}" alt="${esc(title)}">
           <div class="product-card-body">
-            <span class="product-meta">${esc(itemInstance(item))} · ${esc(seller)}</span>
+            <span class="status-pill accent-emerald">Live projected offer</span>
+            <span class="product-meta">${esc(itemInstance(item))} · ${esc(seller)} · trusted source</span>
             <h3>${esc(title)}</h3>
             <p>${esc(description)}</p>
             <div class="product-card-footer">
               <strong>${esc(offerPrice(item))}</strong>
-              <button class="btn btn-primary" data-select-offer="${esc(item.offer_id || "")}" data-open-checkout>Buy</button>
+              <button class="btn btn-primary" data-select-offer="${esc(item.offer_id || "")}" data-open-checkout aria-label="Buy ${esc(title)}">Buy</button>
             </div>
           </div>
         </article>`;
@@ -814,9 +868,9 @@
 
   function pendingOrderMessage(entry) {
     if (entry.state === "timeout") {
-      return "Projection has not caught up yet. Refresh orders or try again after the AS/Synapse/Postgres projection loop settles.";
+      return "Confirmation is taking longer than usual. Refresh orders or check again in a moment.";
     }
-    return "Order was submitted. Waiting for the buyer orders projection to include it.";
+    return "Order submitted. Confirmation may take a few seconds.";
   }
 
   function pendingOrderAction(entry) {
@@ -895,9 +949,9 @@
     showResult("GET /api/v1/buyer/orders", "projection_timeout", {
       order_id: orderId,
       status: "projection_timeout",
-      guidance: "Refresh orders or try again after projection catches up."
+      guidance: "Refresh orders or check again after confirmation catches up."
     });
-    toast("Projection still pending", "neutral", "Refresh orders after the projection loop catches up.");
+    toast("Confirmation still pending", "neutral", "Refresh orders again in a moment.");
   }
 
   function ensureOrderCards(rows, rowsId) {
@@ -960,7 +1014,7 @@
     const cards = ensureOrderCards(rows, rowsId);
     if (!state.orders.length && !pendingOrders.length) {
       rows.innerHTML = `<tr><td colspan="${columns}" class="empty-cell">No orders found. Create one from the buyer workspace, then refresh.</td></tr>`;
-      if (cards) cards.innerHTML = `<div class="empty-state">No orders loaded yet.</div>`;
+      if (cards) cards.innerHTML = `<div class="empty-state order-empty-state"><strong>No orders yet</strong><span>Browse catalog and choose a live projected offer to start an order.</span><a class="btn btn-primary" href="#discover" data-action="buyer-discover">Browse catalog</a></div>`;
       return;
     }
     if (cards) {
@@ -1000,6 +1054,7 @@
   }
 
   async function refreshCatalog() {
+    setBuyerSyncStatus("Syncing catalog", "accent-amber");
     const sellers = await silentGet("/api/v1/catalog/sellers", { action: "GET /api/v1/catalog/sellers" });
     if (sellers.ok) {
       state.sellers = Array.isArray(sellers.body.items) ? sellers.body.items : [];
@@ -1017,6 +1072,10 @@
       renderCatalog("offers", state.offers);
       renderSellerStoreCards();
       updateSelectedOfferDetail();
+      const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setBuyerSyncStatus(state.offers.length ? `Updated ${stamp}` : "No live offers", state.offers.length ? "accent-emerald" : "accent-amber");
+    } else {
+      setBuyerSyncStatus("Demo preview", "accent-cyan");
     }
   }
 
@@ -1266,8 +1325,8 @@
       event.preventDefault();
       const payload = buyerOrder(create);
       if (!payload) {
-        toast("Refresh catalog first", "error", "Choose a real projected offer before creating an order.");
-        showResult("POST /api/v1/buyer/orders", "not-submitted", { code: "OFFER_NOT_PROJECTED", error: "Choose a real projected offer before creating an order." });
+        toast("Live offer unavailable", "error", "Load catalog and choose a projected offer before creating an order.");
+        showResult("POST /api/v1/buyer/orders", "not-submitted", { code: "OFFER_NOT_PROJECTED", error: "Choose a live projected offer before creating an order." });
         return;
       }
       const result = await api("/api/v1/buyer/orders", { method: "POST", tokenRole: "buyer", body: payload, action: "POST /api/v1/buyer/orders" });
@@ -1298,13 +1357,7 @@
       }
       const offerButton = event.target.closest("[data-select-offer]");
       if (offerButton) {
-        const offer = state.offers.find((item) => item.offer_id === offerButton.dataset.selectOffer) || offerFromProductCard(offerButton.closest(".product-card"), offerButton.dataset.selectOffer) || {
-          offer_id: offerButton.dataset.selectOffer || DEMO.offerId,
-          product_id: DEMO.productId,
-          seller_id: DEMO.sellerId,
-          price: { amount: "100.00", currency: "USD" },
-          body: { title: "Soft Runner" }
-        };
+        const offer = state.offers.find((item) => item.offer_id === offerButton.dataset.selectOffer);
         if (offer && create) {
           state.selectedOffer = offer;
           setBuyerOrderFormFromOffer(create, offer);
@@ -1312,25 +1365,18 @@
           renderCatalog("offers", state.offers);
           if (offerButton.hasAttribute("data-open-checkout")) setCheckoutOpen(true);
           else toast("Offer selected", "success", offer.offer_id);
+        } else {
+          toast("Live offer unavailable", "error", "Refresh catalog and choose a projected offer.");
         }
-        return;
-      }
-      const demoBuy = event.target.closest("[data-demo-buy]");
-      if (demoBuy) {
-        state.selectedOffer = offerFromProductCard(demoBuy.closest(".product-card")) || {
-          offer_id: DEMO.offerId,
-          product_id: DEMO.productId,
-          seller_id: DEMO.sellerId,
-          price: { amount: "100.00", currency: "USD" },
-          body: { title: "Soft Runner" }
-        };
-        setBuyerOrderFormFromOffer(create, state.selectedOffer);
-        updateSelectedOfferDetail();
-        setCheckoutOpen(true);
         return;
       }
       const button = event.target.closest("[data-action]");
       if (!button) return;
+      if (button.dataset.action === "buyer-discover") {
+        event.preventDefault();
+        const discoverTab = $('.role-tab[href="#discover"]');
+        if (discoverTab) discoverTab.click();
+      }
       if (button.dataset.action === "buyer-catalog") refreshCatalog();
       if (button.dataset.action === "buyer-orders") refreshOrders("buyer");
     });
@@ -1339,6 +1385,12 @@
     });
     refreshCatalog();
     refreshOrders("buyer");
+    window.setInterval(() => {
+      if (document.visibilityState !== "hidden") {
+        refreshCatalog();
+        refreshOrders("buyer");
+      }
+    }, 15000);
   }
 
   function init() {
@@ -1346,6 +1398,7 @@
     document.documentElement.dataset.morpheusUi = "ready";
     hydrateRuntimeDefaults();
     initTokens();
+    initBuyerSettings();
     initRoleTabs();
     updateSelectedOfferDetail();
     const page = document.body.dataset.page;
