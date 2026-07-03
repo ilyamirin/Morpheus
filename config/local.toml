@@ -44,3 +44,19 @@ status = "active"
 catalog_room_alias = "#marketplace-catalog:other.example"
 homeserver_url = "http://localhost:8009"
 morpheus_url = "http://127.0.0.1:8081"
+
+[payments.evm_escrow]
+enabled = false
+chain_id = 31337
+rpc_url_env = "MORPHEUS_EVM_RPC_URL"
+escrow_contract = "0x0000000000000000000000000000000000000001"
+default_token = "0x0000000000000000000000000000000000000002"
+confirmations = 1
+poll_interval_secs = 2
+deployments_path = "contracts/deployments/local.json"
+
+[[payments.evm_escrow.tokens]]
+symbol = "USDC"
+contract = "0x0000000000000000000000000000000000000002"
+decimals = 6
+currency = "USDC"

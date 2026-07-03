@@ -10,6 +10,8 @@ pub struct MorpheusConfig {
     pub database: DatabaseConfig,
     pub admin: AdminConfig,
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub payments: Option<PaymentsConfig>,
     pub allowlist: Option<AllowlistConfig>,
 }
 
@@ -56,6 +58,34 @@ pub struct AuthConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaymentsConfig {
+    #[serde(default)]
+    pub evm_escrow: Option<EvmEscrowConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvmEscrowConfig {
+    pub enabled: bool,
+    pub chain_id: u64,
+    pub rpc_url_env: String,
+    pub escrow_contract: String,
+    pub default_token: String,
+    pub confirmations: u64,
+    pub poll_interval_secs: u64,
+    #[serde(default)]
+    pub deployments_path: Option<String>,
+    pub tokens: Vec<EvmEscrowTokenConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvmEscrowTokenConfig {
+    pub symbol: String,
+    pub contract: String,
+    pub decimals: u8,
+    pub currency: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AllowlistConfig {
     pub instances: Vec<AllowlistInstance>,
 }
@@ -76,6 +106,12 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<MorpheusConfig> {
     let config: MorpheusConfig = toml::from_str(&text).context("parsing TOML config")?;
     validate_config(&config)?;
     Ok(config)
+}
+
+fn is_evm_address(value: &str) -> bool {
+    value.len() == 42
+        && value.starts_with("0x")
+        && value[2..].chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
@@ -161,6 +197,70 @@ pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
         !config.auth.buyer_token_env.is_empty(),
         "auth buyer_token_env is required"
     );
+    if let Some(evm) = config
+        .payments
+        .as_ref()
+        .and_then(|payments| payments.evm_escrow.as_ref())
+        .filter(|evm| evm.enabled)
+    {
+        anyhow::ensure!(
+            config
+                .instance
+                .payment_adapters
+                .iter()
+                .any(|adapter| adapter == "evm_escrow"),
+            "evm_escrow payment config requires instance.payment_adapters to include evm_escrow"
+        );
+        anyhow::ensure!(evm.chain_id > 0, "evm_escrow chain_id is required");
+        anyhow::ensure!(
+            !evm.rpc_url_env.is_empty(),
+            "evm_escrow rpc_url_env is required"
+        );
+        anyhow::ensure!(
+            is_evm_address(&evm.escrow_contract),
+            "evm_escrow escrow_contract must be an EVM address"
+        );
+        anyhow::ensure!(
+            is_evm_address(&evm.default_token),
+            "evm_escrow default_token must be an EVM address"
+        );
+        anyhow::ensure!(
+            evm.confirmations > 0,
+            "evm_escrow confirmations must be positive"
+        );
+        anyhow::ensure!(
+            evm.poll_interval_secs > 0,
+            "evm_escrow poll_interval_secs must be positive"
+        );
+        anyhow::ensure!(
+            !evm.tokens.is_empty(),
+            "evm_escrow tokens must not be empty"
+        );
+        anyhow::ensure!(
+            evm.tokens
+                .iter()
+                .any(|token| token.contract == evm.default_token),
+            "evm_escrow default_token must be listed in tokens"
+        );
+        for token in &evm.tokens {
+            anyhow::ensure!(
+                !token.symbol.is_empty(),
+                "evm_escrow token symbol is required"
+            );
+            anyhow::ensure!(
+                is_evm_address(&token.contract),
+                "evm_escrow token contract must be an EVM address"
+            );
+            anyhow::ensure!(
+                token.decimals <= 36,
+                "evm_escrow token decimals must be <= 36"
+            );
+            anyhow::ensure!(
+                !token.currency.is_empty(),
+                "evm_escrow token currency is required"
+            );
+        }
+    }
     if let Some(allowlist) = &config.allowlist {
         for entry in &allowlist.instances {
             anyhow::ensure!(
@@ -223,6 +323,7 @@ mod tests {
                 seller_token_env: "MORPHEUS_SELLER_TOKEN".into(),
                 buyer_token_env: "MORPHEUS_BUYER_TOKEN".into(),
             },
+            payments: None,
             allowlist: Some(AllowlistConfig {
                 instances: vec![AllowlistInstance {
                     instance_id: "shop.example".into(),
@@ -272,5 +373,31 @@ mod tests {
             validate_config(&config).unwrap_err().to_string(),
             "allowlist capabilities are required"
         );
+    }
+
+    #[test]
+    fn validates_evm_escrow_config_when_enabled() {
+        let mut config = valid_config();
+        config.instance.payment_adapters = vec!["mock".into(), "evm_escrow".into()];
+        config.payments = Some(PaymentsConfig {
+            evm_escrow: Some(EvmEscrowConfig {
+                enabled: true,
+                chain_id: 31337,
+                rpc_url_env: "MORPHEUS_EVM_RPC_URL".into(),
+                escrow_contract: "0x0000000000000000000000000000000000000001".into(),
+                default_token: "0x0000000000000000000000000000000000000002".into(),
+                confirmations: 1,
+                poll_interval_secs: 2,
+                deployments_path: Some("contracts/deployments/local.json".into()),
+                tokens: vec![EvmEscrowTokenConfig {
+                    symbol: "USDC".into(),
+                    contract: "0x0000000000000000000000000000000000000002".into(),
+                    decimals: 6,
+                    currency: "USDC".into(),
+                }],
+            }),
+        });
+
+        assert!(validate_config(&config).is_ok());
     }
 }
