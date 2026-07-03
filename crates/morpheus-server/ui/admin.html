@@ -9,117 +9,208 @@
   </head>
   <body data-page="admin" class="app-shell admin-theme">
     <header class="topbar admin-topbar">
-      <div class="page-wrap topbar-grid">
+      <div class="page-wrap topbar-grid admin-topbar-grid">
         <div>
           <p class="eyebrow">Morpheus UI PoC</p>
           <h1 class="page-title">Operator command center</h1>
         </div>
-        <label class="token-field" title="Stored locally only">
-          <span>Admin bearer token</span>
-          <input class="input" data-token="admin" placeholder="admin-token" autocomplete="off">
-        </label>
+        <div class="topbar-actions admin-topbar-actions">
+          <span class="status-pill accent-amber" id="admin-overall-status">Checking</span>
+          <span class="status-pill accent-cyan" data-text="admin-auto-refresh" id="admin-last-refresh">Auto refresh pending</span>
+          <button class="btn btn-small" type="button" data-admin-debug-toggle>Open debug</button>
+          <button class="btn btn-small" type="button" data-admin-settings-toggle aria-controls="admin-settings-panel" aria-expanded="false">Admin settings</button>
+        </div>
       </div>
     </header>
 
-    <main class="page-wrap admin-layout">
-      <section class="command-rail surface admin-surface" aria-label="Admin actions">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Operations</p>
-            <h2>Control plane</h2>
+    <main class="page-wrap admin-layout admin-console">
+      <nav class="role-tabs admin-tabs" aria-label="Admin sections">
+        <a class="role-tab" href="#monitor">Monitor</a>
+        <a class="role-tab" href="#incidents">Incidents</a>
+        <a class="role-tab" href="#policy">Policy</a>
+        <a class="role-tab" href="#maintenance">Maintenance</a>
+        <a class="role-tab" href="#debug">Debug</a>
+      </nav>
+
+      <section class="admin-section" id="monitor" aria-labelledby="monitor-title">
+        <article class="surface admin-surface operator-status">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Monitor</p>
+              <h2 id="monitor-title">Operator status</h2>
+            </div>
+            <span class="status-pill accent-cyan" data-text="admin-auto-refresh">Auto refresh pending</span>
           </div>
-          <span class="status-pill accent-cyan" data-text="admin-auto-refresh">Auto refresh pending</span>
-        </div>
-        <div class="action-grid">
-          <button class="btn btn-warn" data-action="admin-rebuild">Rebuild catalog</button>
-        </div>
-        <form class="inline-form" data-form="admin-replay">
-          <label class="field grow">
-            <span class="label">Order id</span>
-            <input class="input" name="order_id" value="ord:shop.example:01JORDER2">
-          </label>
-          <button class="btn btn-danger" type="submit">Replay order</button>
-        </form>
-      </section>
+          <div class="status-overview-grid">
+            <div class="status-card">
+              <span class="label">Overall status</span>
+              <strong data-text="admin-status-summary">Checking runtime</strong>
+            </div>
+            <div class="status-card">
+              <span class="label">Last refresh</span>
+              <strong data-text="admin-last-refresh-value">Pending</strong>
+            </div>
+            <div class="status-card attention-card">
+              <span class="label">Needs attention</span>
+              <strong id="admin-error-count">0 incidents</strong>
+            </div>
+          </div>
+        </article>
 
-      <section class="kpi-grid" aria-label="Runtime summary">
-        <article class="kpi-card surface admin-surface">
-          <span class="status-pill accent-emerald" id="admin-health-pill">HEALTHZ</span>
-          <strong data-text="admin-health-status">Not checked</strong>
-          <small>Server liveness endpoint.</small>
-        </article>
-        <article class="kpi-card surface admin-surface">
-          <span class="status-pill accent-cyan" id="admin-ready-pill">READYZ</span>
-          <strong data-text="admin-ready-status">Not checked</strong>
-          <small>Readiness gate for serving traffic.</small>
-        </article>
-        <article class="kpi-card surface admin-surface">
-          <span class="status-pill accent-amber">CATALOG</span>
-          <strong data-text="admin-catalog-counts">0 / 0 / 0</strong>
-          <small>Sellers, products, and offers in projection.</small>
-        </article>
-        <article class="kpi-card surface admin-surface">
-          <span class="status-pill accent-crimson">ORDERS</span>
-          <strong data-text="admin-order-counts">0 orders</strong>
-          <small>Payments, entitlements, disputes, rulings tracked.</small>
-        </article>
-      </section>
+        <section class="kpi-grid" aria-label="Runtime summary">
+          <article class="kpi-card surface admin-surface">
+            <span class="status-pill accent-emerald" id="admin-health-pill">HEALTHZ</span>
+            <strong data-text="admin-health-status">Not checked</strong>
+            <small>Server liveness endpoint.</small>
+          </article>
+          <article class="kpi-card surface admin-surface">
+            <span class="status-pill accent-cyan" id="admin-ready-pill">READYZ</span>
+            <strong data-text="admin-ready-status">Not checked</strong>
+            <small>Readiness gate for serving traffic.</small>
+          </article>
+          <article class="kpi-card surface admin-surface">
+            <span class="status-pill accent-amber">CATALOG</span>
+            <strong data-text="admin-catalog-counts">0 sellers / 0 products / 0 offers</strong>
+            <small>Sellers, products, and offers in projection.</small>
+          </article>
+          <article class="kpi-card surface admin-surface">
+            <span class="status-pill accent-crimson">ORDERS</span>
+            <strong data-text="admin-order-counts">0 orders</strong>
+            <small>Payments, entitlements, disputes, rulings tracked.</small>
+          </article>
+        </section>
 
-      <section class="main-grid">
-        <article class="surface admin-surface panel-span">
+        <article class="surface admin-surface">
           <div class="section-head">
             <div>
               <p class="eyebrow">Projection</p>
               <h2>Runtime counters</h2>
             </div>
           </div>
-          <div class="metric-strip" id="admin-summary-cards">
-            <div class="empty-state">Projection summary will load automatically.</div>
+          <div class="admin-counter-groups" id="admin-summary-cards">
+            <section class="counter-group">
+              <div class="counter-group-head"><span class="status-pill accent-emerald">Catalog health</span></div>
+              <div class="empty-state">Projection summary will load automatically.</div>
+            </section>
+            <section class="counter-group">
+              <div class="counter-group-head"><span class="status-pill accent-cyan">Orders</span></div>
+              <div class="empty-state">Order counters will load automatically.</div>
+            </section>
+            <section class="counter-group">
+              <div class="counter-group-head"><span class="status-pill accent-emerald">Settlement</span></div>
+              <div class="empty-state">Payment and entitlement counters will load automatically.</div>
+            </section>
+            <section class="counter-group">
+              <div class="counter-group-head"><span class="status-pill accent-crimson">Risk</span></div>
+              <div class="empty-state">Dispute counters will load automatically.</div>
+            </section>
           </div>
         </article>
+      </section>
 
+      <section class="admin-section" id="incidents" aria-labelledby="incidents-title">
+        <article class="surface admin-surface">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Incidents</p>
+              <h2 id="incidents-title">Incident queue</h2>
+            </div>
+            <span class="status-pill accent-amber" id="admin-incident-count">Needs attention</span>
+          </div>
+          <div class="incident-list" id="admin-incident-list">
+            <div class="empty-state">Projection events will load automatically. Suggested action and Copy event id controls appear on incidents.</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="admin-section" id="policy" aria-labelledby="policy-title">
         <article class="surface admin-surface">
           <div class="section-head">
             <div>
               <p class="eyebrow">Policy</p>
-              <h2>Allowlist</h2>
+              <h2 id="policy-title">Trusted instances</h2>
             </div>
           </div>
-          <div id="admin-allowlist-view" class="list-panel">
-            <div class="empty-state">Allowlist will load automatically.</div>
+          <div id="admin-policy-cards" class="policy-card-grid">
+            <article class="policy-card">
+              <div>
+                <span class="status-pill accent-amber">Loading</span>
+                <h3>Allowlist will load automatically.</h3>
+              </div>
+              <div class="capability-row"><span class="capability-chip">capabilities</span></div>
+            </article>
           </div>
         </article>
+      </section>
 
+      <section class="admin-section" id="maintenance" aria-labelledby="maintenance-title">
         <article class="surface admin-surface">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Validation</p>
-              <h2>Projection errors</h2>
+              <p class="eyebrow">Maintenance</p>
+              <h2 id="maintenance-title">Maintenance actions</h2>
             </div>
           </div>
-          <div class="table-wrap">
-            <table class="data-table admin-table">
-              <thead>
-                <tr><th>Code</th><th>Message</th><th>Event</th></tr>
-              </thead>
-              <tbody id="admin-events-rows">
-                <tr><td colspan="3" class="empty-cell">Projection events will load automatically.</td></tr>
-              </tbody>
-            </table>
+          <div class="maintenance-grid">
+            <article class="maintenance-card">
+              <span class="status-pill accent-amber">Catalog</span>
+              <h3>Rebuild catalog</h3>
+              <p>Replays catalog projections and refreshes summary counters.</p>
+              <button class="btn btn-warn" type="button" data-maintenance-confirm data-action="admin-rebuild">Rebuild catalog</button>
+            </article>
+            <article class="maintenance-card">
+              <span class="status-pill accent-crimson">Order</span>
+              <h3>Replay order</h3>
+              <p>Retries projection for one order id after inspecting the incident queue.</p>
+              <form class="stack-form compact-admin-form" data-form="admin-replay">
+                <label class="field">
+                  <span class="label">Order id</span>
+                  <input class="input" name="order_id" value="ord:shop.example:01JORDER2">
+                </label>
+                <button class="btn btn-danger" type="submit" data-maintenance-confirm data-action="admin-replay">Replay order</button>
+              </form>
+            </article>
+          </div>
+          <div class="maintenance-confirm" data-maintenance-confirm-panel hidden>
+            <div>
+              <p class="eyebrow">Confirm maintenance action</p>
+              <strong data-maintenance-confirm-title>Confirm action</strong>
+              <span data-maintenance-confirm-detail>This operation can affect projections.</span>
+            </div>
+            <div class="button-row">
+              <button class="btn btn-danger" type="button" data-maintenance-confirm-run>Confirm</button>
+              <button class="btn" type="button" data-maintenance-confirm-cancel>Cancel</button>
+            </div>
           </div>
         </article>
+      </section>
 
-        <article class="surface admin-surface panel-span">
+      <section class="admin-section" id="debug" aria-labelledby="debug-title">
+        <article class="surface admin-surface" id="admin-debug-panel">
           <div class="section-head">
             <div>
-              <p class="eyebrow">API response</p>
-              <h2>Last result</h2>
+              <p class="eyebrow">Debug</p>
+              <h2 id="debug-title">Debug console</h2>
             </div>
           </div>
           <pre class="json-panel admin-json" id="result-panel">{ "status": "idle" }</pre>
         </article>
       </section>
     </main>
+
+    <div class="token-settings-overlay admin-settings-overlay" data-admin-settings-overlay hidden></div>
+    <aside class="token-settings-panel admin-settings-panel" id="admin-settings-panel" data-admin-settings-panel hidden aria-labelledby="admin-settings-title" aria-modal="true">
+      <button class="checkout-close" type="button" data-admin-settings-close aria-label="Close admin settings">Close</button>
+      <div class="settings-head">
+        <p class="eyebrow">Admin settings</p>
+        <h2 id="admin-settings-title">Operator access</h2>
+        <p>Access tokens stay outside the monitoring path and are stored locally only.</p>
+      </div>
+      <label class="token-field" title="Stored locally only">
+        <span>Admin bearer token</span>
+        <input class="input" data-token="admin" placeholder="admin-token" autocomplete="off">
+      </label>
+    </aside>
 
     <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
     <script src="/ui/assets/app.js" defer></script>

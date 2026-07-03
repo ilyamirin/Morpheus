@@ -52,7 +52,16 @@
     "prod:fashion.example:FASHIONPROD0501": "/ui/assets/products/seed/fashionprod0501.jpg",
     "prod:fashion.example:FASHIONPROD0502": "/ui/assets/products/seed/fashionprod0502.jpg"
   };
-  const state = { sellers: [], products: [], offers: [], orders: [], selectedOffer: null, pendingOrders: [], pendingListings: [] };
+  const state = {
+    sellers: [],
+    products: [],
+    offers: [],
+    orders: [],
+    selectedOffer: null,
+    pendingOrders: [],
+    pendingListings: [],
+    admin: { healthOk: false, readyOk: false, incidents: [], pendingMaintenance: null }
+  };
   let resultPanel = null;
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -235,6 +244,53 @@
     });
   }
 
+  function setAdminSettingsOpen(open) {
+    const panel = $("[data-admin-settings-panel]");
+    const overlay = $("[data-admin-settings-overlay]");
+    const toggle = $("[data-admin-settings-toggle]");
+    if (!panel || !overlay) return;
+    if (open) setMaintenanceConfirm(false);
+    panel.hidden = !open;
+    overlay.hidden = !open;
+    document.body.classList.toggle("settings-open", open);
+    if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function initAdminSettings() {
+    const toggle = $("[data-admin-settings-toggle]");
+    if (!toggle) return;
+    toggle.addEventListener("click", () => setAdminSettingsOpen(true));
+    document.addEventListener("click", (event) => {
+      if (event.target.closest("[data-admin-settings-close]") || event.target.closest("[data-admin-settings-overlay]")) {
+        setAdminSettingsOpen(false);
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") setAdminSettingsOpen(false);
+    });
+  }
+
+  function openAdminDebug() {
+    const debugTab = $('.role-tab[href="#debug"]');
+    if (debugTab) debugTab.click();
+  }
+
+  function setMaintenanceConfirm(open, detail = {}) {
+    const panel = $("[data-maintenance-confirm-panel]");
+    if (!panel) return;
+    panel.hidden = !open;
+    if (!open) {
+      state.admin.pendingMaintenance = null;
+      return;
+    }
+    state.admin.pendingMaintenance = detail;
+    setText("maintenance-confirm-title", detail.title || "Confirm maintenance action");
+    const detailNode = $("[data-maintenance-confirm-detail]");
+    if (detailNode) detailNode.textContent = detail.message || "This operation can affect projections.";
+    const titleNode = $("[data-maintenance-confirm-title]");
+    if (titleNode) titleNode.textContent = detail.title || "Confirm maintenance action";
+  }
+
   function initTokens() {
     $$("[data-token]").forEach((input) => {
       const role = input.dataset.token;
@@ -261,8 +317,15 @@
   }
 
   function setText(idOrKey, text) {
-    const el = document.getElementById(idOrKey) || $(`[data-text="${idOrKey}"]`);
-    if (el) el.textContent = text;
+    const nodes = [];
+    const byId = document.getElementById(idOrKey);
+    if (byId) nodes.push(byId);
+    $$(`[data-text="${idOrKey}"]`).forEach((node) => {
+      if (!nodes.includes(node)) nodes.push(node);
+    });
+    nodes.forEach((node) => {
+      node.textContent = text;
+    });
   }
 
   function setSellerSyncStatus(text, accent = "accent-cyan") {
@@ -270,6 +333,20 @@
     if (!node) return;
     node.textContent = text;
     node.className = `status-pill ${accent}`;
+  }
+
+  function updateAdminOverallStatus() {
+    const incidentCount = state.admin.incidents.length;
+    const healthy = state.admin.healthOk && state.admin.readyOk && incidentCount === 0;
+    const degraded = state.admin.healthOk && state.admin.readyOk && incidentCount > 0;
+    const status = healthy ? "Healthy" : degraded ? "Degraded" : "Attention";
+    const accent = healthy ? "accent-emerald" : degraded ? "accent-amber" : "accent-crimson";
+    const pill = document.getElementById("admin-overall-status");
+    if (pill) {
+      pill.textContent = status;
+      pill.className = `status-pill ${accent}`;
+    }
+    setText("admin-status-summary", healthy ? "Healthy" : degraded ? "Runtime ok, incidents open" : "Check runtime");
   }
 
   function showResult(action, status, response) {
@@ -803,48 +880,113 @@
     const summary = body || {};
     const catalog = summary.catalog || {};
     if (!target) return;
-    const items = [
-      ["Sellers", catalog.sellers || 0, "accent-emerald"],
-      ["Products", catalog.products || 0, "accent-cyan"],
-      ["Offers", catalog.offers || 0, "accent-amber"],
-      ["Tombstones", catalog.tombstones || 0, "accent-crimson"],
-      ["Orders", summary.orders || 0, "accent-cyan"],
-      ["Payments", summary.payments || 0, "accent-emerald"],
-      ["Entitlements", summary.entitlements || 0, "accent-emerald"],
-      ["Disputes", summary.disputes || 0, "accent-crimson"],
-      ["Rulings", summary.arbitration_rulings || 0, "accent-amber"]
+    const groups = [
+      {
+        title: "Catalog health",
+        accent: "accent-emerald",
+        items: [
+          ["Sellers", catalog.sellers || 0],
+          ["Products", catalog.products || 0],
+          ["Offers", catalog.offers || 0],
+          ["Tombstones", catalog.tombstones || 0]
+        ]
+      },
+      {
+        title: "Orders",
+        accent: "accent-cyan",
+        items: [["Orders", summary.orders || 0]]
+      },
+      {
+        title: "Settlement",
+        accent: "accent-emerald",
+        items: [
+          ["Payments", summary.payments || 0],
+          ["Entitlements", summary.entitlements || 0]
+        ]
+      },
+      {
+        title: "Risk",
+        accent: "accent-crimson",
+        items: [
+          ["Disputes", summary.disputes || 0],
+          ["Rulings", summary.arbitration_rulings || 0]
+        ]
+      }
     ];
-    target.innerHTML = items.map(([label, value, accent]) =>
-      `<div class="metric-card"><span class="status-pill ${accent}">${esc(label)}</span><strong>${esc(value)}</strong></div>`
+    target.innerHTML = groups.map((group) =>
+      `<section class="counter-group">
+        <div class="counter-group-head"><span class="status-pill ${group.accent}">${esc(group.title)}</span></div>
+        <div class="counter-group-grid">${group.items.map(([label, value]) =>
+          `<div class="metric-card compact-admin-metric"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`
+        ).join("")}</div>
+      </section>`
     ).join("");
-    setText("admin-catalog-counts", `${catalog.sellers || 0} / ${catalog.products || 0} / ${catalog.offers || 0}`);
+    setText("admin-catalog-counts", `${catalog.sellers || 0} sellers / ${catalog.products || 0} products / ${catalog.offers || 0} offers`);
     setText("admin-order-counts", `${summary.orders || 0} orders`);
   }
 
   function renderAdminAllowlist(body) {
-    const target = document.getElementById("admin-allowlist-view");
+    const target = document.getElementById("admin-policy-cards") || document.getElementById("admin-allowlist-view");
     const items = Array.isArray(body && body.allowlist) ? body.allowlist : [];
     if (!target) return;
     if (!items.length) {
       target.innerHTML = `<div class="empty-state">Allowlist is intentionally empty. Source: ${esc(body && body.source || "unknown")}; configured: ${esc(body && body.configured)}</div>`;
       return;
     }
-    target.innerHTML = items.map((item) =>
-      `<article class="list-item"><strong>${esc(item.instance_id || "instance")}</strong><span>${esc(JSON.stringify(item))}</span></article>`
-    ).join("");
+    const source = body && body.source ? body.source : "unknown";
+    target.innerHTML = items.map((item) => {
+      const capabilities = Array.isArray(item.capabilities) ? item.capabilities : [];
+      return `<article class="policy-card">
+        <div>
+          <span class="status-pill ${item.status === "active" ? "accent-emerald" : "accent-amber"}">${esc(item.status || "configured")}</span>
+          <h3>${esc(item.instance_id || "instance")}</h3>
+          <p>Source: ${esc(source)} · configured: ${esc(body && body.configured)}</p>
+        </div>
+        <div class="capability-row">${capabilities.length ? capabilities.map((capability) =>
+          `<span class="capability-chip">${esc(capability)}</span>`
+        ).join("") : '<span class="capability-chip">no capabilities</span>'}</div>
+      </article>`;
+    }).join("");
   }
 
   function renderAdminEvents(body) {
     const rows = document.getElementById("admin-events-rows");
+    const list = document.getElementById("admin-incident-list");
     const events = Array.isArray(body && body.events) ? body.events : [];
-    if (!rows) return;
+    state.admin.incidents = events;
+    setText("admin-error-count", `${events.length} ${events.length === 1 ? "incident" : "incidents"}`);
+    setText("admin-incident-count", events.length ? `${events.length} needs attention` : "No incidents");
     if (!events.length) {
-      rows.innerHTML = '<tr><td colspan="3" class="empty-cell">No projection errors are recorded.</td></tr>';
+      if (rows) rows.innerHTML = '<tr><td colspan="3" class="empty-cell">No projection errors are recorded.</td></tr>';
+      if (list) list.innerHTML = '<div class="empty-state">No projection errors are recorded.</div>';
+      updateAdminOverallStatus();
       return;
     }
-    rows.innerHTML = events.map((event) =>
-      `<tr><td>${esc(event.code || "unknown")}</td><td>${esc(event.message || "")}</td><td class="mono">${esc(event.matrix_event_id || "")}</td></tr>`
-    ).join("");
+    if (rows) {
+      rows.innerHTML = events.map((event) =>
+        `<tr><td>${esc(event.code || "unknown")}</td><td>${esc(event.message || "")}</td><td class="mono">${esc(event.matrix_event_id || "")}</td></tr>`
+      ).join("");
+    }
+    if (list) {
+      list.innerHTML = events.map((event) => {
+        const code = event.code || "unknown";
+        const action = /ROOM/.test(code)
+          ? "Open Maintenance and replay the affected order after room membership is repaired."
+          : /TERMS|CATALOG/.test(code)
+            ? "Review seller terms and rebuild catalog projection after source data is corrected."
+            : "Inspect the event payload in Debug before retrying projection.";
+        return `<article class="incident-card">
+          <div class="incident-main">
+            <span class="status-pill accent-crimson">Needs attention</span>
+            <h3>${esc(code)}</h3>
+            <p>${esc(event.message || "Projection error recorded.")}</p>
+            <div class="incident-action"><strong>Suggested action</strong><span>${esc(action)}</span></div>
+          </div>
+          <button class="btn btn-small" type="button" data-copy-event-id="${esc(event.matrix_event_id || "")}">Copy event id</button>
+        </article>`;
+      }).join("");
+    }
+    updateAdminOverallStatus();
   }
 
   function renderCatalog(kind, items) {
@@ -1181,8 +1323,10 @@
   async function refreshAdmin({ silent = true } = {}) {
     const requestOptions = { silent, result: !silent };
     const health = await api("/healthz", { action: "GET /healthz", ...requestOptions });
+    state.admin.healthOk = health.ok && ((health.body && health.body.status) || "ok") === "ok";
     setText("admin-health-status", health.ok ? ((health.body && health.body.status) || "ok") : "error");
     const ready = await api("/readyz", { action: "GET /readyz", ...requestOptions });
+    state.admin.readyOk = ready.ok && ((ready.body && ready.body.status) || "ready") === "ready";
     setText("admin-ready-status", ready.ok ? ((ready.body && ready.body.status) || "ready") : "error");
     await api("/admin/config", { tokenRole: "admin", action: "GET /admin/config", ...requestOptions });
     const allowlist = await api("/admin/allowlist", { tokenRole: "admin", action: "GET /admin/allowlist", ...requestOptions });
@@ -1193,6 +1337,8 @@
     if (events.ok) renderAdminEvents(events.body);
     const stamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     setText("admin-auto-refresh", `Auto refresh ${stamp}`);
+    setText("admin-last-refresh-value", stamp);
+    updateAdminOverallStatus();
   }
 
   async function refreshCatalog() {
@@ -1372,41 +1518,73 @@
   }
 
   function bindAdmin() {
-    document.addEventListener("click", async (event) => {
-      const button = event.target.closest("[data-action], [data-refresh]");
-      if (!button) return;
-      if (button.dataset.refresh === "admin") return refreshAdmin({ silent: false });
-      if (button.dataset.action === "admin-health") {
-        const result = await api("/healthz", { action: "GET /healthz" });
-        return setText("admin-health-status", result.ok ? ((result.body && result.body.status) || "ok") : "error");
-      }
-      if (button.dataset.action === "admin-ready") {
-        const result = await api("/readyz", { action: "GET /readyz" });
-        return setText("admin-ready-status", result.ok ? ((result.body && result.body.status) || "ready") : "error");
-      }
-      if (button.dataset.action === "admin-config") return api("/admin/config", { tokenRole: "admin", action: "GET /admin/config" });
-      if (button.dataset.action === "admin-allowlist") {
-        const result = await api("/admin/allowlist", { tokenRole: "admin", action: "GET /admin/allowlist" });
-        if (result.ok) renderAdminAllowlist(result.body);
-      }
-      if (button.dataset.action === "admin-summary") {
-        const result = await api("/admin/projections/summary", { tokenRole: "admin", action: "GET /admin/projections/summary" });
-        if (result.ok) renderAdminSummary(result.body);
-      }
-      if (button.dataset.action === "admin-events") {
-        const result = await api("/admin/events", { tokenRole: "admin", action: "GET /admin/events" });
-        if (result.ok) renderAdminEvents(result.body);
-      }
-      if (button.dataset.action === "admin-rebuild") {
+    initAdminSettings();
+    const replay = $('[data-form="admin-replay"]');
+    const executeAdminMaintenance = async (detail) => {
+      if (!detail || !detail.action) return;
+      if (detail.action === "admin-rebuild") {
         const result = await api("/admin/catalog/rebuild", { method: "POST", tokenRole: "admin", body: {}, action: "POST /admin/catalog/rebuild" });
-        if (result.ok && result.body && result.body.catalog) renderAdminSummary({ catalog: result.body.catalog, orders: 0, payments: 0, entitlements: 0, disputes: 0, arbitration_rulings: 0 });
+        if (result.ok && result.body && result.body.catalog) {
+          renderAdminSummary({ catalog: result.body.catalog, orders: 0, payments: 0, entitlements: 0, disputes: 0, arbitration_rulings: 0 });
+        }
+        return;
+      }
+      if (detail.action === "admin-replay") {
+        const orderId = detail.orderId || DEMO.orderId;
+        return api(`/admin/orders/${encodeURIComponent(orderId)}/replay`, { method: "POST", tokenRole: "admin", body: {}, action: "POST /admin/orders/{order_id}/replay" });
+      }
+    };
+    document.addEventListener("click", async (event) => {
+      const settingsToggle = event.target.closest("[data-admin-settings-toggle]");
+      if (settingsToggle) {
+        setAdminSettingsOpen(true);
+        return;
+      }
+      if (event.target.closest("[data-admin-debug-toggle]")) {
+        openAdminDebug();
+        return;
+      }
+      const copyEvent = event.target.closest("[data-copy-event-id]");
+      if (copyEvent) {
+        const value = copyEvent.dataset.copyEventId || "";
+        if (value && navigator.clipboard) await navigator.clipboard.writeText(value);
+        toast("Event id copied", "success", value || "No event id available.");
+        return;
+      }
+      const confirmButton = event.target.closest("[data-maintenance-confirm]");
+      if (confirmButton) {
+        event.preventDefault();
+        const action = confirmButton.dataset.action || "admin-rebuild";
+        const orderId = replay && replay.elements.order_id ? replay.elements.order_id.value : DEMO.orderId;
+        setMaintenanceConfirm(true, {
+          action,
+          orderId,
+          title: action === "admin-replay" ? "Replay order" : "Rebuild catalog",
+          message: action === "admin-replay"
+            ? `Replay projection for ${orderId}.`
+            : "Rebuild catalog projections from stored events."
+        });
+        return;
+      }
+      if (event.target.closest("[data-maintenance-confirm-cancel]")) {
+        setMaintenanceConfirm(false);
+        return;
+      }
+      if (event.target.closest("[data-maintenance-confirm-run]")) {
+        const detail = state.admin.pendingMaintenance;
+        setMaintenanceConfirm(false);
+        await executeAdminMaintenance(detail);
       }
     });
-    const replay = $('[data-form="admin-replay"]');
     replay && replay.addEventListener("submit", (event) => {
       event.preventDefault();
       const data = form(replay);
-      api(`/admin/orders/${encodeURIComponent(data.order_id || DEMO.orderId)}/replay`, { method: "POST", tokenRole: "admin", body: {}, action: "POST /admin/orders/{order_id}/replay" });
+      setMaintenanceConfirm(true, {
+        action: "admin-replay",
+        orderId: data.order_id || DEMO.orderId,
+        title: "Replay order",
+        message: `Replay projection for ${data.order_id || DEMO.orderId}.`
+      });
     });
     refreshAdmin();
     window.setInterval(() => {
