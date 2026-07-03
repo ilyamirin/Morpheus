@@ -1,5 +1,5 @@
 import {
-  evmWalletBuildMarker,
+  evmEscrowConfirmation,
   requestEvmEscrowDeposit,
   requestEvmEscrowRelease,
   requestEvmEscrowRefund,
@@ -7,7 +7,7 @@ import {
 } from "./evmWallet.js";
 
 globalThis.MorpheusEvmWallet = {
-  evmWalletBuildMarker,
+  evmEscrowConfirmation,
   requestEvmEscrowDeposit,
   requestEvmEscrowRelease,
   requestEvmEscrowRefund,
@@ -577,51 +577,6 @@ globalThis.MorpheusEvmWallet = {
   function isEvmEscrowOrder(order) {
     return pick(order, ["body", "payment_adapter"], "") === "evm_escrow"
       || pick(order, ["payment", "body", "adapter"], "") === "evm_escrow";
-  }
-
-  function evmEscrowConfirmation(order) {
-    return pick(order, ["payment", "body", "confirmation"], null)
-      || pick(order, ["payment", "confirmation"], null)
-      || pick(order, ["body", "payment_confirmation"], null)
-      || pick(order, ["body", "confirmation"], null)
-      || null;
-  }
-
-  function evmEscrowWalletTxPlan(confirmation, account) {
-    return {
-      account,
-      approve: {
-        to: confirmation.token,
-        spender: confirmation.escrow_contract,
-        amount: confirmation.amount_units
-      },
-      deposit: {
-        to: confirmation.escrow_contract,
-        order_hash: confirmation.order_hash,
-        token: confirmation.token,
-        amount: confirmation.amount_units,
-        seller: confirmation.seller_evm_address,
-        buyer: confirmation.buyer_evm_address || account,
-        arbiter: confirmation.arbiter_evm_address
-      }
-    };
-  }
-
-  async function requestEvmEscrowDeposit(order) {
-    const confirmation = evmEscrowConfirmation(order);
-    if (!confirmation || !window.ethereum) {
-      throw new Error("EVM wallet is not available for this order");
-    }
-    const chainId = Number(confirmation.chain_id);
-    if (!Number.isFinite(chainId) || chainId <= 0) {
-      throw new Error("EVM chain id is not available for this order");
-    }
-    const [account] = await window.ethereum.request({ method: "eth_requestAccounts" });
-    await window.ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: `0x${chainId.toString(16)}` }]
-    });
-    return evmEscrowWalletTxPlan(confirmation, account);
   }
 
   function selectedOffer(formEl) {
@@ -1843,9 +1798,9 @@ globalThis.MorpheusEvmWallet = {
       if (evmDeposit) {
         const order = state.orders.find((item) => item.order_id === evmDeposit.dataset.orderId);
         requestEvmEscrowDeposit(order)
-          .then((plan) => {
-            showResult("EVM escrow deposit", "wallet_plan_ready", plan);
-            toast("Wallet plan ready", "success", "Approve token spend, then submit the escrow deposit.");
+          .then((result) => {
+            showResult("EVM escrow deposit", "submitted_waiting_for_watcher", result);
+            toast("Transaction submitted", "success", "Waiting for Morpheus watcher confirmation.");
           })
           .catch((error) => {
             showResult("EVM escrow deposit", "wallet_unavailable", { error: error.message });
