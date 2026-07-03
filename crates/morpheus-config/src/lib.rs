@@ -73,6 +73,10 @@ pub struct EvmEscrowConfig {
     pub confirmations: u64,
     pub poll_interval_secs: u64,
     #[serde(default)]
+    pub start_block: Option<u64>,
+    #[serde(default)]
+    pub max_scan_blocks: Option<u64>,
+    #[serde(default)]
     pub deployments_path: Option<String>,
     pub tokens: Vec<EvmEscrowTokenConfig>,
 }
@@ -236,6 +240,12 @@ pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
             evm.poll_interval_secs > 0,
             "evm_escrow poll_interval_secs must be positive"
         );
+        if let Some(max_scan_blocks) = evm.max_scan_blocks {
+            anyhow::ensure!(
+                max_scan_blocks > 0,
+                "evm_escrow max_scan_blocks must be positive"
+            );
+        }
         anyhow::ensure!(
             !evm.tokens.is_empty(),
             "evm_escrow tokens must not be empty"
@@ -350,6 +360,8 @@ mod tests {
             default_token: "0x0000000000000000000000000000000000000002".into(),
             confirmations: 1,
             poll_interval_secs: 2,
+            start_block: Some(0),
+            max_scan_blocks: Some(100),
             deployments_path: Some("contracts/deployments/local.json".into()),
             tokens: vec![EvmEscrowTokenConfig {
                 symbol: "USDC".into(),
@@ -422,6 +434,28 @@ mod tests {
         let config = config_with_evm_escrow(evm);
 
         assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn validates_evm_escrow_scan_bounds_when_enabled() {
+        let mut evm = valid_evm_escrow_config();
+        evm.max_scan_blocks = Some(250);
+        evm.start_block = Some(12);
+        let config = config_with_evm_escrow(evm);
+
+        validate_config(&config).unwrap();
+    }
+
+    #[test]
+    fn rejects_zero_evm_escrow_scan_bound() {
+        let mut evm = valid_evm_escrow_config();
+        evm.max_scan_blocks = Some(0);
+        let config = config_with_evm_escrow(evm);
+
+        assert_eq!(
+            validate_config(&config).unwrap_err().to_string(),
+            "evm_escrow max_scan_blocks must be positive",
+        );
     }
 
     #[test]
