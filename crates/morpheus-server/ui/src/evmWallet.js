@@ -27,6 +27,13 @@ export const escrowAbi = [
       { name: "arbiter", type: "address" }
     ],
     outputs: []
+  },
+  {
+    type: "function",
+    name: "release",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "order_hash", type: "bytes32" }],
+    outputs: []
   }
 ];
 
@@ -102,8 +109,28 @@ export async function requestEvmEscrowDeposit(order, ethereum = window.ethereum)
   };
 }
 
-export async function requestEvmEscrowRelease(_order) {
-  throw new Error("EVM wallet release requires Task 8");
+export function buildReleaseCall(order) {
+  const confirmation = requireConfirmation(order);
+  return {
+    address: confirmation.escrow_contract,
+    abi: escrowAbi,
+    functionName: "release",
+    args: [confirmation.order_hash]
+  };
+}
+
+export async function requestEvmEscrowRelease(order, ethereum = window.ethereum) {
+  const confirmation = requireConfirmation(order);
+  const wallet = createWalletClient({ transport: custom(requireEthereum(ethereum)) });
+  const [account] = await wallet.requestAddresses();
+  await switchWalletChain(ethereum, confirmation.chain_id);
+  const release = buildReleaseCall(order);
+  const releaseTxHash = await wallet.writeContract({ ...release, account });
+  return {
+    account,
+    release_tx_hash: releaseTxHash,
+    status: "submitted_waiting_for_watcher"
+  };
 }
 
 export async function requestEvmEscrowRefund(_order) {

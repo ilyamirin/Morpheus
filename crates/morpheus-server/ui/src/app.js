@@ -1335,6 +1335,16 @@ globalThis.MorpheusEvmWallet = {
     return `<div class="wallet-action-row"><button class="btn btn-small btn-primary" type="button" data-evm-escrow-deposit data-order-id="${esc(order.order_id || "")}">Approve and deposit</button><span class="mono">${esc(confirmation.order_hash || "order hash pending")}</span></div>`;
   }
 
+  function evmEscrowSellerReleaseAction(order) {
+    if (!isEvmEscrowOrder(order)) return "";
+    const confirmation = evmEscrowConfirmation(order);
+    const status = String((order && order.status) || "");
+    if (!confirmation || !/payment_authorized|payment_captured|entitlement_granted|entitlement_completed/.test(status)) {
+      return "";
+    }
+    return `<div class="wallet-action-row"><button class="btn btn-small btn-primary" type="button" data-evm-escrow-release data-order-id="${esc(order.order_id || "")}">Release escrow</button><span class="mono">${esc(confirmation.order_hash || "order hash pending")}</span></div>`;
+  }
+
   function sellerOrderActionRow(order) {
     const status = String((order && order.status) || "").toLowerCase();
     const actions = sellerOrderActions(status);
@@ -1377,7 +1387,7 @@ globalThis.MorpheusEvmWallet = {
         const title = displayId(order.order_id, "Order");
         const offer = displayId(order.offer_id, "Offer not attached");
         const actor = columns === 5 ? displayId(order.customer_id, "Customer not attached") : sellerName(order.seller_id);
-        const sellerActions = columns === 5 ? sellerOrderActionRow(order) : "";
+        const sellerActions = columns === 5 ? `${sellerOrderActionRow(order)}${evmEscrowSellerReleaseAction(order)}` : "";
         const walletAction = columns === 5 ? "" : evmEscrowWalletAction(order);
         return `<article class="order-card"><div class="section-head compact-head"><div><p class="eyebrow">${esc(actor)}</p><h3>${esc(title)}</h3><p class="mono">${esc(offer)}</p></div>${statusBadge(order.status)}</div>${orderTimeline(order)}${walletAction}${sellerActions}</article>`;
       });
@@ -1692,6 +1702,20 @@ globalThis.MorpheusEvmWallet = {
       const quickAddToggle = event.target.closest("[data-seller-quick-add-toggle]");
       if (quickAddToggle) {
         setSellerQuickAddOpen(true);
+        return;
+      }
+      const evmRelease = event.target.closest("[data-evm-escrow-release]");
+      if (evmRelease) {
+        const order = state.orders.find((item) => item.order_id === evmRelease.dataset.orderId);
+        requestEvmEscrowRelease(order)
+          .then((result) => {
+            showResult("EVM escrow release", "submitted_waiting_for_watcher", result);
+            toast("Transaction submitted", "success", "Waiting for Morpheus watcher confirmation.");
+          })
+          .catch((error) => {
+            showResult("EVM escrow release", "wallet_unavailable", { error: error.message });
+            toast("Wallet unavailable", "error", error.message);
+          });
         return;
       }
       const orderAction = event.target.closest("[data-seller-order-step]");
