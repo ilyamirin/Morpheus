@@ -27,6 +27,26 @@ event EscrowDeposited:
     token: address
     amount: uint256
 
+event EscrowReleased:
+    order_hash: indexed(bytes32)
+    seller: indexed(address)
+    token: address
+    amount: uint256
+
+event EscrowRefunded:
+    order_hash: indexed(bytes32)
+    buyer: indexed(address)
+    token: address
+    amount: uint256
+
+event EscrowPartiallyRefunded:
+    order_hash: indexed(bytes32)
+    buyer: indexed(address)
+    seller: indexed(address)
+    token: address
+    buyer_amount: uint256
+    seller_amount: uint256
+
 @deploy
 def __init__(_admin: address):
     assert _admin != empty(address), "ZERO_ADMIN"
@@ -83,3 +103,43 @@ def deposit(order_hash: bytes32, token: address, amount: uint256, seller: addres
     })
     assert extcall ERC20(token).transferFrom(buyer, self, amount), "TRANSFER_FROM"
     log EscrowDeposited(order_hash, buyer, seller, token, amount)
+
+@external
+@nonreentrant
+def release(order_hash: bytes32):
+    assert not self.paused, "PAUSED"
+    assert self.seller_operators[msg.sender], "NOT_OPERATOR"
+    escrow: Escrow = self.escrows[order_hash]
+    assert escrow.status == 1, "NOT_DEPOSITED"
+
+    self.escrows[order_hash].status = 2
+    assert extcall ERC20(escrow.token).transfer(escrow.seller, escrow.amount), "TRANSFER"
+    log EscrowReleased(order_hash, escrow.seller, escrow.token, escrow.amount)
+
+@external
+@nonreentrant
+def refund(order_hash: bytes32):
+    assert not self.paused, "PAUSED"
+    escrow: Escrow = self.escrows[order_hash]
+    assert self.arbiters[msg.sender] or msg.sender == escrow.arbiter, "NOT_ARBITER"
+    assert escrow.status == 1, "NOT_DEPOSITED"
+
+    self.escrows[order_hash].status = 3
+    assert extcall ERC20(escrow.token).transfer(escrow.buyer, escrow.amount), "TRANSFER"
+    log EscrowRefunded(order_hash, escrow.buyer, escrow.token, escrow.amount)
+
+@external
+@nonreentrant
+def partial_refund(order_hash: bytes32, buyer_amount: uint256):
+    assert not self.paused, "PAUSED"
+    escrow: Escrow = self.escrows[order_hash]
+    assert self.arbiters[msg.sender] or msg.sender == escrow.arbiter, "NOT_ARBITER"
+    assert escrow.status == 1, "NOT_DEPOSITED"
+    assert buyer_amount > 0, "ZERO_REFUND"
+    assert buyer_amount < escrow.amount, "REFUND_TOO_LARGE"
+
+    seller_amount: uint256 = escrow.amount - buyer_amount
+    self.escrows[order_hash].status = 4
+    assert extcall ERC20(escrow.token).transfer(escrow.buyer, buyer_amount), "BUYER_TRANSFER"
+    assert extcall ERC20(escrow.token).transfer(escrow.seller, seller_amount), "SELLER_TRANSFER"
+    log EscrowPartiallyRefunded(order_hash, escrow.buyer, escrow.seller, escrow.token, buyer_amount, seller_amount)
