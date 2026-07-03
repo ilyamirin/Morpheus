@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::evm_escrow::{ExpectedEscrowPayment, map_escrow_log_to_payment_event};
 use crate::evm_rpc::{EvmRpcClient, RpcLog, RpcReceipt};
+use crate::{MatrixPublisher, ServerConfig, watcher_payment_event};
 
 #[async_trait]
 pub trait EvmLogSource: Clone + Send + Sync + 'static {
@@ -81,6 +82,74 @@ struct ExpectedPaymentContext {
     payment_id: String,
     currency: String,
     expected: ExpectedEscrowPayment,
+}
+
+#[derive(Clone)]
+pub struct MatrixWatcherPublisher<P> {
+    server_config: ServerConfig,
+    publisher: P,
+}
+
+impl<P> MatrixWatcherPublisher<P> {
+    pub fn new(server_config: ServerConfig, publisher: P) -> Self {
+        Self {
+            server_config,
+            publisher,
+        }
+    }
+}
+
+#[async_trait]
+impl<P> WatcherPublisher for MatrixWatcherPublisher<P>
+where
+    P: MatrixPublisher,
+{
+    async fn publish_payment_event(
+        &self,
+        room_id: &str,
+        event_type: &str,
+        body: Value,
+    ) -> Result<Value, ValidationError> {
+        let event = watcher_payment_event(&self.server_config, room_id, event_type, body);
+        let mut published = self.publisher.publish(vec![event]).await?;
+        published
+            .pop()
+            .ok_or_else(|| watcher_error("watcher publisher returned no event"))
+    }
+}
+
+pub fn spawn_evm_escrow_watcher<S, P>(
+    store: S,
+    publisher: P,
+    server_config: ServerConfig,
+    rpc_url: String,
+) where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    tokio::spawn(async move {
+        let source = EvmRpcClient::new(rpc_url);
+        let watcher_publisher =
+            MatrixWatcherPublisher::new(server_config.clone(), publisher.clone());
+        let poll_interval_secs = server_config
+            .evm_escrow
+            .as_ref()
+            .map(|evm| evm.poll_interval_secs)
+            .unwrap_or(5);
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(poll_interval_secs));
+        loop {
+            interval.tick().await;
+            let Some(evm) = server_config.evm_escrow.clone() else {
+                continue;
+            };
+            let scan_config = WatcherScanConfig {
+                evm,
+                instance_id: server_config.instance_id.clone(),
+            };
+            let _ = scan_once(&store, &source, &watcher_publisher, scan_config).await;
+        }
+    });
 }
 
 pub async fn scan_once<S, R, P>(

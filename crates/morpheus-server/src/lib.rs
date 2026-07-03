@@ -22,7 +22,10 @@ use morpheus_store::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    env,
+};
 use ulid::Ulid;
 
 mod context_validation;
@@ -769,6 +772,10 @@ where
             post(admin_evm_escrow_replay::<S, P>),
         )
         .route(
+            "/admin/evm-escrow/status",
+            get(admin_evm_escrow_status::<S, P>),
+        )
+        .route(
             "/admin/rooms/bootstrap",
             post(admin_rooms_bootstrap::<S, P>),
         )
@@ -1403,15 +1410,33 @@ where
             );
         }
     };
-    let chain_id = match i64::try_from(evm.chain_id) {
-        Ok(chain_id) => chain_id,
+    let rpc_url = match env::var(&evm.rpc_url_env) {
+        Ok(rpc_url) => rpc_url,
         Err(_) => {
             return validation_error_response(
-                "EVM_ESCROW_CHAIN_ID_UNSUPPORTED",
-                "evm escrow chain_id exceeds supported signed range",
+                "EVM_ESCROW_RPC_URL_MISSING",
+                format!("missing EVM RPC URL env {}", evm.rpc_url_env),
             );
         }
     };
+    let source = evm_rpc::EvmRpcClient::new(rpc_url);
+    let watcher_publisher =
+        evm_watcher::MatrixWatcherPublisher::new(state.config.clone(), state.publisher.clone());
+    let result = match evm_watcher::scan_once(
+        &state.store,
+        &source,
+        &watcher_publisher,
+        evm_watcher::WatcherScanConfig {
+            evm: evm.clone(),
+            instance_id: state.config.instance_id.clone(),
+        },
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    let chain_id = evm.chain_id as i64;
     let checkpoint = match state
         .store
         .evm_escrow_checkpoint(chain_id, &evm.escrow_contract)
@@ -1423,17 +1448,62 @@ where
 
     Json(json!({
         "status": "ok",
-        "scanned": 0,
-        "accepted": 0,
-        "duplicates": 0,
+        "scanned": result.scanned,
+        "accepted": result.accepted,
+        "duplicates": result.duplicates,
+        "rejected": result.rejected,
+        "from_block": result.from_block,
+        "to_block": result.to_block,
         "checkpoint": {
             "chain_id": chain_id,
             "escrow_contract": evm.escrow_contract,
             "latest_scanned_block": checkpoint,
         },
-        "rpc_scan": {
-            "enabled": false,
-            "reason": "json_rpc_log_scanning_not_implemented",
+        "rpc_scan": { "enabled": true },
+    }))
+    .into_response()
+}
+
+async fn admin_evm_escrow_status<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if !admin_authorized(&headers, &state.config.admin_token) {
+        return admin_unauthorized();
+    }
+    let Some(evm) = state.config.evm_escrow.as_ref().filter(|evm| evm.enabled) else {
+        return Json(json!({"enabled": false})).into_response();
+    };
+    let chain_id = evm.chain_id as i64;
+    let checkpoint = match state
+        .store
+        .evm_escrow_checkpoint(chain_id, &evm.escrow_contract)
+        .await
+    {
+        Ok(checkpoint) => checkpoint,
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+
+    Json(json!({
+        "enabled": true,
+        "chain_id": evm.chain_id,
+        "escrow_contract": evm.escrow_contract,
+        "confirmations": evm.confirmations,
+        "poll_interval_secs": evm.poll_interval_secs,
+        "start_block": evm.start_block,
+        "max_scan_blocks": evm.max_scan_blocks,
+        "checkpoint": {
+            "chain_id": chain_id,
+            "escrow_contract": evm.escrow_contract,
+            "latest_scanned_block": checkpoint,
+        },
+        "watcher": {
+            "mode": "embedded",
+            "rpc_url_env": evm.rpc_url_env,
         },
     }))
     .into_response()
@@ -2903,6 +2973,21 @@ fn marketplace_event(
             "body": body,
         },
     })
+}
+
+pub fn watcher_payment_event(
+    config: &ServerConfig,
+    room_id: &str,
+    event_type: &str,
+    body: Value,
+) -> Value {
+    marketplace_event(
+        config,
+        event_type,
+        room_id,
+        &format!("arbiter:{}:EVMWATCHER", config.instance_id),
+        body,
+    )
 }
 
 fn authorize_actor(

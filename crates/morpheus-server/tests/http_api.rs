@@ -901,6 +901,7 @@ async fn admin_endpoints_reject_missing_malformed_and_wrong_bearer_auth() {
         ("GET", "/admin/allowlist"),
         ("POST", "/admin/catalog/rebuild"),
         ("POST", "/admin/evm-escrow/replay"),
+        ("GET", "/admin/evm-escrow/status"),
         ("POST", "/admin/orders/ord:customer.example:01JORDER/replay"),
     ];
     let rejected_authorization = [
@@ -926,7 +927,7 @@ async fn admin_endpoints_reject_missing_malformed_and_wrong_bearer_auth() {
 }
 
 #[tokio::test]
-async fn admin_evm_escrow_replay_reports_bounded_zero_scan_counts() {
+async fn admin_evm_escrow_replay_rejects_missing_rpc_url_env() {
     let store = InMemoryEventStore::default();
     store
         .set_evm_escrow_checkpoint(31337, "0x0000000000000000000000000000000000000001", 12)
@@ -941,25 +942,36 @@ async fn admin_evm_escrow_replay_reports_bounded_zero_scan_counts() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert_eq!(
         body,
         json!({
-            "status": "ok",
-            "scanned": 0,
-            "accepted": 0,
-            "duplicates": 0,
-            "checkpoint": {
-                "chain_id": 31337,
-                "escrow_contract": "0x0000000000000000000000000000000000000001",
-                "latest_scanned_block": 12,
-            },
-            "rpc_scan": {
-                "enabled": false,
-                "reason": "json_rpc_log_scanning_not_implemented",
-            },
+            "code": "EVM_ESCROW_RPC_URL_MISSING",
+            "error": "missing EVM RPC URL env EVM_RPC_URL",
         })
     );
+}
+
+#[tokio::test]
+async fn admin_evm_escrow_status_reports_checkpoint_and_config() {
+    let store = InMemoryEventStore::default();
+    store
+        .set_evm_escrow_checkpoint(31337, "0x0000000000000000000000000000000000000001", 12)
+        .await
+        .unwrap();
+    let (status, body) = send_admin_request(
+        store,
+        "GET",
+        "/admin/evm-escrow/status",
+        Some("Bearer admin-token"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["chain_id"], 31337);
+    assert_eq!(body["checkpoint"]["latest_scanned_block"], 12);
+    assert_eq!(body["watcher"]["mode"], "embedded");
 }
 
 #[tokio::test]

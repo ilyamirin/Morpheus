@@ -100,29 +100,36 @@ async fn main() -> Result<()> {
     );
     let store = PostgresEventStore::new(pool);
     spawn_remote_catalog_indexer(store.clone(), remote_catalog_sources);
-    let app = build_router_with_publisher(
-        ServerConfig {
-            instance_id: config.instance.instance_id,
-            matrix_server_name: config.instance.matrix_server_name,
-            catalog_room_id,
-            catalog_room_alias: config.instance.catalog_room_alias,
-            order_room_alias_prefix: config.instance.order_room_alias_prefix,
-            appservice_sender_localpart: config.appservice.sender_localpart,
-            homeserver_token: config.appservice.homeserver_token,
-            admin_token,
-            seller_token,
-            buyer_token,
-            evm_escrow: config.payments.as_ref().and_then(|payments| {
-                payments
-                    .evm_escrow
-                    .as_ref()
-                    .filter(|evm_escrow| evm_escrow.enabled)
-                    .cloned()
-            }),
-        },
-        store,
-        publisher,
-    );
+    let server_config = ServerConfig {
+        instance_id: config.instance.instance_id,
+        matrix_server_name: config.instance.matrix_server_name,
+        catalog_room_id,
+        catalog_room_alias: config.instance.catalog_room_alias,
+        order_room_alias_prefix: config.instance.order_room_alias_prefix,
+        appservice_sender_localpart: config.appservice.sender_localpart,
+        homeserver_token: config.appservice.homeserver_token,
+        admin_token,
+        seller_token,
+        buyer_token,
+        evm_escrow: config.payments.as_ref().and_then(|payments| {
+            payments
+                .evm_escrow
+                .as_ref()
+                .filter(|evm_escrow| evm_escrow.enabled)
+                .cloned()
+        }),
+    };
+    if let Some(evm) = server_config.evm_escrow.as_ref().filter(|evm| evm.enabled) {
+        let rpc_url = env::var(&evm.rpc_url_env)
+            .with_context(|| format!("missing EVM RPC URL env {}", evm.rpc_url_env))?;
+        morpheus_server::evm_watcher::spawn_evm_escrow_watcher(
+            store.clone(),
+            publisher.clone(),
+            server_config.clone(),
+            rpc_url,
+        );
+    }
+    let app = build_router_with_publisher(server_config, store, publisher);
     let listener = tokio::net::TcpListener::bind(&config.admin.bind)
         .await
         .with_context(|| format!("binding {}", config.admin.bind))?;
