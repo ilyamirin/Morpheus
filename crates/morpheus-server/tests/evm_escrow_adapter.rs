@@ -1,4 +1,6 @@
-use morpheus_server::evm_escrow::{compute_order_hash, EvmEscrowIntentInput};
+use morpheus_server::evm_escrow::{
+    compute_order_hash, map_escrow_log_to_payment_event, DecodedEscrowLog, EvmEscrowIntentInput,
+};
 use serde_json::json;
 
 fn locked_terms_input() -> EvmEscrowIntentInput {
@@ -22,6 +24,25 @@ fn locked_terms_input() -> EvmEscrowIntentInput {
         buyer_evm_address: "0x0000000000000000000000000000000000000004".into(),
         arbiter_actor: "arbiter:shop.example:01JARBITER".into(),
         arbiter_evm_address: "0x0000000000000000000000000000000000000005".into(),
+    }
+}
+
+fn deposited_log_fixture() -> DecodedEscrowLog {
+    DecodedEscrowLog {
+        event_name: "EscrowDeposited".into(),
+        order_hash: "0x1111111111111111111111111111111111111111111111111111111111111111".into(),
+        tx_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        log_index: 0,
+        block_number: 10,
+        block_hash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        chain_id: 31337,
+        escrow_contract: "0x0000000000000000000000000000000000000001".into(),
+        token: "0x0000000000000000000000000000000000000002".into(),
+        amount: "25000000".into(),
+        buyer: Some("0x0000000000000000000000000000000000000004".into()),
+        seller: Some("0x0000000000000000000000000000000000000003".into()),
+        buyer_amount: None,
+        seller_amount: None,
     }
 }
 
@@ -59,4 +80,20 @@ fn order_hash_pins_canonical_fields_and_lowercases_evm_addresses() {
         lower_hash,
         "0x5978eba3efc797dfeb1b78b080b4adc0e664ad37d3df3ad2190fa8dd579b82fd"
     );
+}
+
+#[test]
+fn deposited_log_maps_to_payment_authorized() {
+    let log = deposited_log_fixture();
+
+    let mapped = map_escrow_log_to_payment_event(
+        "ord:shop.example:01JORDER",
+        "pay:shop.example:01JPAY",
+        &log,
+    )
+    .unwrap();
+
+    assert_eq!(mapped.event_type, "io.marketplace.payment.authorized");
+    assert_eq!(mapped.body["order_id"], "ord:shop.example:01JORDER");
+    assert_eq!(mapped.body["payment_id"], "pay:shop.example:01JPAY");
 }
