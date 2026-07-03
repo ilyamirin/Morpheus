@@ -2552,7 +2552,7 @@ where
             "display_name": request.customer_display_name,
             "instance_id": state.config.instance_id,
             "authorized_representatives": [format!("@{}:{}", state.config.appservice_sender_localpart, state.config.matrix_server_name)],
-            "accepted_payment_adapters": ["mock"],
+            "accepted_payment_adapters": [request.payment_adapter.clone()],
             "accepted_arbitration_policies": [request.arbitration_policy_id.clone()],
         }),
     );

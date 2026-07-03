@@ -1404,6 +1404,50 @@ async fn buyer_order_create_publishes_customer_binding_before_order_created() {
 }
 
 #[tokio::test]
+async fn buyer_order_create_accepts_evm_escrow_in_customer_binding() {
+    let store = store_with_admin_projection_data().await;
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/buyer/orders",
+        Some("Bearer buyer-token"),
+        json!({
+            "customer_id": "customer:shop.example:01JCUST",
+            "customer_display_name": "Fixture Customer",
+            "order_id": "ord:shop.example:01JEVMFLOW",
+            "seller_id": "seller:shop.example:01JSELLER",
+            "offer_id": "offer:shop.example:01JOFFER",
+            "offer_revision": 1,
+            "catalog_snapshot_id": "snap:shop.example:01JSNAP",
+            "price": {"amount": "100.00", "currency": "USD"},
+            "payment_adapter": "evm_escrow",
+            "payment_capture_policy": "before_entitlement",
+            "entitlement_type": "external_entitlement",
+            "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "arbiter_instance": "cases.example",
+            "arbiter_actor": "arbiter:cases.example:01JARBITER",
+            "arbitration_policy_id": "standard-digital-v1",
+            "arbitration_policy_version": "1",
+            "arbitration_window": "P14D",
+            "expires_at": "2026-05-04T10:30:00Z"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let events = store
+        .marketplace_events_by_room("!marketplace-order-ord-shop-example-01jevmflow:shop.example")
+        .await
+        .unwrap();
+    assert_eq!(events[0].event_type, "io.marketplace.actor.customer.bound");
+    assert_eq!(
+        events[0].body["accepted_payment_adapters"],
+        json!(["evm_escrow"])
+    );
+}
+
+#[tokio::test]
 async fn buyer_order_create_rejects_foreign_customer_actor() {
     let (status, body) = send_json_request(
         store_with_admin_projection_data().await,
