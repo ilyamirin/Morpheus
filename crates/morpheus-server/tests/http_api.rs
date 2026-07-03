@@ -71,6 +71,8 @@ fn server_config() -> ServerConfig {
             default_token: "0x0000000000000000000000000000000000000002".into(),
             confirmations: 1,
             poll_interval_secs: 1,
+            start_block: Some(0),
+            max_scan_blocks: Some(100),
             deployments_path: None,
             tokens: vec![EvmEscrowTokenConfig {
                 symbol: "USDC".into(),

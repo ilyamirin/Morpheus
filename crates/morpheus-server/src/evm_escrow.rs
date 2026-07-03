@@ -3,6 +3,25 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EscrowEventTopics {
+    pub deposited: String,
+    pub released: String,
+    pub refunded: String,
+    pub partially_refunded: String,
+}
+
+impl EscrowEventTopics {
+    pub fn all(&self) -> Vec<String> {
+        vec![
+            self.deposited.clone(),
+            self.released.clone(),
+            self.refunded.clone(),
+            self.partially_refunded.clone(),
+        ]
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvmEscrowIntentInput {
     pub protocol: String,
@@ -59,6 +78,112 @@ pub struct ExpectedEscrowPayment {
 pub struct PaymentEventDraft {
     pub event_type: String,
     pub body: Value,
+}
+
+pub fn escrow_event_topics() -> EscrowEventTopics {
+    EscrowEventTopics {
+        deposited: event_topic("EscrowDeposited(bytes32,address,address,address,uint256)"),
+        released: event_topic("EscrowReleased(bytes32,address,address,uint256)"),
+        refunded: event_topic("EscrowRefunded(bytes32,address,address,uint256)"),
+        partially_refunded: event_topic(
+            "EscrowPartiallyRefunded(bytes32,address,address,address,uint256,uint256)",
+        ),
+    }
+}
+
+pub fn decode_rpc_log(
+    chain_id: i64,
+    log: &crate::evm_rpc::RpcLog,
+) -> Result<DecodedEscrowLog, ValidationError> {
+    let topics = escrow_event_topics();
+    let topic0 = log
+        .topics
+        .first()
+        .ok_or_else(|| evm_decode_error("evm escrow log missing topic0"))?;
+    let words = data_words(&log.data)?;
+    let order_hash = topic_bytes32(required_topic(log, 1)?)?;
+
+    if topic0 == &topics.deposited {
+        return Ok(DecodedEscrowLog {
+            event_name: "EscrowDeposited".into(),
+            order_hash,
+            tx_hash: log.transaction_hash.clone(),
+            log_index: log.log_index,
+            block_number: log.block_number,
+            block_hash: log.block_hash.clone(),
+            chain_id,
+            escrow_contract: log.address.to_lowercase(),
+            token: word_address(required_word(&words, 0)?)?,
+            amount: word_uint(required_word(&words, 1)?)?,
+            buyer: Some(topic_address(required_topic(log, 2)?)?),
+            seller: Some(topic_address(required_topic(log, 3)?)?),
+            buyer_amount: None,
+            seller_amount: None,
+        });
+    }
+
+    if topic0 == &topics.released {
+        return Ok(DecodedEscrowLog {
+            event_name: "EscrowReleased".into(),
+            order_hash,
+            tx_hash: log.transaction_hash.clone(),
+            log_index: log.log_index,
+            block_number: log.block_number,
+            block_hash: log.block_hash.clone(),
+            chain_id,
+            escrow_contract: log.address.to_lowercase(),
+            token: word_address(required_word(&words, 0)?)?,
+            amount: word_uint(required_word(&words, 1)?)?,
+            buyer: None,
+            seller: Some(topic_address(required_topic(log, 2)?)?),
+            buyer_amount: None,
+            seller_amount: None,
+        });
+    }
+
+    if topic0 == &topics.refunded {
+        return Ok(DecodedEscrowLog {
+            event_name: "EscrowRefunded".into(),
+            order_hash,
+            tx_hash: log.transaction_hash.clone(),
+            log_index: log.log_index,
+            block_number: log.block_number,
+            block_hash: log.block_hash.clone(),
+            chain_id,
+            escrow_contract: log.address.to_lowercase(),
+            token: word_address(required_word(&words, 0)?)?,
+            amount: word_uint(required_word(&words, 1)?)?,
+            buyer: Some(topic_address(required_topic(log, 2)?)?),
+            seller: None,
+            buyer_amount: None,
+            seller_amount: None,
+        });
+    }
+
+    if topic0 == &topics.partially_refunded {
+        let buyer_amount = word_uint(required_word(&words, 1)?)?;
+        let seller_amount = word_uint(required_word(&words, 2)?)?;
+        return Ok(DecodedEscrowLog {
+            event_name: "EscrowPartiallyRefunded".into(),
+            order_hash,
+            tx_hash: log.transaction_hash.clone(),
+            log_index: log.log_index,
+            block_number: log.block_number,
+            block_hash: log.block_hash.clone(),
+            chain_id,
+            escrow_contract: log.address.to_lowercase(),
+            token: word_address(required_word(&words, 0)?)?,
+            amount: sum_uint_strings(&buyer_amount, &seller_amount)?,
+            buyer: Some(topic_address(required_topic(log, 2)?)?),
+            seller: Some(topic_address(required_topic(log, 3)?)?),
+            buyer_amount: Some(buyer_amount),
+            seller_amount: Some(seller_amount),
+        });
+    }
+
+    Err(evm_decode_error(format!(
+        "unknown evm escrow topic {topic0}"
+    )))
 }
 
 pub fn compute_order_hash(input: &EvmEscrowIntentInput) -> Result<String, ValidationError> {
@@ -234,4 +359,100 @@ fn assert_full_tx_hash(tx_hash: &str) -> Result<(), ValidationError> {
     }
 
     Ok(())
+}
+
+fn event_topic(signature: &str) -> String {
+    format!("{:#x}", alloy_primitives::keccak256(signature.as_bytes()))
+}
+
+fn topic_bytes32(topic: &str) -> Result<String, ValidationError> {
+    let hex = topic_hex(topic)?;
+    if hex.len() != 64 {
+        return Err(evm_decode_error("evm escrow topic must be 32 bytes"));
+    }
+    Ok(format!("0x{}", hex.to_ascii_lowercase()))
+}
+
+fn topic_address(topic: &str) -> Result<String, ValidationError> {
+    let hex = topic_hex(topic)?;
+    if hex.len() != 64 {
+        return Err(evm_decode_error(
+            "evm escrow address topic must be 32 bytes",
+        ));
+    }
+    Ok(format!("0x{}", hex[24..].to_ascii_lowercase()))
+}
+
+fn data_words(data: &str) -> Result<Vec<String>, ValidationError> {
+    let hex = data
+        .strip_prefix("0x")
+        .ok_or_else(|| evm_decode_error("evm escrow data missing 0x prefix"))?;
+    if hex.len() % 64 != 0 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(evm_decode_error(
+            "evm escrow data must contain 32-byte words",
+        ));
+    }
+    Ok(hex
+        .as_bytes()
+        .chunks(64)
+        .map(|chunk| String::from_utf8_lossy(chunk).to_string())
+        .collect())
+}
+
+fn word_address(word: &str) -> Result<String, ValidationError> {
+    if !is_hex_word(word) {
+        return Err(evm_decode_error("evm escrow address word must be 32 bytes"));
+    }
+    Ok(format!("0x{}", word[24..].to_ascii_lowercase()))
+}
+
+fn word_uint(word: &str) -> Result<String, ValidationError> {
+    if !is_hex_word(word) {
+        return Err(evm_decode_error("evm escrow uint word must be 32 bytes"));
+    }
+    alloy_primitives::U256::from_str_radix(word, 16)
+        .map(|value| value.to_string())
+        .map_err(|err| evm_decode_error(format!("invalid evm escrow uint word: {err}")))
+}
+
+fn sum_uint_strings(left: &str, right: &str) -> Result<String, ValidationError> {
+    let left = alloy_primitives::U256::from_str_radix(left, 10)
+        .map_err(|err| evm_decode_error(format!("invalid evm escrow uint amount: {err}")))?;
+    let right = alloy_primitives::U256::from_str_radix(right, 10)
+        .map_err(|err| evm_decode_error(format!("invalid evm escrow uint amount: {err}")))?;
+    left.checked_add(right)
+        .map(|value| value.to_string())
+        .ok_or_else(|| evm_decode_error("evm escrow uint amount overflow"))
+}
+
+fn required_topic(log: &crate::evm_rpc::RpcLog, index: usize) -> Result<&str, ValidationError> {
+    log.topics
+        .get(index)
+        .map(String::as_str)
+        .ok_or_else(|| evm_decode_error(format!("evm escrow log missing topic {index}")))
+}
+
+fn required_word(words: &[String], index: usize) -> Result<&str, ValidationError> {
+    words
+        .get(index)
+        .map(String::as_str)
+        .ok_or_else(|| evm_decode_error(format!("evm escrow log missing data word {index}")))
+}
+
+fn topic_hex(topic: &str) -> Result<&str, ValidationError> {
+    let hex = topic
+        .strip_prefix("0x")
+        .ok_or_else(|| evm_decode_error("evm escrow topic missing 0x prefix"))?;
+    if !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(evm_decode_error("evm escrow topic must be hex"));
+    }
+    Ok(hex)
+}
+
+fn is_hex_word(word: &str) -> bool {
+    word.len() == 64 && word.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn evm_decode_error(message: impl Into<String>) -> ValidationError {
+    ValidationError::new(ValidationCode::PolicyViolation, message.into())
 }

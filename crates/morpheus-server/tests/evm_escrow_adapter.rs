@@ -1,8 +1,9 @@
 use morpheus_protocol::{ValidationCode, validate_event_envelope};
 use morpheus_server::evm_escrow::{
     DecodedEscrowLog, EvmEscrowIntentInput, ExpectedEscrowPayment, compute_order_hash,
-    map_escrow_log_to_payment_event, verify_decoded_log,
+    decode_rpc_log, escrow_event_topics, map_escrow_log_to_payment_event, verify_decoded_log,
 };
+use morpheus_server::evm_rpc::RpcLog;
 use serde_json::{Value, json};
 
 fn locked_terms_input() -> EvmEscrowIntentInput {
@@ -375,4 +376,47 @@ fn refunded_log_rejects_short_tx_hash_without_panicking() {
     .unwrap_err();
 
     assert_eq!(err.code, ValidationCode::InvalidId);
+}
+
+#[test]
+fn decodes_deposited_rpc_log() {
+    let topics = escrow_event_topics();
+    let log = RpcLog {
+        address: "0x0000000000000000000000000000000000000001".into(),
+        block_hash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        block_number: 10,
+        transaction_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            .into(),
+        log_index: 0,
+        topics: vec![
+            topics.deposited.clone(),
+            "0x1111111111111111111111111111111111111111111111111111111111111111".into(),
+            "0x0000000000000000000000000000000000000000000000000000000000000004".into(),
+            "0x0000000000000000000000000000000000000000000000000000000000000003".into(),
+        ],
+        data: concat!(
+            "0x",
+            "0000000000000000000000000000000000000000000000000000000000000002",
+            "00000000000000000000000000000000000000000000000000000000017d7840",
+        )
+        .into(),
+    };
+
+    let decoded = decode_rpc_log(31337, &log).unwrap();
+
+    assert_eq!(decoded.event_name, "EscrowDeposited");
+    assert_eq!(
+        decoded.order_hash,
+        "0x1111111111111111111111111111111111111111111111111111111111111111"
+    );
+    assert_eq!(decoded.token, "0x0000000000000000000000000000000000000002");
+    assert_eq!(decoded.amount, "25000000");
+    assert_eq!(
+        decoded.buyer.as_deref(),
+        Some("0x0000000000000000000000000000000000000004")
+    );
+    assert_eq!(
+        decoded.seller.as_deref(),
+        Some("0x0000000000000000000000000000000000000003")
+    );
 }

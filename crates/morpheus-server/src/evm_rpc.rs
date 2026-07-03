@@ -101,6 +101,46 @@ impl EvmRpcClient {
             .and_then(parse_hex_quantity)
     }
 
+    pub async fn get_logs(
+        &self,
+        from_block: i64,
+        to_block: i64,
+        address: &str,
+        topics: &[String],
+    ) -> Result<Vec<RpcLog>, ValidationError> {
+        let value = self
+            .call(
+                "eth_getLogs",
+                serde_json::json!([{
+                    "fromBlock": hex_quantity(from_block)?,
+                    "toBlock": hex_quantity(to_block)?,
+                    "address": address,
+                    "topics": [topics],
+                }]),
+            )
+            .await?;
+        value
+            .as_array()
+            .ok_or_else(|| rpc_error("eth_getLogs result must be array"))?
+            .iter()
+            .cloned()
+            .map(rpc_log_from_value)
+            .collect()
+    }
+
+    pub async fn transaction_receipt(
+        &self,
+        tx_hash: &str,
+    ) -> Result<Option<RpcReceipt>, ValidationError> {
+        let value = self
+            .call("eth_getTransactionReceipt", serde_json::json!([tx_hash]))
+            .await?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        rpc_receipt_from_value(value).map(Some)
+    }
+
     async fn call(&self, method: &str, params: Value) -> Result<Value, ValidationError> {
         let response = self
             .client
@@ -133,6 +173,13 @@ impl EvmRpcClient {
             .cloned()
             .ok_or_else(|| rpc_error(format!("evm rpc {method} missing result")))
     }
+}
+
+fn hex_quantity(value: i64) -> Result<String, ValidationError> {
+    if value < 0 {
+        return Err(rpc_error("hex quantity cannot be negative"));
+    }
+    Ok(format!("0x{value:x}"))
 }
 
 pub fn rpc_error(message: impl Into<String>) -> ValidationError {
