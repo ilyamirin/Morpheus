@@ -57,7 +57,6 @@ fn expected_payment_fixture() -> ExpectedEscrowPayment {
         amount: "25000000".into(),
         buyer: "0x0000000000000000000000000000000000000004".into(),
         seller: "0x0000000000000000000000000000000000000003".into(),
-        arbiter: "0x0000000000000000000000000000000000000005".into(),
     }
 }
 
@@ -306,6 +305,42 @@ fn watcher_rejects_amount_mismatch() {
     log.amount = "24000000".into();
 
     let err = verify_decoded_log(&expected, &log).unwrap_err();
+    assert_eq!(err.code, ValidationCode::PaymentTermsMismatch);
+}
+
+#[test]
+fn watcher_rejects_participant_mismatch() {
+    let expected = expected_payment_fixture();
+    let mut log = deposited_log_fixture();
+    log.buyer = Some("0x0000000000000000000000000000000000000006".into());
+
+    let err = verify_decoded_log(&expected, &log).unwrap_err();
+    assert_eq!(err.code, ValidationCode::PaymentTermsMismatch);
+}
+
+#[test]
+fn watcher_requires_event_participants() {
+    let expected = expected_payment_fixture();
+
+    let mut deposited = deposited_log_fixture();
+    deposited.buyer = None;
+    let err = verify_decoded_log(&expected, &deposited).unwrap_err();
+    assert_eq!(err.code, ValidationCode::PaymentTermsMismatch);
+
+    let mut released = deposited_log_fixture();
+    released.event_name = "EscrowReleased".into();
+    released.buyer = None;
+    verify_decoded_log(&expected, &released).unwrap();
+    released.seller = None;
+    let err = verify_decoded_log(&expected, &released).unwrap_err();
+    assert_eq!(err.code, ValidationCode::PaymentTermsMismatch);
+
+    let mut refunded = deposited_log_fixture();
+    refunded.event_name = "EscrowRefunded".into();
+    refunded.seller = None;
+    verify_decoded_log(&expected, &refunded).unwrap();
+    refunded.buyer = None;
+    let err = verify_decoded_log(&expected, &refunded).unwrap_err();
     assert_eq!(err.code, ValidationCode::PaymentTermsMismatch);
 }
 

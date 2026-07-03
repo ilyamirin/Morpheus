@@ -53,7 +53,6 @@ pub struct ExpectedEscrowPayment {
     pub amount: String,
     pub buyer: String,
     pub seller: String,
-    pub arbiter: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,25 +142,24 @@ pub fn verify_decoded_log(
     expected: &ExpectedEscrowPayment,
     log: &DecodedEscrowLog,
 ) -> Result<(), ValidationError> {
-    let matches = expected.order_hash.eq_ignore_ascii_case(&log.order_hash)
+    let common_fields_match = expected.order_hash.eq_ignore_ascii_case(&log.order_hash)
         && expected.chain_id == log.chain_id
         && expected
             .escrow_contract
             .eq_ignore_ascii_case(&log.escrow_contract)
         && expected.token.eq_ignore_ascii_case(&log.token)
-        && expected.amount == log.amount
-        && log
-            .buyer
-            .as_deref()
-            .map(|buyer| expected.buyer.eq_ignore_ascii_case(buyer))
-            .unwrap_or(true)
-        && log
-            .seller
-            .as_deref()
-            .map(|seller| expected.seller.eq_ignore_ascii_case(seller))
-            .unwrap_or(true);
+        && expected.amount == log.amount;
+    let participants_match = match log.event_name.as_str() {
+        "EscrowDeposited" | "EscrowPartiallyRefunded" => {
+            participant_matches(log.buyer.as_deref(), &expected.buyer)
+                && participant_matches(log.seller.as_deref(), &expected.seller)
+        }
+        "EscrowReleased" => participant_matches(log.seller.as_deref(), &expected.seller),
+        "EscrowRefunded" => participant_matches(log.buyer.as_deref(), &expected.buyer),
+        _ => false,
+    };
 
-    if matches {
+    if common_fields_match && participants_match {
         Ok(())
     } else {
         Err(ValidationError::new(
@@ -169,6 +167,12 @@ pub fn verify_decoded_log(
             "evm escrow log does not match payment intent",
         ))
     }
+}
+
+fn participant_matches(actual: Option<&str>, expected: &str) -> bool {
+    actual
+        .map(|actual| expected.eq_ignore_ascii_case(actual))
+        .unwrap_or(false)
 }
 
 fn evm_log_evidence(log: &DecodedEscrowLog) -> Result<Value, ValidationError> {
