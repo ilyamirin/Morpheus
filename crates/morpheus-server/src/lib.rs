@@ -22,7 +22,7 @@ use morpheus_store::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use ulid::Ulid;
 
 mod context_validation;
@@ -3042,9 +3042,31 @@ async fn list_orders<S>(store: &S) -> axum::response::Response
 where
     S: EventStore,
 {
-    match store.orders().await {
-        Ok(orders) => Json(json!({ "orders": orders })).into_response(),
-        Err(err) => store_error_response(err.message, err.code),
+    match (store.orders().await, store.payments().await) {
+        (Ok(orders), Ok(payments)) => {
+            let mut payments_by_order = HashMap::new();
+            for payment in payments {
+                payments_by_order.insert(payment.order_id.clone(), payment);
+            }
+            let orders: Vec<Value> = orders
+                .into_iter()
+                .map(|order| {
+                    let mut value = json!(order);
+                    if let Some(payment) = payments_by_order.get(
+                        value
+                            .get("order_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    ) {
+                        value["payment"] = json!(payment);
+                    }
+                    value
+                })
+                .collect();
+            Json(json!({ "orders": orders })).into_response()
+        }
+        (Err(err), _) => store_error_response(err.message, err.code),
+        (_, Err(err)) => store_error_response(err.message, err.code),
     }
 }
 

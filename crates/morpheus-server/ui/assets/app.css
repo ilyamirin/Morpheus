@@ -1400,6 +1400,23 @@ body[data-page="buyer"] .metric-card strong {
   font-size: 12px;
 }
 
+.wallet-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--product-line);
+  padding-top: 10px;
+}
+
+.wallet-action-row .mono {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--product-muted);
+  font-size: 11px;
+}
+
 .flow-panel h2,
 .flow-panel h3,
 .offer-card h3,

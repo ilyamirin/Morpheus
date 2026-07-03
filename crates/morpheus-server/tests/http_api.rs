@@ -583,6 +583,47 @@ async fn buyer_ui_contains_gallery_checkout_anchors_and_hooks() {
 }
 
 #[tokio::test]
+async fn buyer_ui_contains_evm_escrow_wallet_hooks() {
+    let (status, content_type, body) = send_ui_body_request("/ui/buyer").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(content_type.as_deref(), Some("text/html; charset=utf-8"));
+    assert_contains_all(&body, &["app.js", r#"data-page="buyer""#]);
+}
+
+#[tokio::test]
+async fn app_js_contains_evm_escrow_hooks() {
+    let (status, content_type, body) = send_ui_body_request("/ui/assets/app.js").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("javascript")),
+        "{content_type:?}"
+    );
+    assert_contains_all(
+        &body,
+        &[
+            "evm_escrow",
+            "requestEvmEscrowDeposit",
+            "approve",
+            "deposit",
+            "data-evm-address",
+            "wallet_plan_ready",
+        ],
+    );
+    assert_contains_none(
+        &body,
+        &[
+            r#"buyer_evm_address: demoEvmAddress"#,
+            r#"seller_evm_address: demoEvmAddress"#,
+            r#"arbiter_evm_address: demoEvmAddress"#,
+        ],
+    );
+}
+
+#[tokio::test]
 async fn ui_javascript_does_not_ship_shop_example_as_runtime_default() {
     let (status, content_type, body) = send_ui_body_request("/ui/assets/app.js").await;
 
@@ -1812,6 +1853,64 @@ async fn seller_evm_payment_intent_returns_confirmation_metadata() {
         body["confirmation"]["order_hash"]
             .as_str()
             .is_some_and(|hash| hash.starts_with("0x") && hash.len() == 66)
+    );
+}
+
+#[tokio::test]
+async fn buyer_orders_include_evm_payment_confirmation_projection() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JEVMPROJECT";
+    insert_evm_order(&store, order_id, "seller:shop.example:01JSELLER").await;
+    store
+        .upsert_payment(
+            "pay:shop.example:01JPAYPROJECT",
+            order_id,
+            "intent_created",
+            json!({
+                "order_id": order_id,
+                "payment_id": "pay:shop.example:01JPAYPROJECT",
+                "adapter": "evm_escrow",
+                "amount": "25.00",
+                "currency": "USDC",
+                "confirmation": {
+                    "method": "evm_escrow_deposit",
+                    "chain_id": 31337,
+                    "token": "0x0000000000000000000000000000000000000002",
+                    "amount_units": "25000000",
+                    "escrow_contract": "0x0000000000000000000000000000000000000001",
+                    "order_hash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    "buyer_evm_address": "0x0000000000000000000000000000000000000004",
+                    "seller_evm_address": "0x0000000000000000000000000000000000000003",
+                    "arbiter_evm_address": "0x0000000000000000000000000000000000000005"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    let (status, body) = send_json_request(
+        store,
+        "GET",
+        "/api/v1/buyer/orders",
+        Some("Bearer buyer-token"),
+        json!({}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let orders = body["orders"].as_array().expect("orders array");
+    let order = orders
+        .iter()
+        .find(|order| order["order_id"] == order_id)
+        .expect("evm order");
+    assert_eq!(order["payment"]["body"]["adapter"], "evm_escrow");
+    assert_eq!(
+        order["payment"]["body"]["confirmation"]["order_hash"],
+        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    );
+    assert_eq!(
+        order["payment"]["body"]["confirmation"]["buyer_evm_address"],
+        "0x0000000000000000000000000000000000000004"
     );
 }
 
