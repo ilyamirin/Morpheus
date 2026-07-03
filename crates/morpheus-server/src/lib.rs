@@ -1849,18 +1849,6 @@ where
     ) {
         return response;
     }
-    match order_has_event(
-        &state.store,
-        &order_id,
-        "io.marketplace.payment.intent.created",
-        Some(("payment_id", &request.payment_id)),
-    )
-    .await
-    {
-        Ok(true) => return accepted_noop_order_response(&state, &order_id).await,
-        Ok(false) => {}
-        Err(err) => return store_error_response(err.message, err.code),
-    }
 
     let evm = match state.config.evm_escrow.as_ref().filter(|evm| evm.enabled) {
         Some(evm) => evm,
@@ -1882,6 +1870,16 @@ where
         }
         Err(err) => return store_error_response(err.message, err.code),
     };
+    if order.seller_id != request.actor_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "code": "ACTOR_FORBIDDEN",
+                "error": "seller actor does not own this order",
+            })),
+        )
+            .into_response();
+    }
     if order.body.get("payment_adapter").and_then(Value::as_str) != Some("evm_escrow") {
         return validation_error_response(
             "ORDER_PAYMENT_ADAPTER_MISMATCH",
@@ -1955,6 +1953,18 @@ where
             );
         }
     };
+    if let Some(response) = validate_evm_address("buyer_evm_address", &request.buyer_evm_address) {
+        return response;
+    }
+    if let Some(response) = validate_evm_address("seller_evm_address", &request.seller_evm_address)
+    {
+        return response;
+    }
+    if let Some(response) =
+        validate_evm_address("arbiter_evm_address", &request.arbiter_evm_address)
+    {
+        return response;
+    }
     let input = evm_escrow::EvmEscrowIntentInput {
         protocol: "io.marketplace".into(),
         protocol_version: "0.1".into(),
@@ -1984,38 +1994,66 @@ where
     let idempotency_key = format!("evm_escrow:{}", request.payment_id);
     let expires_at = (Utc::now() + chrono::Duration::minutes(30))
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let body = json!({
+        "order_id": order_id,
+        "payment_id": request.payment_id,
+        "adapter": "evm_escrow",
+        "amount": amount,
+        "currency": currency,
+        "capture_policy": payment_capture_policy,
+        "idempotency_key": idempotency_key,
+        "provider_ref": provider_ref,
+        "confirmation": {
+            "method": "evm_escrow_deposit",
+            "uri": format!("https://{}/evm-escrow/{}", state.config.matrix_server_name, order_hash),
+            "adapter": "evm_escrow",
+            "chain_id": evm.chain_id,
+            "token": token.contract.clone(),
+            "token_currency": token.currency.clone(),
+            "amount_units": amount_units,
+            "escrow_contract": evm.escrow_contract.clone(),
+            "order_hash": order_hash,
+            "buyer_evm_address": request.buyer_evm_address,
+            "seller_evm_address": request.seller_evm_address,
+            "arbiter_actor": arbiter_actor,
+            "arbiter_evm_address": request.arbiter_evm_address,
+        },
+        "expires_at": expires_at,
+    });
+    match existing_order_event(
+        &state.store,
+        &order_id,
+        "io.marketplace.payment.intent.created",
+        Some((
+            "payment_id",
+            body["payment_id"].as_str().unwrap_or_default(),
+        )),
+    )
+    .await
+    {
+        Ok(Some(existing)) if evm_payment_intent_matches(&existing.body, &body) => {
+            return accepted_noop_order_response(&state, &order_id).await;
+        }
+        Ok(Some(_)) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "code": "IDEMPOTENCY_CONFLICT",
+                    "error": "payment_id already exists with different evm escrow intent terms",
+                })),
+            )
+                .into_response();
+        }
+        Ok(None) => {}
+        Err(err) => return store_error_response(err.message, err.code),
+    }
 
     order_event_response(
         &state,
         "io.marketplace.payment.intent.created",
         &order_id,
         &request.actor_id,
-        json!({
-            "order_id": order_id,
-            "payment_id": request.payment_id,
-            "adapter": "evm_escrow",
-            "amount": amount,
-            "currency": currency,
-            "capture_policy": payment_capture_policy,
-            "idempotency_key": idempotency_key,
-            "provider_ref": provider_ref,
-            "confirmation": {
-                "method": "evm_escrow_deposit",
-                "uri": format!("https://{}/evm-escrow/{}", state.config.matrix_server_name, order_hash),
-                "adapter": "evm_escrow",
-                "chain_id": evm.chain_id,
-                "token": token.contract.clone(),
-                "token_currency": token.currency.clone(),
-                "amount_units": amount_units,
-                "escrow_contract": evm.escrow_contract.clone(),
-                "order_hash": order_hash,
-                "buyer_evm_address": request.buyer_evm_address,
-                "seller_evm_address": request.seller_evm_address,
-                "arbiter_actor": arbiter_actor,
-                "arbiter_evm_address": request.arbiter_evm_address,
-            },
-            "expires_at": expires_at,
-        }),
+        body,
     )
     .await
 }
@@ -2127,6 +2165,22 @@ where
         .any(|event| order_event_matches(event, event_type, body_field)))
 }
 
+async fn existing_order_event<S>(
+    store: &S,
+    order_id: &str,
+    event_type: &str,
+    body_field: Option<(&str, &str)>,
+) -> Result<Option<OrderEventRecord>, ValidationError>
+where
+    S: EventStore,
+{
+    Ok(store
+        .order_events(order_id)
+        .await?
+        .into_iter()
+        .find(|event| order_event_matches(event, event_type, body_field)))
+}
+
 fn order_event_matches(
     event: &OrderEventRecord,
     event_type: &str,
@@ -2202,6 +2256,53 @@ fn decimal_amount_units(amount: &str, decimals: u8) -> Result<String, &'static s
     } else {
         trimmed.into()
     })
+}
+
+fn validate_evm_address(field: &str, address: &str) -> Option<axum::response::Response> {
+    if let Some(hex) = address.strip_prefix("0x") {
+        if hex.len() == 40
+            && hex.chars().all(|ch| ch.is_ascii_hexdigit())
+            && hex.chars().any(|ch| ch != '0')
+        {
+            return None;
+        }
+    }
+    Some(validation_error_response(
+        "INVALID_EVM_ADDRESS",
+        format!("{field} must be a nonzero 20-byte EVM address"),
+    ))
+}
+
+fn evm_payment_intent_matches(existing: &Value, expected: &Value) -> bool {
+    existing.get("adapter") == expected.get("adapter")
+        && existing.get("amount") == expected.get("amount")
+        && existing.get("currency") == expected.get("currency")
+        && existing.get("capture_policy") == expected.get("capture_policy")
+        && existing.get("provider_ref") == expected.get("provider_ref")
+        && existing
+            .get("confirmation")
+            .and_then(|value| value.get("order_hash"))
+            == expected
+                .get("confirmation")
+                .and_then(|value| value.get("order_hash"))
+        && existing
+            .get("confirmation")
+            .and_then(|value| value.get("buyer_evm_address"))
+            == expected
+                .get("confirmation")
+                .and_then(|value| value.get("buyer_evm_address"))
+        && existing
+            .get("confirmation")
+            .and_then(|value| value.get("seller_evm_address"))
+            == expected
+                .get("confirmation")
+                .and_then(|value| value.get("seller_evm_address"))
+        && existing
+            .get("confirmation")
+            .and_then(|value| value.get("arbiter_evm_address"))
+            == expected
+                .get("confirmation")
+                .and_then(|value| value.get("arbiter_evm_address"))
 }
 
 async fn seller_entitlement_grant<S, P>(
