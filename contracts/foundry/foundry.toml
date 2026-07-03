@@ -1,0 +1,5 @@
+[profile.default]
+src = "../src"
+out = "../abi"
+libs = []
+evm_version = "cancun"
