@@ -141,3 +141,26 @@ CREATE TABLE IF NOT EXISTS projection_errors (
   details JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS evm_escrow_logs (
+  chain_id BIGINT NOT NULL,
+  tx_hash TEXT NOT NULL,
+  log_index BIGINT NOT NULL,
+  block_number BIGINT NOT NULL,
+  block_hash TEXT NOT NULL,
+  escrow_contract TEXT NOT NULL,
+  order_hash TEXT NOT NULL,
+  event_name TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  emitted_marketplace_event_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (chain_id, tx_hash, log_index)
+);
+
+CREATE TABLE IF NOT EXISTS evm_escrow_checkpoints (
+  chain_id BIGINT NOT NULL,
+  escrow_contract TEXT NOT NULL,
+  latest_scanned_block BIGINT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (chain_id, escrow_contract)
+);

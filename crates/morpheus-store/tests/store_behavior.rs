@@ -134,6 +134,45 @@ async fn appservice_transactions_remain_idempotent() {
 }
 
 #[tokio::test]
+async fn store_deduplicates_evm_escrow_logs() {
+    let store = morpheus_store::InMemoryEventStore::default();
+    let log = morpheus_store::EvmEscrowLogRecord {
+        chain_id: 31337,
+        tx_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        log_index: 0,
+        block_number: 10,
+        block_hash: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        escrow_contract: "0x0000000000000000000000000000000000000001".into(),
+        order_hash: "0x1111111111111111111111111111111111111111111111111111111111111111".into(),
+        event_name: "EscrowDeposited".into(),
+        payload: serde_json::json!({"amount": "25000000"}),
+        emitted_marketplace_event_id: None,
+    };
+
+    assert!(store.record_evm_escrow_log(log.clone()).await.unwrap());
+    assert!(!store.record_evm_escrow_log(log).await.unwrap());
+
+    assert!(
+        store
+            .evm_escrow_checkpoint(31337, "0x0000000000000000000000000000000000000001")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    store
+        .set_evm_escrow_checkpoint(31337, "0x0000000000000000000000000000000000000001", 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .evm_escrow_checkpoint(31337, "0x0000000000000000000000000000000000000001")
+            .await
+            .unwrap(),
+        Some(10)
+    );
+}
+
+#[tokio::test]
 async fn store_upserts_catalog_and_order_projection_records() {
     let store = InMemoryEventStore::default();
 

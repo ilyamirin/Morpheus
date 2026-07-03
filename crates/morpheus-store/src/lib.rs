@@ -130,6 +130,20 @@ pub struct ArbitrationRulingProjectionRecord {
     pub body: Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvmEscrowLogRecord {
+    pub chain_id: i64,
+    pub tx_hash: String,
+    pub log_index: i64,
+    pub block_number: i64,
+    pub block_hash: String,
+    pub escrow_contract: String,
+    pub order_hash: String,
+    pub event_name: String,
+    pub payload: Value,
+    pub emitted_marketplace_event_id: Option<String>,
+}
+
 #[async_trait]
 pub trait EventStore: Clone + Send + Sync + 'static {
     async fn appservice_transaction_event_ids(
@@ -260,6 +274,22 @@ pub trait EventStore: Clone + Send + Sync + 'static {
     async fn arbitration_rulings(
         &self,
     ) -> Result<Vec<ArbitrationRulingProjectionRecord>, ValidationError>;
+
+    async fn record_evm_escrow_log(&self, log: EvmEscrowLogRecord)
+    -> Result<bool, ValidationError>;
+
+    async fn evm_escrow_checkpoint(
+        &self,
+        chain_id: i64,
+        escrow_contract: &str,
+    ) -> Result<Option<i64>, ValidationError>;
+
+    async fn set_evm_escrow_checkpoint(
+        &self,
+        chain_id: i64,
+        escrow_contract: &str,
+        latest_scanned_block: i64,
+    ) -> Result<(), ValidationError>;
 }
 
 #[derive(Debug, Clone)]
@@ -1027,6 +1057,74 @@ impl EventStore for SqliteEventStore {
             })
             .collect()
     }
+
+    async fn record_evm_escrow_log(
+        &self,
+        log: EvmEscrowLogRecord,
+    ) -> Result<bool, ValidationError> {
+        let result = sqlx::query(
+            "INSERT INTO evm_escrow_logs
+             (chain_id, tx_hash, log_index, block_number, block_hash, escrow_contract, order_hash, event_name, payload, emitted_marketplace_event_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(chain_id, tx_hash, log_index) DO NOTHING",
+        )
+        .bind(log.chain_id)
+        .bind(log.tx_hash)
+        .bind(log.log_index)
+        .bind(log.block_number)
+        .bind(log.block_hash)
+        .bind(log.escrow_contract)
+        .bind(log.order_hash)
+        .bind(log.event_name)
+        .bind(json_text(&log.payload)?)
+        .bind(log.emitted_marketplace_event_id)
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn evm_escrow_checkpoint(
+        &self,
+        chain_id: i64,
+        escrow_contract: &str,
+    ) -> Result<Option<i64>, ValidationError> {
+        sqlx::query(
+            "SELECT latest_scanned_block
+             FROM evm_escrow_checkpoints
+             WHERE chain_id = ? AND escrow_contract = ?",
+        )
+        .bind(chain_id)
+        .bind(escrow_contract)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(store_error)?
+        .map(|row| row.try_get("latest_scanned_block").map_err(store_error))
+        .transpose()
+    }
+
+    async fn set_evm_escrow_checkpoint(
+        &self,
+        chain_id: i64,
+        escrow_contract: &str,
+        latest_scanned_block: i64,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO evm_escrow_checkpoints (chain_id, escrow_contract, latest_scanned_block)
+             VALUES (?, ?, ?)
+             ON CONFLICT(chain_id, escrow_contract) DO UPDATE SET
+               latest_scanned_block = excluded.latest_scanned_block,
+               updated_at = CURRENT_TIMESTAMP",
+        )
+        .bind(chain_id)
+        .bind(escrow_contract)
+        .bind(latest_scanned_block)
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1770,6 +1868,74 @@ impl EventStore for PostgresEventStore {
             })
             .collect()
     }
+
+    async fn record_evm_escrow_log(
+        &self,
+        log: EvmEscrowLogRecord,
+    ) -> Result<bool, ValidationError> {
+        let result = sqlx::query(
+            "INSERT INTO evm_escrow_logs
+             (chain_id, tx_hash, log_index, block_number, block_hash, escrow_contract, order_hash, event_name, payload, emitted_marketplace_event_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT(chain_id, tx_hash, log_index) DO NOTHING",
+        )
+        .bind(log.chain_id)
+        .bind(log.tx_hash)
+        .bind(log.log_index)
+        .bind(log.block_number)
+        .bind(log.block_hash)
+        .bind(log.escrow_contract)
+        .bind(log.order_hash)
+        .bind(log.event_name)
+        .bind(pg_json(log.payload))
+        .bind(log.emitted_marketplace_event_id)
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn evm_escrow_checkpoint(
+        &self,
+        chain_id: i64,
+        escrow_contract: &str,
+    ) -> Result<Option<i64>, ValidationError> {
+        sqlx::query(
+            "SELECT latest_scanned_block
+             FROM evm_escrow_checkpoints
+             WHERE chain_id = $1 AND escrow_contract = $2",
+        )
+        .bind(chain_id)
+        .bind(escrow_contract)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(store_error)?
+        .map(|row| row.try_get("latest_scanned_block").map_err(store_error))
+        .transpose()
+    }
+
+    async fn set_evm_escrow_checkpoint(
+        &self,
+        chain_id: i64,
+        escrow_contract: &str,
+        latest_scanned_block: i64,
+    ) -> Result<(), ValidationError> {
+        sqlx::query(
+            "INSERT INTO evm_escrow_checkpoints (chain_id, escrow_contract, latest_scanned_block)
+             VALUES ($1, $2, $3)
+             ON CONFLICT(chain_id, escrow_contract) DO UPDATE SET
+               latest_scanned_block = excluded.latest_scanned_block,
+               updated_at = now()",
+        )
+        .bind(chain_id)
+        .bind(escrow_contract)
+        .bind(latest_scanned_block)
+        .execute(&self.pool)
+        .await
+        .map_err(store_error)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1795,6 +1961,8 @@ struct InMemoryState {
     entitlements: HashMap<String, EntitlementProjectionRecord>,
     disputes: HashMap<String, DisputeProjectionRecord>,
     arbitration_rulings: HashMap<String, ArbitrationRulingProjectionRecord>,
+    evm_escrow_logs: HashMap<(i64, String, i64), EvmEscrowLogRecord>,
+    evm_escrow_checkpoints: HashMap<(i64, String), i64>,
 }
 
 #[async_trait]
@@ -2180,6 +2348,47 @@ impl EventStore for InMemoryEventStore {
             .collect();
         rulings.sort_by(|left, right| left.ruling_id.cmp(&right.ruling_id));
         Ok(rulings)
+    }
+
+    async fn record_evm_escrow_log(
+        &self,
+        log: EvmEscrowLogRecord,
+    ) -> Result<bool, ValidationError> {
+        let key = (log.chain_id, log.tx_hash.clone(), log.log_index);
+        let mut inner = self.inner.lock().await;
+        if inner.evm_escrow_logs.contains_key(&key) {
+            return Ok(false);
+        }
+        inner.evm_escrow_logs.insert(key, log);
+        Ok(true)
+    }
+
+    async fn evm_escrow_checkpoint(
+        &self,
+        chain_id: i64,
+        escrow_contract: &str,
+    ) -> Result<Option<i64>, ValidationError> {
+        Ok(self
+            .inner
+            .lock()
+            .await
+            .evm_escrow_checkpoints
+            .get(&(chain_id, escrow_contract.into()))
+            .copied())
+    }
+
+    async fn set_evm_escrow_checkpoint(
+        &self,
+        chain_id: i64,
+        escrow_contract: &str,
+        latest_scanned_block: i64,
+    ) -> Result<(), ValidationError> {
+        self.inner
+            .lock()
+            .await
+            .evm_escrow_checkpoints
+            .insert((chain_id, escrow_contract.into()), latest_scanned_block);
+        Ok(())
     }
 }
 
