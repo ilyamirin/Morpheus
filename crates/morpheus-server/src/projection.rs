@@ -135,12 +135,15 @@ where
         }
         event_type if event_type.starts_with("io.marketplace.payment.") => {
             project_order_event(store, event, payment_order_status(event_type)).await?;
+            let payment_id = required_str(&event.body, "payment_id")?;
+            let mut body = event.body.clone();
+            preserve_payment_intent_fields(store, payment_id, &mut body).await?;
             store
                 .upsert_payment(
-                    required_str(&event.body, "payment_id")?,
+                    payment_id,
                     required_str(&event.body, "order_id")?,
                     payment_status(event_type)?,
-                    event.body.clone(),
+                    body,
                 )
                 .await
         }
@@ -180,6 +183,42 @@ where
         }
         _ => Ok(()),
     }
+}
+
+async fn preserve_payment_intent_fields<S>(
+    store: &S,
+    payment_id: &str,
+    body: &mut Value,
+) -> ValidationResult<()>
+where
+    S: EventStore,
+{
+    let Some(existing) = store
+        .payments()
+        .await?
+        .into_iter()
+        .find(|payment| payment.payment_id == payment_id)
+    else {
+        return Ok(());
+    };
+
+    for field in [
+        "adapter",
+        "amount",
+        "currency",
+        "capture_policy",
+        "idempotency_key",
+        "provider_ref",
+        "confirmation",
+        "expires_at",
+    ] {
+        if body.get(field).is_none()
+            && let Some(value) = existing.body.get(field)
+        {
+            body[field] = value.clone();
+        }
+    }
+    Ok(())
 }
 
 async fn project_order_event<S>(

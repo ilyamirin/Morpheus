@@ -221,6 +221,7 @@ pub fn compute_order_hash(input: &EvmEscrowIntentInput) -> Result<String, Valida
 pub fn map_escrow_log_to_payment_event(
     order_id: &str,
     payment_id: &str,
+    amount: &str,
     currency: &str,
     log: &DecodedEscrowLog,
 ) -> Result<PaymentEventDraft, ValidationError> {
@@ -238,7 +239,7 @@ pub fn map_escrow_log_to_payment_event(
                 "order_id": order_id,
                 "payment_id": payment_id,
                 "adapter": "evm_escrow",
-                "amount": log.amount,
+                "amount": amount,
                 "currency": currency,
                 "provider_ref": provider_ref,
                 "evidence": evidence,
@@ -250,7 +251,7 @@ pub fn map_escrow_log_to_payment_event(
                 "order_id": order_id,
                 "payment_id": payment_id,
                 "refund_id": refund_id_from_log(log)?,
-                "amount": log.buyer_amount.as_deref().unwrap_or(log.amount.as_str()),
+                "amount": log.buyer_amount.as_deref().unwrap_or(amount),
                 "currency": currency,
                 "provider_ref": provider_ref,
                 "evidence": evidence,

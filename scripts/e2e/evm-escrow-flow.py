@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -13,17 +14,21 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SERVER_URL = os.environ.get("MORPHEUS_E2E_SERVER_URL", "http://127.0.0.1:18080")
-MATRIX_URL = os.environ.get("MORPHEUS_E2E_MATRIX_URL", "http://127.0.0.1:18008")
+SERVER_URL = os.environ.get("MORPHEUS_E2E_SERVER_URL", "http://127.0.0.1:18180")
+MATRIX_URL = os.environ.get("MORPHEUS_E2E_MATRIX_URL", "http://127.0.0.1:18108")
 RPC_URL = os.environ.get("MORPHEUS_EVM_RPC_URL", "http://127.0.0.1:8545")
+DATABASE_URL = os.environ.get(
+    "MORPHEUS_E2E_DATABASE_URL",
+    "postgres://morpheus:morpheus@localhost:5432/morpheus_evm_e2e",
+)
 ADMIN_TOKEN = os.environ.get("MORPHEUS_ADMIN_TOKEN", "admin-token")
 SELLER_TOKEN = os.environ.get("MORPHEUS_SELLER_TOKEN", "seller-token")
 BUYER_TOKEN = os.environ.get("MORPHEUS_BUYER_TOKEN", "buyer-token")
 HOMESERVER_TOKEN = os.environ.get("MORPHEUS_HOMESERVER_TOKEN", "dev-homeserver-token")
 
 ADMIN_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-BUYER_KEY = "0x59c6995e998f97a5a004497e5da0d2c49d3e66cb006f88f22c03e3f8c6731e7"
-SELLER_OPERATOR_KEY = "0x5de4111afa1a4b4a56b3f5f2e093612fc1fdc7a1c0e25b60c0a11ae5a4e0c7d"
+BUYER_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+SELLER_OPERATOR_KEY = "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6"
 
 BUYER = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 SELLER = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
@@ -37,6 +42,7 @@ PRODUCT_ID = "prod:shop.example:01JE2EPROD"
 OFFER_ID = "offer:shop.example:01JE2EOFFER"
 ORDER_ID = "ord:shop.example:01JE2EORDER"
 PAYMENT_ID = "pay:shop.example:01JE2EPAY"
+ENTITLEMENT_ID = "ent:shop.example:01JE2EENT"
 ROOM_ID = "!e2e-evm-escrow:shop.example"
 AMOUNT_UNITS = "25000000"
 
@@ -141,13 +147,27 @@ def http_json(method, path, payload=None, token=None, expect=(200, 202)):
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             data = response.read().decode()
-            result = json.loads(data) if data else {}
+            try:
+                result = json.loads(data) if data else {}
+            except json.JSONDecodeError as error:
+                content_type = response.headers.get("content-type", "")
+                raise RuntimeError(
+                    f"{method} {path} returned non-json {response.status} "
+                    f"content-type={content_type!r} body={data[:500]!r}"
+                ) from error
             if response.status not in expect:
                 raise RuntimeError(f"{method} {path} returned {response.status}: {result}")
             return result
     except urllib.error.HTTPError as error:
         data = error.read().decode()
-        result = json.loads(data) if data else {}
+        try:
+            result = json.loads(data) if data else {}
+        except json.JSONDecodeError as decode_error:
+            content_type = error.headers.get("content-type", "")
+            raise RuntimeError(
+                f"{method} {path} returned non-json {error.code} "
+                f"content-type={content_type!r} body={data[:500]!r}"
+            ) from decode_error
         raise RuntimeError(f"{method} {path} returned {error.code}: {result}") from error
 
 
@@ -172,13 +192,25 @@ def run(command, env=None):
     subprocess.run(command, cwd=ROOT, env=env, check=True)
 
 
+def mine_confirmations():
+    run(["cast", "rpc", "anvil_mine", "1", "--rpc-url", RPC_URL])
+
+
+def replay_evm_watcher():
+    result = http_json("POST", "/admin/evm-escrow/replay", payload={}, token=ADMIN_TOKEN, expect=(200,))
+    print(f"evm replay={json.dumps(result, sort_keys=True)}", flush=True)
+    return result
+
+
 def wait_server(server):
     for _ in range(60):
         if server.poll() is not None:
             raise RuntimeError(f"morpheus-server exited with {server.returncode}")
         try:
             with urllib.request.urlopen(f"{SERVER_URL}/healthz", timeout=2) as response:
-                if response.status == 200:
+                body = response.read().decode()
+                payload = json.loads(body) if body else {}
+                if response.status == 200 and payload.get("status") == "ok":
                     return
         except Exception:
             time.sleep(1)
@@ -202,6 +234,11 @@ def patch_config(deployment):
     patched = patched.replace(
         "start_block = 0",
         f"start_block = {max(int(deployment.get('deploy_block', 0)) - 1, 0)}",
+    )
+    patched = patched.replace("poll_interval_secs = 1", "poll_interval_secs = 60")
+    patched = patched.replace(
+        'url = "postgres://morpheus:morpheus@localhost:5432/morpheus"',
+        f'url = "{DATABASE_URL}"',
     )
     out = ROOT / ".local/e2e/evm-escrow.toml"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -234,7 +271,11 @@ def main():
     config_path = patch_config(deployment)
 
     capture = MatrixCapture()
-    matrix = ThreadingHTTPServer(("127.0.0.1", 18008), make_matrix_handler(capture))
+    matrix_endpoint = urllib.parse.urlparse(MATRIX_URL)
+    matrix = ThreadingHTTPServer(
+        (matrix_endpoint.hostname or "127.0.0.1", matrix_endpoint.port or 80),
+        make_matrix_handler(capture),
+    )
     thread = threading.Thread(target=matrix.serve_forever, daemon=True)
     thread.start()
 
@@ -290,7 +331,7 @@ def main():
             "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
             "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
             "entitlement_type": "external_entitlement",
-            "availability_mode": "immediate",
+            "availability_mode": "unlimited",
         }, SELLER_TOKEN)
         _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", "/api/v1/buyer/orders", {
             "customer_id": CUSTOMER_ID,
@@ -340,10 +381,27 @@ def main():
         run(["cast", "send", token, "mint(address,uint256)", BUYER, AMOUNT_UNITS, "--private-key", ADMIN_KEY, "--rpc-url", RPC_URL])
         run(["cast", "send", token, "approve(address,uint256)", escrow, AMOUNT_UNITS, "--private-key", BUYER_KEY, "--rpc-url", RPC_URL])
         run(["cast", "send", escrow, "deposit(bytes32,address,uint256,address,address,address)", order_hash, token, AMOUNT_UNITS, SELLER, BUYER, ARBITER, "--private-key", BUYER_KEY, "--rpc-url", RPC_URL])
+        mine_confirmations()
+        replay_evm_watcher()
         _, txn_counter = poll_order(capture, txn_counter, "authorized")
 
         run(["cast", "send", escrow, "release(bytes32)", order_hash, "--private-key", SELLER_OPERATOR_KEY, "--rpc-url", RPC_URL])
+        mine_confirmations()
+        replay_evm_watcher()
         _, txn_counter = poll_order(capture, txn_counter, "captured")
+
+        _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", f"/api/v1/seller/orders/{urllib.parse.quote(ORDER_ID, safe='')}/entitlement-grant", {
+            "actor_id": SELLER_ID,
+            "payment_id": PAYMENT_ID,
+            "entitlement_id": ENTITLEMENT_ID,
+            "entitlement_type": "external_entitlement",
+            "external_ref": "https://shop.example/e2e/entitlement",
+            "evidence": {
+                "kind": "e2e",
+                "uri": "https://shop.example/e2e/evidence",
+                "sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            },
+        }, SELLER_TOKEN)
 
         _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", f"/api/v1/seller/orders/{urllib.parse.quote(ORDER_ID, safe='')}/complete", {
             "actor_id": SELLER_ID,
@@ -364,4 +422,5 @@ if __name__ == "__main__":
         main()
     except Exception as error:
         print(f"evm escrow e2e failed: {error}", file=sys.stderr)
+        traceback.print_exc()
         sys.exit(1)

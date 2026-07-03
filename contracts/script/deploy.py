@@ -53,5 +53,9 @@ def main():
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
+def moccasin_main():
+    main()
+
+
 if __name__ == "__main__":
     main()

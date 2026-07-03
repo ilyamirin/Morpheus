@@ -163,6 +163,7 @@ fn deposited_log_maps_to_payment_authorized() {
     let mapped = map_escrow_log_to_payment_event(
         "ord:shop.example:01JORDER",
         "pay:shop.example:01JPAY",
+        "25.00",
         "USDC",
         &log,
     )
@@ -182,6 +183,7 @@ fn released_log_maps_to_protocol_valid_payment_captured() {
     let mapped = map_escrow_log_to_payment_event(
         "ord:shop.example:01JORDER",
         "pay:shop.example:01JPAY",
+        "25.00",
         "USDC",
         &log,
     )
@@ -204,6 +206,7 @@ fn refunded_log_maps_to_protocol_valid_payment_refunded() {
     let mapped = map_escrow_log_to_payment_event(
         "ord:shop.example:01JORDER",
         "pay:shop.example:01JPAY",
+        "25.00",
         "USDC",
         &log,
     )
@@ -235,6 +238,7 @@ fn refund_id_changes_with_log_index() {
     let first = map_escrow_log_to_payment_event(
         "ord:shop.example:01JORDER",
         "pay:shop.example:01JPAY",
+        "25.00",
         "USDC",
         &first_log,
     )
@@ -242,6 +246,7 @@ fn refund_id_changes_with_log_index() {
     let second = map_escrow_log_to_payment_event(
         "ord:shop.example:01JORDER",
         "pay:shop.example:01JPAY",
+        "25.00",
         "USDC",
         &second_log,
     )
@@ -262,6 +267,7 @@ fn partial_refund_uses_buyer_amount_and_protocol_valid_evidence() {
     let mapped = map_escrow_log_to_payment_event(
         "ord:shop.example:01JORDER",
         "pay:shop.example:01JPAY",
+        "25.00",
         "USDC",
         &log,
     )
@@ -353,6 +359,7 @@ fn unsupported_escrow_log_event_is_rejected() {
     let err = map_escrow_log_to_payment_event(
         "ord:shop.example:01JORDER",
         "pay:shop.example:01JPAY",
+        "25.00",
         "USDC",
         &log,
     )
@@ -370,6 +377,7 @@ fn refunded_log_rejects_short_tx_hash_without_panicking() {
     let err = map_escrow_log_to_payment_event(
         "ord:shop.example:01JORDER",
         "pay:shop.example:01JPAY",
+        "25.00",
         "USDC",
         &log,
     )

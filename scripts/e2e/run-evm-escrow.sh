@@ -22,7 +22,8 @@ require_command python3
 
 RPC_URL="http://127.0.0.1:8545"
 ANVIL_LOG="${TMPDIR:-/tmp}/morpheus-anvil.log"
-DATABASE_URL="postgres://morpheus:morpheus@localhost:5432/morpheus"
+DATABASE_NAME="morpheus_evm_e2e"
+DATABASE_URL="postgres://morpheus:morpheus@localhost:5432/${DATABASE_NAME}"
 ADMIN_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
 anvil --chain-id 31337 >"$ANVIL_LOG" 2>&1 &
@@ -47,7 +48,7 @@ wait_anvil
 (
   cd contracts
   mox test -q
-  MORPHEUS_EVM_DEPLOYER="$ADMIN_KEY" mox run script/deploy.py --network local
+  printf 'y\n' | MORPHEUS_EVM_DEPLOYER="$ADMIN_KEY" mox run script/deploy.py --network local --private-key "$ADMIN_KEY"
 )
 
 test -s contracts/deployments/local.json
@@ -66,10 +67,14 @@ if [[ "$POSTGRES_READY" != "1" ]]; then
   exit 1
 fi
 
+docker compose exec -T postgres psql -U morpheus -d postgres -v ON_ERROR_STOP=1 \
+  -c "DROP DATABASE IF EXISTS ${DATABASE_NAME};" \
+  -c "CREATE DATABASE ${DATABASE_NAME};"
 cargo run -p morpheus-cli -- db migrate --database-url "$DATABASE_URL" --database-kind postgres
 MORPHEUS_ADMIN_TOKEN="admin-token" \
 MORPHEUS_SELLER_TOKEN="seller-token" \
 MORPHEUS_BUYER_TOKEN="buyer-token" \
+MORPHEUS_E2E_DATABASE_URL="$DATABASE_URL" \
 MORPHEUS_EVM_RPC_URL="$RPC_URL" \
 python3 scripts/e2e/evm-escrow-flow.py
 

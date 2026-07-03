@@ -9,8 +9,8 @@ payment_adapters = ["mock", "evm_escrow"]
 entitlement_types = ["booking_slot", "license_key", "external_entitlement"]
 
 [appservice]
-homeserver_url = "http://127.0.0.1:18008"
-url = "http://127.0.0.1:18080"
+homeserver_url = "http://127.0.0.1:18108"
+url = "http://127.0.0.1:18180"
 sender_localpart = "market"
 namespace_prefix = "market_"
 homeserver_token = "dev-homeserver-token"
@@ -21,7 +21,7 @@ bootstrap_rooms = false
 url = "postgres://morpheus:morpheus@localhost:5432/morpheus"
 
 [admin]
-bind = "127.0.0.1:18080"
+bind = "127.0.0.1:18180"
 bearer_token_env = "MORPHEUS_ADMIN_TOKEN"
 
 [auth]
@@ -33,8 +33,8 @@ instance_id = "shop.example"
 capabilities = ["catalog", "orders", "indexing"]
 status = "active"
 catalog_room_alias = "#marketplace-catalog:shop.example"
-homeserver_url = "http://127.0.0.1:18008"
-morpheus_url = "http://127.0.0.1:18080"
+homeserver_url = "http://127.0.0.1:18108"
+morpheus_url = "http://127.0.0.1:18180"
 
 [[allowlist.instances]]
 instance_id = "arbiter.example"

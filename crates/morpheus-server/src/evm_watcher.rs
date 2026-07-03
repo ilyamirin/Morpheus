@@ -80,6 +80,7 @@ struct ExpectedPaymentContext {
     order_id: String,
     room_id: String,
     payment_id: String,
+    amount: String,
     currency: String,
     expected: ExpectedEscrowPayment,
 }
@@ -267,6 +268,7 @@ where
     let payment = map_escrow_log_to_payment_event(
         &expected.order_id,
         &expected.payment_id,
+        &expected.amount,
         &expected.currency,
         &decoded,
     )?;
@@ -330,6 +332,7 @@ fn expected_payment_context(
         order_id: order.order_id,
         room_id: order.room_id,
         payment_id,
+        amount: required_str(body, "amount")?.into(),
         currency: required_str(body, "currency")?.into(),
         expected,
     })
