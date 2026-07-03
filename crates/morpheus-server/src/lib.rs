@@ -55,6 +55,7 @@ struct AppState<S, P> {
     config: ServerConfig,
     store: S,
     publisher: P,
+    evm_watcher_status: Option<evm_watcher::SharedEvmWatcherStatus>,
 }
 
 #[async_trait::async_trait]
@@ -726,10 +727,24 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
+    build_router_with_publisher_and_watcher_status(config, store, publisher, None)
+}
+
+pub fn build_router_with_publisher_and_watcher_status<S, P>(
+    config: ServerConfig,
+    store: S,
+    publisher: P,
+    evm_watcher_status: Option<evm_watcher::SharedEvmWatcherStatus>,
+) -> Router
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
     let state = AppState {
         config,
         store,
         publisher,
+        evm_watcher_status,
     };
     Router::new()
         .route("/healthz", get(healthz))
@@ -1443,13 +1458,24 @@ where
     )
     .await
     {
-        Ok(result) => result,
-        Err(err) => return store_error_response(err.message, err.code),
+        Ok(result) => {
+            if let Some(status) = &state.evm_watcher_status {
+                status.record_success(&result).await;
+            }
+            result
+        }
+        Err(err) => {
+            if let Some(status) = &state.evm_watcher_status {
+                status.record_error(&err).await;
+            }
+            return store_error_response(err.message, err.code);
+        }
     };
     let chain_id = evm.chain_id as i64;
+    let escrow_contract = evm.escrow_contract.to_lowercase();
     let checkpoint = match state
         .store
-        .evm_escrow_checkpoint(chain_id, &evm.escrow_contract)
+        .evm_escrow_checkpoint(chain_id, &escrow_contract)
         .await
     {
         Ok(checkpoint) => checkpoint,
@@ -1489,13 +1515,18 @@ where
         return Json(json!({"enabled": false})).into_response();
     };
     let chain_id = evm.chain_id as i64;
+    let escrow_contract = evm.escrow_contract.to_lowercase();
     let checkpoint = match state
         .store
-        .evm_escrow_checkpoint(chain_id, &evm.escrow_contract)
+        .evm_escrow_checkpoint(chain_id, &escrow_contract)
         .await
     {
         Ok(checkpoint) => checkpoint,
         Err(err) => return store_error_response(err.message, err.code),
+    };
+    let runtime = match &state.evm_watcher_status {
+        Some(status) => status.snapshot().await,
+        None => evm_watcher::EvmWatcherRuntimeStatus::default(),
     };
 
     Json(json!({
@@ -1506,6 +1537,7 @@ where
         "poll_interval_secs": evm.poll_interval_secs,
         "start_block": evm.start_block,
         "max_scan_blocks": evm.max_scan_blocks,
+        "rescan_depth": evm.rescan_depth,
         "checkpoint": {
             "chain_id": chain_id,
             "escrow_contract": evm.escrow_contract,
@@ -1514,6 +1546,8 @@ where
         "watcher": {
             "mode": "embedded",
             "rpc_url_env": evm.rpc_url_env,
+            "last_scan": runtime.last_scan,
+            "last_error": runtime.last_error,
         },
     }))
     .into_response()

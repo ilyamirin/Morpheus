@@ -1,7 +1,11 @@
 use async_trait::async_trait;
 use morpheus_config::{EvmEscrowConfig, EvmEscrowTokenConfig};
+use morpheus_protocol::{ValidationCode, ValidationError};
 use morpheus_server::evm_rpc::{RpcLog, RpcReceipt};
-use morpheus_server::evm_watcher::{EvmLogSource, WatcherPublisher, WatcherScanConfig, scan_once};
+use morpheus_server::evm_watcher::{
+    EvmLogSource, SharedEvmWatcherStatus, WatcherPublisher, WatcherScanConfig, WatcherScanResult,
+    scan_once,
+};
 use morpheus_store::{EventStore, InMemoryEventStore, OrderProjectionRecord};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -11,6 +15,22 @@ struct FakeLogSource {
     head: i64,
     logs: Vec<RpcLog>,
     receipts: Vec<RpcReceipt>,
+    queries: Arc<Mutex<Vec<(i64, i64)>>>,
+}
+
+impl FakeLogSource {
+    fn new(head: i64, logs: Vec<RpcLog>, receipts: Vec<RpcReceipt>) -> Self {
+        Self {
+            head,
+            logs,
+            receipts,
+            queries: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn queries(&self) -> Vec<(i64, i64)> {
+        self.queries.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
@@ -21,11 +41,12 @@ impl EvmLogSource for FakeLogSource {
 
     async fn get_logs(
         &self,
-        _from: i64,
-        _to: i64,
+        from: i64,
+        to: i64,
         _address: &str,
         _topics: &[String],
     ) -> Result<Vec<RpcLog>, morpheus_protocol::ValidationError> {
+        self.queries.lock().unwrap().push((from, to));
         Ok(self.logs.clone())
     }
 
@@ -69,11 +90,7 @@ impl WatcherPublisher for FakeWatcherPublisher {
 async fn watcher_publishes_authorized_for_verified_deposit_log() {
     let store = InMemoryEventStore::default();
     seed_evm_order_and_payment(&store).await;
-    let source = FakeLogSource {
-        head: 20,
-        logs: vec![deposit_rpc_log()],
-        receipts: vec![success_receipt()],
-    };
+    let source = FakeLogSource::new(20, vec![deposit_rpc_log()], vec![success_receipt()]);
     let publisher = FakeWatcherPublisher::default();
 
     let result = scan_once(&store, &source, &publisher, watcher_config())
@@ -91,11 +108,11 @@ async fn watcher_publishes_authorized_for_verified_deposit_log() {
 async fn watcher_waits_for_confirmations() {
     let store = InMemoryEventStore::default();
     seed_evm_order_and_payment(&store).await;
-    let source = FakeLogSource {
-        head: 10,
-        logs: vec![deposit_rpc_log_at_block(10)],
-        receipts: vec![success_receipt_at_block(10)],
-    };
+    let source = FakeLogSource::new(
+        10,
+        vec![deposit_rpc_log_at_block(10)],
+        vec![success_receipt_at_block(10)],
+    );
     let publisher = FakeWatcherPublisher::default();
 
     let result = scan_once(
@@ -116,11 +133,7 @@ async fn watcher_waits_for_confirmations() {
 async fn watcher_rejects_failed_receipt() {
     let store = InMemoryEventStore::default();
     seed_evm_order_and_payment(&store).await;
-    let source = FakeLogSource {
-        head: 20,
-        logs: vec![deposit_rpc_log()],
-        receipts: vec![failed_receipt()],
-    };
+    let source = FakeLogSource::new(20, vec![deposit_rpc_log()], vec![failed_receipt()]);
     let publisher = FakeWatcherPublisher::default();
 
     let result = scan_once(&store, &source, &publisher, watcher_config())
@@ -136,11 +149,11 @@ async fn watcher_rejects_failed_receipt() {
 async fn watcher_rejects_amount_mismatch_without_publish() {
     let store = InMemoryEventStore::default();
     seed_evm_order_and_payment_with_amount(&store, "26000000").await;
-    let source = FakeLogSource {
-        head: 20,
-        logs: vec![deposit_rpc_log()],
-        receipts: vec![success_receipt()],
-    };
+    let source = FakeLogSource::new(
+        20,
+        vec![deposit_rpc_log_at_block(18)],
+        vec![success_receipt_at_block(18)],
+    );
     let publisher = FakeWatcherPublisher::default();
 
     let result = scan_once(&store, &source, &publisher, watcher_config())
@@ -156,11 +169,11 @@ async fn watcher_rejects_amount_mismatch_without_publish() {
 async fn watcher_deduplicates_processed_logs() {
     let store = InMemoryEventStore::default();
     seed_evm_order_and_payment(&store).await;
-    let source = FakeLogSource {
-        head: 20,
-        logs: vec![deposit_rpc_log()],
-        receipts: vec![success_receipt()],
-    };
+    let source = FakeLogSource::new(
+        20,
+        vec![deposit_rpc_log_at_block(18)],
+        vec![success_receipt_at_block(18)],
+    );
     let publisher = FakeWatcherPublisher::default();
 
     scan_once(&store, &source, &publisher, watcher_config())
@@ -176,6 +189,76 @@ async fn watcher_deduplicates_processed_logs() {
 
     assert_eq!(duplicate.duplicates, 1);
     assert_eq!(publisher.events.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn watcher_rescans_overlap_without_republishing_duplicates() {
+    let store = InMemoryEventStore::default();
+    seed_evm_order_and_payment(&store).await;
+    let source = FakeLogSource::new(
+        20,
+        vec![deposit_rpc_log_at_block(18)],
+        vec![success_receipt_at_block(18)],
+    );
+    let publisher = FakeWatcherPublisher::default();
+
+    let first = scan_once(
+        &store,
+        &source,
+        &publisher,
+        watcher_config_with_rescan_depth(3),
+    )
+    .await
+    .unwrap();
+    let second = scan_once(
+        &store,
+        &source,
+        &publisher,
+        watcher_config_with_rescan_depth(3),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(first.accepted, 1);
+    assert_eq!(second.duplicates, 1);
+    assert_eq!(publisher.events.lock().unwrap().len(), 1);
+    assert_eq!(source.queries(), vec![(1, 19), (17, 19)]);
+}
+
+#[tokio::test]
+async fn watcher_runtime_status_tracks_success_and_error() {
+    let status = SharedEvmWatcherStatus::default();
+    status
+        .record_success(&WatcherScanResult {
+            scanned: 2,
+            accepted: 1,
+            duplicates: 1,
+            rejected: 0,
+            from_block: 17,
+            to_block: 19,
+        })
+        .await;
+
+    let snapshot = status.snapshot().await;
+    let last_scan = snapshot.last_scan.unwrap();
+    assert_eq!(last_scan.status, "ok");
+    assert_eq!(last_scan.accepted, 1);
+    assert!(last_scan.updated_at_unix_ms > 0);
+    assert!(snapshot.last_error.is_none());
+
+    status
+        .record_error(&ValidationError::new(
+            ValidationCode::PolicyViolation,
+            "rpc scan failed",
+        ))
+        .await;
+
+    let snapshot = status.snapshot().await;
+    assert_eq!(snapshot.last_scan.unwrap().duplicates, 1);
+    let last_error = snapshot.last_error.unwrap();
+    assert_eq!(last_error.code, ValidationCode::PolicyViolation);
+    assert_eq!(last_error.message, "rpc scan failed");
+    assert!(last_error.updated_at_unix_ms > 0);
 }
 
 async fn seed_evm_order_and_payment(store: &InMemoryEventStore) {
@@ -299,6 +382,7 @@ fn watcher_config_with_confirmations(confirmations: u64) -> WatcherScanConfig {
             poll_interval_secs: 1,
             start_block: Some(0),
             max_scan_blocks: Some(100),
+            rescan_depth: None,
             deployments_path: None,
             tokens: vec![EvmEscrowTokenConfig {
                 symbol: "USDC".into(),
@@ -308,4 +392,10 @@ fn watcher_config_with_confirmations(confirmations: u64) -> WatcherScanConfig {
             }],
         },
     }
+}
+
+fn watcher_config_with_rescan_depth(rescan_depth: u64) -> WatcherScanConfig {
+    let mut config = watcher_config();
+    config.evm.rescan_depth = Some(rescan_depth);
+    config
 }

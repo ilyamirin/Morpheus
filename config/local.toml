@@ -55,6 +55,7 @@ confirmations = 1
 poll_interval_secs = 2
 start_block = 0
 max_scan_blocks = 100
+rescan_depth = 3
 deployments_path = "contracts/deployments/local.json"
 
 [[payments.evm_escrow.tokens]]

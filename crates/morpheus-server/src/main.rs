@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use morpheus_config::load_config;
 use morpheus_server::{
-    RemoteCatalogSource, ServerConfig, SynapseMatrixPublisher, build_router_with_publisher,
-    ensure_catalog_room, sync_remote_catalog_once,
+    RemoteCatalogSource, ServerConfig, SynapseMatrixPublisher,
+    build_router_with_publisher_and_watcher_status, ensure_catalog_room, sync_remote_catalog_once,
 };
 use morpheus_store::{PostgresEventStore, migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -100,6 +100,17 @@ async fn main() -> Result<()> {
     );
     let store = PostgresEventStore::new(pool);
     spawn_remote_catalog_indexer(store.clone(), remote_catalog_sources);
+    let evm_escrow = config.payments.as_ref().and_then(|payments| {
+        payments
+            .evm_escrow
+            .as_ref()
+            .filter(|evm_escrow| evm_escrow.enabled)
+            .cloned()
+    });
+    let evm_watcher_status = evm_escrow
+        .as_ref()
+        .filter(|evm| evm.enabled)
+        .map(|_| morpheus_server::evm_watcher::SharedEvmWatcherStatus::default());
     let server_config = ServerConfig {
         instance_id: config.instance.instance_id,
         matrix_server_name: config.instance.matrix_server_name,
@@ -111,15 +122,12 @@ async fn main() -> Result<()> {
         admin_token,
         seller_token,
         buyer_token,
-        evm_escrow: config.payments.as_ref().and_then(|payments| {
-            payments
-                .evm_escrow
-                .as_ref()
-                .filter(|evm_escrow| evm_escrow.enabled)
-                .cloned()
-        }),
+        evm_escrow,
     };
-    if let Some(evm) = server_config.evm_escrow.as_ref().filter(|evm| evm.enabled) {
+    if let (Some(evm), Some(status)) = (
+        server_config.evm_escrow.as_ref().filter(|evm| evm.enabled),
+        evm_watcher_status.clone(),
+    ) {
         let rpc_url = env::var(&evm.rpc_url_env)
             .with_context(|| format!("missing EVM RPC URL env {}", evm.rpc_url_env))?;
         morpheus_server::evm_watcher::spawn_evm_escrow_watcher(
@@ -127,9 +135,15 @@ async fn main() -> Result<()> {
             publisher.clone(),
             server_config.clone(),
             rpc_url,
+            status,
         );
     }
-    let app = build_router_with_publisher(server_config, store, publisher);
+    let app = build_router_with_publisher_and_watcher_status(
+        server_config,
+        store,
+        publisher,
+        evm_watcher_status,
+    );
     let listener = tokio::net::TcpListener::bind(&config.admin.bind)
         .await
         .with_context(|| format!("binding {}", config.admin.bind))?;

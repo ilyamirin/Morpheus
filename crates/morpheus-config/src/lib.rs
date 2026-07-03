@@ -77,6 +77,8 @@ pub struct EvmEscrowConfig {
     #[serde(default)]
     pub max_scan_blocks: Option<u64>,
     #[serde(default)]
+    pub rescan_depth: Option<u64>,
+    #[serde(default)]
     pub deployments_path: Option<String>,
     pub tokens: Vec<EvmEscrowTokenConfig>,
 }
@@ -246,6 +248,9 @@ pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
                 "evm_escrow max_scan_blocks must be positive"
             );
         }
+        if let Some(rescan_depth) = evm.rescan_depth {
+            anyhow::ensure!(rescan_depth > 0, "evm_escrow rescan_depth must be positive");
+        }
         anyhow::ensure!(
             !evm.tokens.is_empty(),
             "evm_escrow tokens must not be empty"
@@ -362,6 +367,7 @@ mod tests {
             poll_interval_secs: 2,
             start_block: Some(0),
             max_scan_blocks: Some(100),
+            rescan_depth: Some(3),
             deployments_path: Some("contracts/deployments/local.json".into()),
             tokens: vec![EvmEscrowTokenConfig {
                 symbol: "USDC".into(),
@@ -441,6 +447,7 @@ mod tests {
         let mut evm = valid_evm_escrow_config();
         evm.max_scan_blocks = Some(250);
         evm.start_block = Some(12);
+        evm.rescan_depth = Some(3);
         let config = config_with_evm_escrow(evm);
 
         validate_config(&config).unwrap();
@@ -455,6 +462,18 @@ mod tests {
         assert_eq!(
             validate_config(&config).unwrap_err().to_string(),
             "evm_escrow max_scan_blocks must be positive",
+        );
+    }
+
+    #[test]
+    fn rejects_zero_evm_escrow_rescan_depth() {
+        let mut evm = valid_evm_escrow_config();
+        evm.rescan_depth = Some(0);
+        let config = config_with_evm_escrow(evm);
+
+        assert_eq!(
+            validate_config(&config).unwrap_err().to_string(),
+            "evm_escrow rescan_depth must be positive",
         );
     }
 

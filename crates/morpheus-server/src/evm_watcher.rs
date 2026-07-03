@@ -2,7 +2,13 @@ use async_trait::async_trait;
 use morpheus_config::EvmEscrowConfig;
 use morpheus_protocol::{ValidationCode, ValidationError};
 use morpheus_store::{EventStore, EvmEscrowLogRecord, OrderProjectionRecord};
+use serde::Serialize;
 use serde_json::Value;
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tokio::sync::RwLock;
 
 use crate::evm_escrow::{ExpectedEscrowPayment, map_escrow_log_to_payment_event};
 use crate::evm_rpc::{EvmRpcClient, RpcLog, RpcReceipt};
@@ -76,6 +82,64 @@ pub struct WatcherScanResult {
     pub to_block: i64,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct EvmWatcherRuntimeStatus {
+    pub last_scan: Option<EvmWatcherScanSnapshot>,
+    pub last_error: Option<EvmWatcherErrorSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EvmWatcherScanSnapshot {
+    pub status: String,
+    pub scanned: usize,
+    pub accepted: usize,
+    pub duplicates: usize,
+    pub rejected: usize,
+    pub from_block: i64,
+    pub to_block: i64,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EvmWatcherErrorSnapshot {
+    pub code: ValidationCode,
+    pub message: String,
+    pub updated_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SharedEvmWatcherStatus(Arc<RwLock<EvmWatcherRuntimeStatus>>);
+
+impl SharedEvmWatcherStatus {
+    pub async fn snapshot(&self) -> EvmWatcherRuntimeStatus {
+        self.0.read().await.clone()
+    }
+
+    pub async fn record_success(&self, result: &WatcherScanResult) {
+        let mut status = self.0.write().await;
+        status.last_scan = Some(EvmWatcherScanSnapshot {
+            status: "ok".into(),
+            scanned: result.scanned,
+            accepted: result.accepted,
+            duplicates: result.duplicates,
+            rejected: result.rejected,
+            from_block: result.from_block,
+            to_block: result.to_block,
+            updated_at_unix_ms: unix_time_ms(),
+        });
+        status.last_error = None;
+    }
+
+    pub async fn record_error(&self, err: &ValidationError) {
+        let mut status = self.0.write().await;
+        status.last_error = Some(EvmWatcherErrorSnapshot {
+            code: err.code,
+            message: err.message.clone(),
+            updated_at_unix_ms: unix_time_ms(),
+        });
+    }
+}
+
 struct ExpectedPaymentContext {
     order_id: String,
     room_id: String,
@@ -124,6 +188,7 @@ pub fn spawn_evm_escrow_watcher<S, P>(
     publisher: P,
     server_config: ServerConfig,
     rpc_url: String,
+    status: SharedEvmWatcherStatus,
 ) where
     S: EventStore,
     P: MatrixPublisher,
@@ -148,7 +213,10 @@ pub fn spawn_evm_escrow_watcher<S, P>(
                 evm,
                 instance_id: server_config.instance_id.clone(),
             };
-            let _ = scan_once(&store, &source, &watcher_publisher, scan_config).await;
+            match scan_once(&store, &source, &watcher_publisher, scan_config).await {
+                Ok(result) => status.record_success(&result).await,
+                Err(err) => status.record_error(&err).await,
+            }
         }
     });
 }
@@ -168,20 +236,28 @@ where
     let escrow_contract = config.evm.escrow_contract.to_lowercase();
     let checkpoint = store
         .evm_escrow_checkpoint(chain_id, &escrow_contract)
-        .await?
-        .unwrap_or(config.evm.start_block.unwrap_or(0) as i64);
+        .await?;
+    let start_block = config.evm.start_block.unwrap_or(0) as i64;
+    let latest_checkpoint = checkpoint.unwrap_or(start_block);
     let head = source.block_number().await?;
     let safe_to = head - config.evm.confirmations as i64;
-    if safe_to <= checkpoint {
+
+    let max_scan = config.evm.max_scan_blocks.unwrap_or(100) as i64;
+    let from_block =
+        if let (Some(checkpoint), Some(rescan_depth)) = (checkpoint, config.evm.rescan_depth) {
+            let overlap_start = checkpoint - rescan_depth as i64 + 1;
+            std::cmp::max(start_block + 1, overlap_start)
+        } else {
+            latest_checkpoint + 1
+        };
+    if safe_to < from_block {
         return Ok(WatcherScanResult {
-            from_block: checkpoint + 1,
+            from_block,
             to_block: safe_to,
             ..WatcherScanResult::default()
         });
     }
 
-    let max_scan = config.evm.max_scan_blocks.unwrap_or(100) as i64;
-    let from_block = checkpoint + 1;
     let to_block = std::cmp::min(safe_to, from_block + max_scan - 1);
     let topic_values = crate::evm_escrow::escrow_event_topics().all();
     let logs = source
@@ -366,4 +442,11 @@ fn required_i64(value: &Value, field: &str) -> Result<i64, ValidationError> {
 
 fn watcher_error(message: impl Into<String>) -> ValidationError {
     ValidationError::new(ValidationCode::PolicyViolation, message.into())
+}
+
+fn unix_time_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }

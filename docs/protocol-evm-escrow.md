@@ -61,6 +61,7 @@ confirmations = 1
 poll_interval_secs = 2
 start_block = 0
 max_scan_blocks = 100
+rescan_depth = 3
 deployments_path = "contracts/deployments/local.json"
 
 [[payments.evm_escrow.tokens]]
@@ -104,6 +105,8 @@ durable checkpoint, waits configured confirmations, verifies successful receipts
 deduplicates `(chain_id, tx_hash, log_index)`, and publishes payment events only
 from matching finalized logs. `start_block` and `max_scan_blocks` keep local
 replay and production backfills explicit and bounded.
+`rescan_depth` makes every follow-up scan overlap the last durable checkpoint so
+small reorgs or late RPC indexing do not permanently skip already-finalized logs.
 
 Morpheus never treats a submitted transaction hash as final payment state. Wallet
 transaction hashes are useful for UX and debugging only; projected payment state

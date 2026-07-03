@@ -73,6 +73,7 @@ fn server_config() -> ServerConfig {
             poll_interval_secs: 1,
             start_block: Some(0),
             max_scan_blocks: Some(100),
+            rescan_depth: Some(3),
             deployments_path: None,
             tokens: vec![EvmEscrowTokenConfig {
                 symbol: "USDC".into(),
@@ -90,7 +91,17 @@ async fn send_admin_request(
     uri: &str,
     authorization: Option<&str>,
 ) -> (StatusCode, Value) {
-    let app = build_router(server_config(), store);
+    send_admin_request_with_config(server_config(), store, method, uri, authorization).await
+}
+
+async fn send_admin_request_with_config(
+    config: ServerConfig,
+    store: InMemoryEventStore,
+    method: &str,
+    uri: &str,
+    authorization: Option<&str>,
+) -> (StatusCode, Value) {
+    let app = build_router(config, store);
     let mut request = Request::builder().method(method).uri(uri);
     if let Some(authorization) = authorization {
         request = request.header("authorization", authorization);
@@ -985,8 +996,37 @@ async fn admin_evm_escrow_status_reports_checkpoint_and_config() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["enabled"], true);
     assert_eq!(body["chain_id"], 31337);
+    assert_eq!(body["rescan_depth"], 3);
     assert_eq!(body["checkpoint"]["latest_scanned_block"], 12);
     assert_eq!(body["watcher"]["mode"], "embedded");
+    let watcher = body["watcher"].as_object().unwrap();
+    assert!(watcher.contains_key("last_scan"));
+    assert!(watcher.contains_key("last_error"));
+}
+
+#[tokio::test]
+async fn admin_evm_escrow_status_reads_checkpoint_case_insensitively() {
+    let mut config = server_config();
+    let mixed_case_contract = "0xE7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+    config.evm_escrow.as_mut().unwrap().escrow_contract = mixed_case_contract.into();
+    let store = InMemoryEventStore::default();
+    store
+        .set_evm_escrow_checkpoint(31337, &mixed_case_contract.to_lowercase(), 42)
+        .await
+        .unwrap();
+
+    let (status, body) = send_admin_request_with_config(
+        config,
+        store,
+        "GET",
+        "/admin/evm-escrow/status",
+        Some("Bearer admin-token"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["checkpoint"]["latest_scanned_block"], 42);
+    assert_eq!(body["escrow_contract"], mixed_case_contract);
 }
 
 #[tokio::test]
