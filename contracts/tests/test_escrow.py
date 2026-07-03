@@ -12,14 +12,14 @@ ORDER_HASH = b"\x11" * 32
 
 @pytest.fixture
 def token():
-    contract = boa.load("contracts/src/MockERC20.vy", "Mock USDC", "mUSDC", 6)
+    contract = boa.load("src/MockERC20.vy", "Mock USDC", "mUSDC", 6)
     contract.mint(BUYER, 1_000_000, sender=ADMIN)
     return contract
 
 
 @pytest.fixture
 def escrow(token):
-    contract = boa.load("contracts/src/MorpheusEscrow.vy", ADMIN)
+    contract = boa.load("src/MorpheusEscrow.vy", ADMIN)
     contract.set_allowed_token(token.address, True, sender=ADMIN)
     contract.set_seller_operator(OPERATOR, True, sender=ADMIN)
     contract.set_arbiter(ARBITER, True, sender=ADMIN)
