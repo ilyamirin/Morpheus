@@ -114,6 +114,10 @@ fn is_evm_address(value: &str) -> bool {
         && value[2..].chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
+fn is_nonzero_evm_address(value: &str) -> bool {
+    is_evm_address(value) && !value[2..].chars().all(|ch| ch == '0')
+}
+
 pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
     anyhow::ensure!(
         !config.instance.instance_id.is_empty(),
@@ -217,11 +221,11 @@ pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
             "evm_escrow rpc_url_env is required"
         );
         anyhow::ensure!(
-            is_evm_address(&evm.escrow_contract),
+            is_nonzero_evm_address(&evm.escrow_contract),
             "evm_escrow escrow_contract must be an EVM address"
         );
         anyhow::ensure!(
-            is_evm_address(&evm.default_token),
+            is_nonzero_evm_address(&evm.default_token),
             "evm_escrow default_token must be an EVM address"
         );
         anyhow::ensure!(
@@ -239,7 +243,7 @@ pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
         anyhow::ensure!(
             evm.tokens
                 .iter()
-                .any(|token| token.contract == evm.default_token),
+                .any(|token| token.contract.eq_ignore_ascii_case(&evm.default_token)),
             "evm_escrow default_token must be listed in tokens"
         );
         for token in &evm.tokens {
@@ -248,7 +252,7 @@ pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
                 "evm_escrow token symbol is required"
             );
             anyhow::ensure!(
-                is_evm_address(&token.contract),
+                is_nonzero_evm_address(&token.contract),
                 "evm_escrow token contract must be an EVM address"
             );
             anyhow::ensure!(
@@ -337,6 +341,34 @@ mod tests {
         }
     }
 
+    fn valid_evm_escrow_config() -> EvmEscrowConfig {
+        EvmEscrowConfig {
+            enabled: true,
+            chain_id: 31337,
+            rpc_url_env: "MORPHEUS_EVM_RPC_URL".into(),
+            escrow_contract: "0x0000000000000000000000000000000000000001".into(),
+            default_token: "0x0000000000000000000000000000000000000002".into(),
+            confirmations: 1,
+            poll_interval_secs: 2,
+            deployments_path: Some("contracts/deployments/local.json".into()),
+            tokens: vec![EvmEscrowTokenConfig {
+                symbol: "USDC".into(),
+                contract: "0x0000000000000000000000000000000000000002".into(),
+                decimals: 6,
+                currency: "USDC".into(),
+            }],
+        }
+    }
+
+    fn config_with_evm_escrow(evm_escrow: EvmEscrowConfig) -> MorpheusConfig {
+        let mut config = valid_config();
+        config.instance.payment_adapters = vec!["mock".into(), "evm_escrow".into()];
+        config.payments = Some(PaymentsConfig {
+            evm_escrow: Some(evm_escrow),
+        });
+        config
+    }
+
     #[test]
     fn validates_required_fields() {
         assert!(validate_config(&valid_config()).is_ok());
@@ -377,27 +409,53 @@ mod tests {
 
     #[test]
     fn validates_evm_escrow_config_when_enabled() {
-        let mut config = valid_config();
-        config.instance.payment_adapters = vec!["mock".into(), "evm_escrow".into()];
-        config.payments = Some(PaymentsConfig {
-            evm_escrow: Some(EvmEscrowConfig {
-                enabled: true,
-                chain_id: 31337,
-                rpc_url_env: "MORPHEUS_EVM_RPC_URL".into(),
-                escrow_contract: "0x0000000000000000000000000000000000000001".into(),
-                default_token: "0x0000000000000000000000000000000000000002".into(),
-                confirmations: 1,
-                poll_interval_secs: 2,
-                deployments_path: Some("contracts/deployments/local.json".into()),
-                tokens: vec![EvmEscrowTokenConfig {
-                    symbol: "USDC".into(),
-                    contract: "0x0000000000000000000000000000000000000002".into(),
-                    decimals: 6,
-                    currency: "USDC".into(),
-                }],
-            }),
-        });
+        let config = config_with_evm_escrow(valid_evm_escrow_config());
 
         assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn validates_evm_escrow_default_token_case_insensitively() {
+        let mut evm = valid_evm_escrow_config();
+        evm.default_token = "0x000000000000000000000000000000000000000a".into();
+        evm.tokens[0].contract = "0x000000000000000000000000000000000000000A".into();
+        let config = config_with_evm_escrow(evm);
+
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn rejects_zero_evm_escrow_addresses_when_enabled() {
+        let zero_address = "0x0000000000000000000000000000000000000000";
+
+        let mut evm = valid_evm_escrow_config();
+        evm.escrow_contract = zero_address.into();
+        let config = config_with_evm_escrow(evm);
+        assert_eq!(
+            validate_config(&config).unwrap_err().to_string(),
+            "evm_escrow escrow_contract must be an EVM address"
+        );
+
+        let mut evm = valid_evm_escrow_config();
+        evm.default_token = zero_address.into();
+        evm.tokens[0].contract = zero_address.into();
+        let config = config_with_evm_escrow(evm);
+        assert_eq!(
+            validate_config(&config).unwrap_err().to_string(),
+            "evm_escrow default_token must be an EVM address"
+        );
+
+        let mut evm = valid_evm_escrow_config();
+        evm.tokens.push(EvmEscrowTokenConfig {
+            symbol: "ZERO".into(),
+            contract: zero_address.into(),
+            decimals: 18,
+            currency: "ZERO".into(),
+        });
+        let config = config_with_evm_escrow(evm);
+        assert_eq!(
+            validate_config(&config).unwrap_err().to_string(),
+            "evm_escrow token contract must be an EVM address"
+        );
     }
 }
