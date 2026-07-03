@@ -17,7 +17,7 @@ require_command cargo
 require_command cast
 require_command mox
 
-RPC_URL="${MORPHEUS_EVM_RPC_URL:-http://127.0.0.1:8545}"
+RPC_URL="http://127.0.0.1:8545"
 ANVIL_LOG="${TMPDIR:-/tmp}/morpheus-anvil.log"
 
 anvil --chain-id 31337 >"$ANVIL_LOG" 2>&1 &
