@@ -27,6 +27,7 @@ use ulid::Ulid;
 
 mod context_validation;
 pub mod evm_escrow;
+pub mod evm_rpc;
 mod projection;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
