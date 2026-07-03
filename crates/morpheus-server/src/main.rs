@@ -112,6 +112,13 @@ async fn main() -> Result<()> {
             admin_token,
             seller_token,
             buyer_token,
+            evm_escrow: config.payments.as_ref().and_then(|payments| {
+                payments
+                    .evm_escrow
+                    .as_ref()
+                    .filter(|evm_escrow| evm_escrow.enabled)
+                    .cloned()
+            }),
         },
         store,
         publisher,

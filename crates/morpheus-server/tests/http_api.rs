@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use http::{Request, StatusCode};
+use morpheus_config::{EvmEscrowConfig, EvmEscrowTokenConfig};
 use morpheus_protocol::ValidationError;
 use morpheus_server::{
     MatrixPublisher, RemoteCatalogSource, ServerConfig, SynapseMatrixPublisher, build_router,
@@ -62,6 +63,22 @@ fn server_config() -> ServerConfig {
         admin_token: "admin-token".into(),
         seller_token: "seller-token".into(),
         buyer_token: "buyer-token".into(),
+        evm_escrow: Some(EvmEscrowConfig {
+            enabled: true,
+            chain_id: 31337,
+            rpc_url_env: "EVM_RPC_URL".into(),
+            escrow_contract: "0x0000000000000000000000000000000000000001".into(),
+            default_token: "0x0000000000000000000000000000000000000002".into(),
+            confirmations: 1,
+            poll_interval_secs: 1,
+            deployments_path: None,
+            tokens: vec![EvmEscrowTokenConfig {
+                symbol: "USDC".into(),
+                contract: "0x0000000000000000000000000000000000000002".into(),
+                decimals: 6,
+                currency: "USDC".into(),
+            }],
+        }),
     }
 }
 
@@ -1646,6 +1663,224 @@ async fn seller_order_complete_withdraws_purchased_offer() {
     );
     assert_eq!(events[1]["content"]["body"]["revision"], 1);
     assert_eq!(events[1]["content"]["body"]["reason"], "sold");
+}
+
+#[tokio::test]
+async fn seller_evm_payment_intent_returns_confirmation_metadata() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JEVMORDER";
+    store
+        .upsert_order(OrderProjectionRecord {
+            order_id: order_id.into(),
+            room_id: "!order:shop.example".into(),
+            customer_id: "customer:shop.example:01JCUST".into(),
+            seller_id: "seller:shop.example:01JSELLER".into(),
+            offer_id: "offer:shop.example:01JOFFER".into(),
+            status: "accepted".into(),
+            body: json!({
+                "order_id": order_id,
+                "customer_id": "customer:shop.example:01JCUST",
+                "seller_id": "seller:shop.example:01JSELLER",
+                "offer_id": "offer:shop.example:01JOFFER",
+                "offer_revision": 1,
+                "price": {"amount": "25.00", "currency": "USDC"},
+                "payment_adapter": "evm_escrow",
+                "payment_capture_policy": "before_entitlement",
+                "arbiter_actor": "arbiter:shop.example:01JARBITER"
+            }),
+        })
+        .await
+        .unwrap();
+    let publisher = RecordingPublisher::default();
+    let published_events = publisher.published_events.clone();
+    let app = build_router_with_publisher(server_config(), store, publisher);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent"
+                ))
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "actor_id": "seller:shop.example:01JSELLER",
+                        "payment_id": "pay:shop.example:01JPAYEVM",
+                        "buyer_evm_address": "0x0000000000000000000000000000000000000004",
+                        "seller_evm_address": "0x0000000000000000000000000000000000000003",
+                        "arbiter_evm_address": "0x0000000000000000000000000000000000000005"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let events = published_events.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["type"], "io.marketplace.payment.intent.created");
+    let body = &events[0]["content"]["body"];
+    assert_eq!(body["order_id"], order_id);
+    assert_eq!(body["payment_id"], "pay:shop.example:01JPAYEVM");
+    assert_eq!(body["adapter"], "evm_escrow");
+    assert_eq!(body["amount"], "25.00");
+    assert_eq!(body["currency"], "USDC");
+    assert_eq!(body["capture_policy"], "before_entitlement");
+    assert_eq!(body["confirmation"]["method"], "evm_escrow_deposit");
+    assert!(
+        body["confirmation"]["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.starts_with("https://shop.example/evm-escrow/"))
+    );
+    assert_eq!(body["confirmation"]["adapter"], "evm_escrow");
+    assert_eq!(body["confirmation"]["chain_id"], 31337);
+    assert_eq!(
+        body["confirmation"]["token"],
+        "0x0000000000000000000000000000000000000002"
+    );
+    assert_eq!(
+        body["confirmation"]["escrow_contract"],
+        "0x0000000000000000000000000000000000000001"
+    );
+    assert_eq!(
+        body["confirmation"]["buyer_evm_address"],
+        "0x0000000000000000000000000000000000000004"
+    );
+    assert_eq!(
+        body["confirmation"]["seller_evm_address"],
+        "0x0000000000000000000000000000000000000003"
+    );
+    assert_eq!(
+        body["confirmation"]["arbiter_evm_address"],
+        "0x0000000000000000000000000000000000000005"
+    );
+    assert!(
+        body["confirmation"]["order_hash"]
+            .as_str()
+            .is_some_and(|hash| hash.starts_with("0x") && hash.len() == 66)
+    );
+}
+
+#[tokio::test]
+async fn seller_evm_payment_intent_rejects_missing_config() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JEVMNOCFG";
+    store
+        .upsert_order(OrderProjectionRecord {
+            order_id: order_id.into(),
+            room_id: "!order:shop.example".into(),
+            customer_id: "customer:shop.example:01JCUST".into(),
+            seller_id: "seller:shop.example:01JSELLER".into(),
+            offer_id: "offer:shop.example:01JOFFER".into(),
+            status: "accepted".into(),
+            body: json!({
+                "order_id": order_id,
+                "customer_id": "customer:shop.example:01JCUST",
+                "seller_id": "seller:shop.example:01JSELLER",
+                "offer_id": "offer:shop.example:01JOFFER",
+                "offer_revision": 1,
+                "price": {"amount": "25.00", "currency": "USDC"},
+                "payment_adapter": "evm_escrow",
+                "payment_capture_policy": "before_entitlement",
+                "arbiter_actor": "arbiter:shop.example:01JARBITER"
+            }),
+        })
+        .await
+        .unwrap();
+    let mut config = server_config();
+    config.evm_escrow = None;
+    let app = build_router_with_publisher(config, store, RecordingPublisher::default());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent"
+                ))
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "actor_id": "seller:shop.example:01JSELLER",
+                        "payment_id": "pay:shop.example:01JPAYNOCFG",
+                        "buyer_evm_address": "0x0000000000000000000000000000000000000004",
+                        "seller_evm_address": "0x0000000000000000000000000000000000000003",
+                        "arbiter_evm_address": "0x0000000000000000000000000000000000000005"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["code"], "EVM_ESCROW_NOT_CONFIGURED");
+}
+
+#[tokio::test]
+async fn seller_evm_payment_intent_rejects_non_evm_order() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JMOCKORDER";
+    store
+        .upsert_order(OrderProjectionRecord {
+            order_id: order_id.into(),
+            room_id: "!order:shop.example".into(),
+            customer_id: "customer:shop.example:01JCUST".into(),
+            seller_id: "seller:shop.example:01JSELLER".into(),
+            offer_id: "offer:shop.example:01JOFFER".into(),
+            status: "accepted".into(),
+            body: json!({
+                "order_id": order_id,
+                "customer_id": "customer:shop.example:01JCUST",
+                "seller_id": "seller:shop.example:01JSELLER",
+                "offer_id": "offer:shop.example:01JOFFER",
+                "offer_revision": 1,
+                "price": {"amount": "25.00", "currency": "USDC"},
+                "payment_adapter": "mock",
+                "payment_capture_policy": "before_entitlement",
+                "arbiter_actor": "arbiter:shop.example:01JARBITER"
+            }),
+        })
+        .await
+        .unwrap();
+    let app = build_router_with_publisher(server_config(), store, RecordingPublisher::default());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent"
+                ))
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "actor_id": "seller:shop.example:01JSELLER",
+                        "payment_id": "pay:shop.example:01JPAYMOCK",
+                        "buyer_evm_address": "0x0000000000000000000000000000000000000004",
+                        "seller_evm_address": "0x0000000000000000000000000000000000000003",
+                        "arbiter_evm_address": "0x0000000000000000000000000000000000000005"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["code"], "ORDER_PAYMENT_ADAPTER_MISMATCH");
 }
 
 #[tokio::test]

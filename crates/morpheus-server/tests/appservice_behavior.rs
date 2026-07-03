@@ -242,6 +242,7 @@ async fn send_transaction_to_store(
             admin_token: "admin-token".into(),
             seller_token: "seller-token".into(),
             buyer_token: "buyer-token".into(),
+            evm_escrow: None,
         },
         store,
     );
