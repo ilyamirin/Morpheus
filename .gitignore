@@ -20,3 +20,5 @@ skills/
 .playwright-cli/
 output/
 *.srl
+contracts/deployments/*.json
+!contracts/deployments/.gitkeep
