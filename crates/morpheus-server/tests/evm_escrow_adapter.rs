@@ -1,7 +1,8 @@
+use morpheus_protocol::{ValidationCode, validate_event_envelope};
 use morpheus_server::evm_escrow::{
-    compute_order_hash, map_escrow_log_to_payment_event, DecodedEscrowLog, EvmEscrowIntentInput,
+    DecodedEscrowLog, EvmEscrowIntentInput, compute_order_hash, map_escrow_log_to_payment_event,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn locked_terms_input() -> EvmEscrowIntentInput {
     EvmEscrowIntentInput {
@@ -44,6 +45,65 @@ fn deposited_log_fixture() -> DecodedEscrowLog {
         buyer_amount: None,
         seller_amount: None,
     }
+}
+
+fn protocol_event(event_type: &str, body: Value) -> Value {
+    json!({
+        "type": event_type,
+        "room_id": "!order:shop.example",
+        "event_id": format!(
+            "$matrix-{}",
+            event_type
+                .chars()
+                .filter(|ch| ch.is_ascii_alphanumeric())
+                .collect::<String>()
+        ),
+        "sender": "@market:shop.example",
+        "origin_server_ts": 1_777_888_000_000i64,
+        "content": {
+            "protocol": "io.marketplace",
+            "protocol_version": "0.1",
+            "protocol_event_id": format!(
+                "evt:shop.example:{}",
+                event_type
+                    .chars()
+                    .filter(|ch| ch.is_ascii_alphanumeric())
+                    .collect::<String>()
+                    .to_ascii_uppercase()
+            ),
+            "created_at": "2026-05-04T10:00:00Z",
+            "issuer": {
+                "instance_id": "shop.example",
+                "actor_id": "seller:shop.example:01JSELLER",
+                "matrix_user_id": "@market:shop.example"
+            },
+            "critical": [],
+            "body": body
+        }
+    })
+}
+
+fn assert_protocol_valid(event_type: &str, body: Value) {
+    validate_event_envelope(&protocol_event(event_type, body)).unwrap();
+}
+
+fn assert_evm_log_evidence(body: &Value, event_name: &str) {
+    let evidence = &body["evidence"];
+    assert_eq!(evidence["kind"], "evm_escrow_log");
+    assert_eq!(evidence["log"]["event_name"], event_name);
+    assert_eq!(
+        evidence["log"]["tx_hash"],
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert!(
+        evidence["uri"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://evidence.morpheus.local/evm/31337/tx/")
+    );
+    let sha256 = evidence["sha256"].as_str().unwrap();
+    assert!(sha256.starts_with("sha256:"));
+    assert_eq!(sha256.len(), 71);
 }
 
 #[test]
@@ -89,6 +149,7 @@ fn deposited_log_maps_to_payment_authorized() {
     let mapped = map_escrow_log_to_payment_event(
         "ord:shop.example:01JORDER",
         "pay:shop.example:01JPAY",
+        "USDC",
         &log,
     )
     .unwrap();
@@ -96,4 +157,138 @@ fn deposited_log_maps_to_payment_authorized() {
     assert_eq!(mapped.event_type, "io.marketplace.payment.authorized");
     assert_eq!(mapped.body["order_id"], "ord:shop.example:01JORDER");
     assert_eq!(mapped.body["payment_id"], "pay:shop.example:01JPAY");
+}
+
+#[test]
+fn released_log_maps_to_protocol_valid_payment_captured() {
+    let mut log = deposited_log_fixture();
+    log.event_name = "EscrowReleased".into();
+    log.amount = "25.00".into();
+
+    let mapped = map_escrow_log_to_payment_event(
+        "ord:shop.example:01JORDER",
+        "pay:shop.example:01JPAY",
+        "USDC",
+        &log,
+    )
+    .unwrap();
+
+    assert_eq!(mapped.event_type, "io.marketplace.payment.captured");
+    assert_eq!(mapped.body["adapter"], "evm_escrow");
+    assert_eq!(mapped.body["amount"], "25.00");
+    assert_eq!(mapped.body["currency"], "USDC");
+    assert_evm_log_evidence(&mapped.body, "EscrowReleased");
+    assert_protocol_valid(&mapped.event_type, mapped.body);
+}
+
+#[test]
+fn refunded_log_maps_to_protocol_valid_payment_refunded() {
+    let mut log = deposited_log_fixture();
+    log.event_name = "EscrowRefunded".into();
+    log.amount = "25.00".into();
+
+    let mapped = map_escrow_log_to_payment_event(
+        "ord:shop.example:01JORDER",
+        "pay:shop.example:01JPAY",
+        "USDC",
+        &log,
+    )
+    .unwrap();
+
+    assert_eq!(mapped.event_type, "io.marketplace.payment.refunded");
+    assert_eq!(mapped.body["refund_id"].as_str().unwrap().len(), 81);
+    assert!(
+        mapped.body["refund_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("refund:evm.local:")
+    );
+    assert_eq!(mapped.body["amount"], "25.00");
+    assert_eq!(mapped.body["currency"], "USDC");
+    assert_evm_log_evidence(&mapped.body, "EscrowRefunded");
+    assert_protocol_valid(&mapped.event_type, mapped.body);
+}
+
+#[test]
+fn refund_id_changes_with_log_index() {
+    let mut first_log = deposited_log_fixture();
+    first_log.event_name = "EscrowRefunded".into();
+    first_log.amount = "25.00".into();
+
+    let mut second_log = first_log.clone();
+    second_log.log_index = 1;
+
+    let first = map_escrow_log_to_payment_event(
+        "ord:shop.example:01JORDER",
+        "pay:shop.example:01JPAY",
+        "USDC",
+        &first_log,
+    )
+    .unwrap();
+    let second = map_escrow_log_to_payment_event(
+        "ord:shop.example:01JORDER",
+        "pay:shop.example:01JPAY",
+        "USDC",
+        &second_log,
+    )
+    .unwrap();
+
+    assert_ne!(first.body["refund_id"], second.body["refund_id"]);
+    assert_ne!(first.body["provider_ref"], second.body["provider_ref"]);
+}
+
+#[test]
+fn partial_refund_uses_buyer_amount_and_protocol_valid_evidence() {
+    let mut log = deposited_log_fixture();
+    log.event_name = "EscrowPartiallyRefunded".into();
+    log.amount = "25.00".into();
+    log.buyer_amount = Some("10.00".into());
+    log.seller_amount = Some("15.00".into());
+
+    let mapped = map_escrow_log_to_payment_event(
+        "ord:shop.example:01JORDER",
+        "pay:shop.example:01JPAY",
+        "USDC",
+        &log,
+    )
+    .unwrap();
+
+    assert_eq!(mapped.event_type, "io.marketplace.payment.refunded");
+    assert_eq!(mapped.body["amount"], "10.00");
+    assert_eq!(mapped.body["evidence"]["log"]["seller_amount"], "15.00");
+    assert_evm_log_evidence(&mapped.body, "EscrowPartiallyRefunded");
+    assert_protocol_valid(&mapped.event_type, mapped.body);
+}
+
+#[test]
+fn unsupported_escrow_log_event_is_rejected() {
+    let mut log = deposited_log_fixture();
+    log.event_name = "EscrowCancelled".into();
+
+    let err = map_escrow_log_to_payment_event(
+        "ord:shop.example:01JORDER",
+        "pay:shop.example:01JPAY",
+        "USDC",
+        &log,
+    )
+    .unwrap_err();
+
+    assert_eq!(err.code, ValidationCode::UnknownEventType);
+}
+
+#[test]
+fn refunded_log_rejects_short_tx_hash_without_panicking() {
+    let mut log = deposited_log_fixture();
+    log.event_name = "EscrowRefunded".into();
+    log.tx_hash = "0xabc".into();
+
+    let err = map_escrow_log_to_payment_event(
+        "ord:shop.example:01JORDER",
+        "pay:shop.example:01JPAY",
+        "USDC",
+        &log,
+    )
+    .unwrap_err();
+
+    assert_eq!(err.code, ValidationCode::InvalidId);
 }

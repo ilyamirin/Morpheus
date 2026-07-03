@@ -1,6 +1,6 @@
 use morpheus_protocol::{ValidationCode, ValidationError};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,10 +85,50 @@ pub fn compute_order_hash(input: &EvmEscrowIntentInput) -> Result<String, Valida
 pub fn map_escrow_log_to_payment_event(
     order_id: &str,
     payment_id: &str,
+    currency: &str,
     log: &DecodedEscrowLog,
 ) -> Result<PaymentEventDraft, ValidationError> {
-    let evidence = json!({
-        "kind": "evm_escrow_log",
+    let evidence = evm_log_evidence(log)?;
+    let provider_ref = provider_ref(log);
+
+    match log.event_name.as_str() {
+        "EscrowDeposited" => Ok(PaymentEventDraft {
+            event_type: "io.marketplace.payment.authorized".into(),
+            body: json!({ "order_id": order_id, "payment_id": payment_id }),
+        }),
+        "EscrowReleased" => Ok(PaymentEventDraft {
+            event_type: "io.marketplace.payment.captured".into(),
+            body: json!({
+                "order_id": order_id,
+                "payment_id": payment_id,
+                "adapter": "evm_escrow",
+                "amount": log.amount,
+                "currency": currency,
+                "provider_ref": provider_ref,
+                "evidence": evidence,
+            }),
+        }),
+        "EscrowRefunded" | "EscrowPartiallyRefunded" => Ok(PaymentEventDraft {
+            event_type: "io.marketplace.payment.refunded".into(),
+            body: json!({
+                "order_id": order_id,
+                "payment_id": payment_id,
+                "refund_id": refund_id_from_log(log)?,
+                "amount": log.buyer_amount.as_deref().unwrap_or(log.amount.as_str()),
+                "currency": currency,
+                "provider_ref": provider_ref,
+                "evidence": evidence,
+            }),
+        }),
+        _ => Err(ValidationError::new(
+            ValidationCode::UnknownEventType,
+            format!("unsupported evm escrow event {}", log.event_name),
+        )),
+    }
+}
+
+fn evm_log_evidence(log: &DecodedEscrowLog) -> Result<Value, ValidationError> {
+    let raw_log = json!({
         "chain_id": log.chain_id,
         "escrow_contract": log.escrow_contract,
         "tx_hash": log.tx_hash,
@@ -104,39 +144,46 @@ pub fn map_escrow_log_to_payment_event(
         "buyer_amount": log.buyer_amount,
         "seller_amount": log.seller_amount,
     });
+    let bytes = serde_json::to_vec(&raw_log).map_err(|err| {
+        ValidationError::new(
+            ValidationCode::PolicyViolation,
+            format!("failed to serialize evm escrow evidence: {err}"),
+        )
+    })?;
+    let digest = Sha256::digest(bytes);
 
-    match log.event_name.as_str() {
-        "EscrowDeposited" => Ok(PaymentEventDraft {
-            event_type: "io.marketplace.payment.authorized".into(),
-            body: json!({ "order_id": order_id, "payment_id": payment_id }),
-        }),
-        "EscrowReleased" => Ok(PaymentEventDraft {
-            event_type: "io.marketplace.payment.captured".into(),
-            body: json!({
-                "order_id": order_id,
-                "payment_id": payment_id,
-                "adapter": "evm_escrow",
-                "amount": log.amount,
-                "currency": "USDC",
-                "provider_ref": format!("evm:{}:{}:{}", log.chain_id, log.tx_hash, log.log_index),
-                "evidence": evidence,
-            }),
-        }),
-        "EscrowRefunded" | "EscrowPartiallyRefunded" => Ok(PaymentEventDraft {
-            event_type: "io.marketplace.payment.refunded".into(),
-            body: json!({
-                "order_id": order_id,
-                "payment_id": payment_id,
-                "refund_id": format!("refund:local:{}", &log.tx_hash.trim_start_matches("0x")[..16]),
-                "amount": log.buyer_amount.as_deref().unwrap_or(log.amount.as_str()),
-                "currency": "USDC",
-                "provider_ref": format!("evm:{}:{}:{}", log.chain_id, log.tx_hash, log.log_index),
-                "evidence": evidence,
-            }),
-        }),
-        _ => Err(ValidationError::new(
-            ValidationCode::UnknownEventType,
-            format!("unsupported evm escrow event {}", log.event_name),
-        )),
+    Ok(json!({
+        "kind": "evm_escrow_log",
+        "uri": format!(
+            "https://evidence.morpheus.local/evm/{}/tx/{}/logs/{}",
+            log.chain_id, log.tx_hash, log.log_index
+        ),
+        "sha256": format!("sha256:{}", hex::encode(digest)),
+        "log": raw_log,
+    }))
+}
+
+fn provider_ref(log: &DecodedEscrowLog) -> String {
+    format!("evm:{}:{}:{}", log.chain_id, log.tx_hash, log.log_index)
+}
+
+fn refund_id_from_log(log: &DecodedEscrowLog) -> Result<String, ValidationError> {
+    assert_full_tx_hash(&log.tx_hash)?;
+    let digest = Sha256::digest(provider_ref(log).as_bytes());
+    Ok(format!(
+        "refund:evm.local:{}",
+        hex::encode(digest).to_ascii_uppercase()
+    ))
+}
+
+fn assert_full_tx_hash(tx_hash: &str) -> Result<(), ValidationError> {
+    let hash = tx_hash.strip_prefix("0x").unwrap_or(tx_hash);
+    if hash.len() != 64 || !hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(ValidationError::new(
+            ValidationCode::InvalidId,
+            format!("invalid evm escrow transaction hash for refund id: {tx_hash}"),
+        ));
     }
+
+    Ok(())
 }

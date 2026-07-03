@@ -25,8 +25,8 @@ use std::collections::{BTreeSet, HashSet};
 use ulid::Ulid;
 
 mod context_validation;
-mod projection;
 pub mod evm_escrow;
+mod projection;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
