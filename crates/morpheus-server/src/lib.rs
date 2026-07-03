@@ -26,6 +26,7 @@ use ulid::Ulid;
 
 mod context_validation;
 mod projection;
+pub mod evm_escrow;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
