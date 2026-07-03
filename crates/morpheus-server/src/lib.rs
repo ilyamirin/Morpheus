@@ -740,6 +740,7 @@ where
         .route("/ui/assets/favicon.svg", get(ui_favicon_svg))
         .route("/ui/assets/app.css", get(ui_app_css))
         .route("/ui/assets/app.js", get(ui_app_js))
+        .route("/ui/assets/app.bundle.js", get(ui_app_bundle_js))
         .route("/ui/assets/products/books.png", get(ui_product_books_png))
         .route("/ui/assets/products/cases.png", get(ui_product_cases_png))
         .route(
@@ -913,6 +914,13 @@ async fn ui_app_js() -> impl IntoResponse {
     (
         [("content-type", "application/javascript")],
         include_str!("../ui/assets/app.js"),
+    )
+}
+
+async fn ui_app_bundle_js() -> impl IntoResponse {
+    (
+        [("content-type", "text/javascript; charset=utf-8")],
+        include_str!("../ui/assets/app.bundle.js"),
     )
 }
 

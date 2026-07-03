@@ -590,7 +590,7 @@ async fn buyer_ui_contains_evm_escrow_wallet_hooks() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content_type.as_deref(), Some("text/html; charset=utf-8"));
-    assert_contains_all(&body, &["app.js", r#"data-page="buyer""#]);
+    assert_contains_all(&body, &["app.bundle.js", r#"data-page="buyer""#]);
 }
 
 #[tokio::test]
@@ -623,6 +623,20 @@ async fn app_js_contains_evm_escrow_hooks() {
             r#"arbiter_evm_address: demoEvmAddress"#,
         ],
     );
+}
+
+#[tokio::test]
+async fn ui_bundle_asset_returns_javascript_without_auth() {
+    let (status, content_type, body) = send_ui_body_request("/ui/assets/app.bundle.js").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("javascript")),
+        "{content_type:?}"
+    );
+    assert_contains_all(&body, &["viem", "writeContract", "evm_escrow"]);
 }
 
 #[tokio::test]
