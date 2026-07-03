@@ -305,6 +305,7 @@ async fn seed_evm_order_and_payment_with_amount(store: &InMemoryEventStore, amou
                     "adapter": "evm_escrow",
                     "chain_id": 31337,
                     "token": "0x0000000000000000000000000000000000000002",
+                    "token_decimals": 6,
                     "amount_units": amount_units,
                     "escrow_contract": "0x0000000000000000000000000000000000000001",
                     "order_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",

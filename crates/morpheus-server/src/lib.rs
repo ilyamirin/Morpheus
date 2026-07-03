@@ -2231,6 +2231,7 @@ where
             "chain_id": evm.chain_id,
             "token": token.contract.clone(),
             "token_currency": token.currency.clone(),
+            "token_decimals": token.decimals,
             "amount_units": amount_units,
             "escrow_contract": evm.escrow_contract.clone(),
             "order_hash": order_hash,

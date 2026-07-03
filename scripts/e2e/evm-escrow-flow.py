@@ -34,6 +34,7 @@ BUYER = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 SELLER = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
 SELLER_OPERATOR = "0x90F79bf6EB2c4f870365E785982E1f101E93b906"
 ARBITER = "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
+ARBITER_OPERATOR = SELLER_OPERATOR
 
 SELLER_ID = "seller:shop.example:01JE2ESELLER"
 CUSTOMER_ID = "customer:shop.example:01JE2ECUST"
@@ -45,6 +46,7 @@ PAYMENT_ID = "pay:shop.example:01JE2EPAY"
 ENTITLEMENT_ID = "ent:shop.example:01JE2EENT"
 ROOM_ID = "!e2e-evm-escrow:shop.example"
 AMOUNT_UNITS = "25000000"
+PARTIAL_REFUND_UNITS = "10000000"
 
 
 class MatrixCapture:
@@ -179,10 +181,15 @@ def ingest_events(capture, txn_counter):
     body = json.dumps({"events": events}).encode()
     url = f"{SERVER_URL}/_matrix/app/v1/transactions/e2e-{txn_counter}?access_token={HOMESERVER_TOKEN}"
     request = urllib.request.Request(url, data=body, method="PUT", headers={"content-type": "application/json"})
-    with urllib.request.urlopen(request, timeout=20) as response:
-        if response.status != 200:
-            raise RuntimeError(f"appservice transaction returned {response.status}")
-        response.read()
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            if response.status != 200:
+                data = response.read().decode()
+                raise RuntimeError(f"appservice transaction returned {response.status}: {data}")
+            response.read()
+    except urllib.error.HTTPError as error:
+        data = error.read().decode()
+        raise RuntimeError(f"appservice transaction returned {error.code}: {data}") from error
     return txn_counter
 
 
@@ -251,18 +258,164 @@ def submit_and_ingest(capture, txn_counter, method, path, payload, token):
     return result, ingest_events(capture, txn_counter)
 
 
-def poll_order(capture, txn_counter, wanted_status, timeout=45):
+def poll_order(capture, txn_counter, order_id, wanted_status, timeout=45):
     deadline = time.time() + timeout
     while time.time() < deadline:
         txn_counter = ingest_events(capture, txn_counter)
-        order = http_json("GET", f"/admin/orders/{urllib.parse.quote(ORDER_ID, safe='')}", token=ADMIN_TOKEN)["order"]
+        order = http_json("GET", f"/admin/orders/{urllib.parse.quote(order_id, safe='')}", token=ADMIN_TOKEN)["order"]
         status = order.get("status")
         payment_status = (order.get("payment") or {}).get("status")
-        print(f"order={status} payment={payment_status}", flush=True)
+        print(f"order_id={order_id} order={status} payment={payment_status}", flush=True)
         if status == wanted_status or payment_status == wanted_status:
             return order, txn_counter
         time.sleep(1)
-    raise RuntimeError(f"order did not reach {wanted_status}")
+    raise RuntimeError(f"order {order_id} did not reach {wanted_status}")
+
+
+def ids_for(suffix):
+    return {
+        "customer_id": f"{CUSTOMER_ID}{suffix}",
+        "product_id": f"{PRODUCT_ID}{suffix}",
+        "offer_id": f"{OFFER_ID}{suffix}",
+        "order_id": f"{ORDER_ID}{suffix}",
+        "payment_id": f"{PAYMENT_ID}{suffix}",
+        "entitlement_id": f"{ENTITLEMENT_ID}{suffix}",
+        "room_id": f"!e2e-evm-escrow-{suffix.lower()}:shop.example",
+        "snapshot_id": f"snap:shop.example:01JE2ESNAP{suffix}",
+    }
+
+
+def create_order_and_intent(capture, txn_counter, ids):
+    order_id = ids["order_id"]
+    _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", "/api/v1/seller/products", {
+        "seller_id": SELLER_ID,
+        "product_id": ids["product_id"],
+        "revision": 1,
+        "title": f"EVM Escrow E2E {order_id.rsplit('ORDER', 1)[-1]}",
+        "description": "Local escrow E2E product",
+        "kind": "digital_service",
+        "categories": ["e2e"],
+        "tags": ["evm"],
+        "terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    }, SELLER_TOKEN)
+    _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", "/api/v1/seller/offers", {
+        "seller_id": SELLER_ID,
+        "product_id": ids["product_id"],
+        "offer_id": ids["offer_id"],
+        "revision": 1,
+        "price": {"amount": "25.00", "currency": "USDC"},
+        "payment_capture_policy": "before_entitlement",
+        "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "entitlement_type": "external_entitlement",
+        "availability_mode": "unlimited",
+    }, SELLER_TOKEN)
+    _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", "/api/v1/buyer/orders", {
+        "customer_id": ids["customer_id"],
+        "customer_display_name": "E2E Buyer",
+        "order_id": order_id,
+        "room_id": ids["room_id"],
+        "seller_id": SELLER_ID,
+        "offer_id": ids["offer_id"],
+        "offer_revision": 1,
+        "catalog_snapshot_id": ids["snapshot_id"],
+        "price": {"amount": "25.00", "currency": "USDC"},
+        "payment_adapter": "evm_escrow",
+        "payment_capture_policy": "before_entitlement",
+        "entitlement_type": "external_entitlement",
+        "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "arbiter_instance": "arbiter.example",
+        "arbiter_actor": ARBITER_ID,
+        "arbitration_policy_id": "standard-digital-v1",
+        "arbitration_policy_version": "1",
+        "arbitration_window": "P14D",
+        "expires_at": "2027-01-01T00:00:00Z",
+    }, BUYER_TOKEN)
+    _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", f"/api/v1/seller/orders/{urllib.parse.quote(order_id, safe='')}/accept", {
+        "actor_id": SELLER_ID,
+        "offer_revision": 1,
+        "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "payment_capture_policy": "before_entitlement",
+        "arbitration_policy_version": "1",
+    }, SELLER_TOKEN)
+    _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", f"/api/v1/seller/orders/{urllib.parse.quote(order_id, safe='')}/evm-escrow/payment-intent", {
+        "actor_id": SELLER_ID,
+        "payment_id": ids["payment_id"],
+        "buyer_evm_address": BUYER,
+        "seller_evm_address": SELLER,
+        "arbiter_evm_address": ARBITER,
+    }, SELLER_TOKEN)
+
+    order = http_json("GET", f"/admin/orders/{urllib.parse.quote(order_id, safe='')}", token=ADMIN_TOKEN)["order"]
+    return order["payment"]["body"]["confirmation"]["order_hash"], txn_counter
+
+
+def deposit_and_authorize(capture, txn_counter, token, escrow, ids, order_hash):
+    run(["cast", "send", token, "mint(address,uint256)", BUYER, AMOUNT_UNITS, "--private-key", ADMIN_KEY, "--rpc-url", RPC_URL])
+    run(["cast", "send", token, "approve(address,uint256)", escrow, AMOUNT_UNITS, "--private-key", BUYER_KEY, "--rpc-url", RPC_URL])
+    run(["cast", "send", escrow, "deposit(bytes32,address,uint256,address,address,address)", order_hash, token, AMOUNT_UNITS, SELLER, BUYER, ARBITER, "--private-key", BUYER_KEY, "--rpc-url", RPC_URL])
+    mine_confirmations()
+    replay_evm_watcher()
+    return poll_order(capture, txn_counter, ids["order_id"], "authorized")
+
+
+def run_release_flow(capture, txn_counter, token, escrow):
+    ids = ids_for("REL")
+    order_hash, txn_counter = create_order_and_intent(capture, txn_counter, ids)
+    _, txn_counter = deposit_and_authorize(capture, txn_counter, token, escrow, ids, order_hash)
+
+    run(["cast", "send", escrow, "release(bytes32)", order_hash, "--private-key", SELLER_OPERATOR_KEY, "--rpc-url", RPC_URL])
+    mine_confirmations()
+    replay_evm_watcher()
+    _, txn_counter = poll_order(capture, txn_counter, ids["order_id"], "captured")
+
+    _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", f"/api/v1/seller/orders/{urllib.parse.quote(ids['order_id'], safe='')}/entitlement-grant", {
+        "actor_id": SELLER_ID,
+        "payment_id": ids["payment_id"],
+        "entitlement_id": ids["entitlement_id"],
+        "entitlement_type": "external_entitlement",
+        "external_ref": "https://shop.example/e2e/entitlement",
+        "evidence": {
+            "kind": "e2e",
+            "uri": "https://shop.example/e2e/evidence",
+            "sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        },
+    }, SELLER_TOKEN)
+
+    _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", f"/api/v1/seller/orders/{urllib.parse.quote(ids['order_id'], safe='')}/complete", {
+        "actor_id": SELLER_ID,
+    }, SELLER_TOKEN)
+    _, txn_counter = poll_order(capture, txn_counter, ids["order_id"], "completed")
+    return txn_counter
+
+
+def run_refund_flow(capture, txn_counter, token, escrow):
+    ids = ids_for("REF")
+    order_hash, txn_counter = create_order_and_intent(capture, txn_counter, ids)
+    _, txn_counter = deposit_and_authorize(capture, txn_counter, token, escrow, ids, order_hash)
+
+    run(["cast", "send", escrow, "refund(bytes32)", order_hash, "--private-key", SELLER_OPERATOR_KEY, "--rpc-url", RPC_URL])
+    mine_confirmations()
+    replay_evm_watcher()
+    _, txn_counter = poll_order(capture, txn_counter, ids["order_id"], "refunded")
+    return txn_counter
+
+
+def run_partial_refund_flow(capture, txn_counter, token, escrow):
+    ids = ids_for("PART")
+    order_hash, txn_counter = create_order_and_intent(capture, txn_counter, ids)
+    _, txn_counter = deposit_and_authorize(capture, txn_counter, token, escrow, ids, order_hash)
+
+    run(["cast", "send", escrow, "partial_refund(bytes32,uint256)", order_hash, PARTIAL_REFUND_UNITS, "--private-key", SELLER_OPERATOR_KEY, "--rpc-url", RPC_URL])
+    mine_confirmations()
+    replay_evm_watcher()
+    order, txn_counter = poll_order(capture, txn_counter, ids["order_id"], "refunded")
+    amount = (order.get("payment") or {}).get("body", {}).get("amount")
+    if amount != "10.00":
+        raise RuntimeError(f"partial refund amount mismatch: expected 10.00, got {amount}")
+    return txn_counter
 
 
 def main():
@@ -333,80 +486,13 @@ def main():
             "entitlement_type": "external_entitlement",
             "availability_mode": "unlimited",
         }, SELLER_TOKEN)
-        _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", "/api/v1/buyer/orders", {
-            "customer_id": CUSTOMER_ID,
-            "customer_display_name": "E2E Buyer",
-            "order_id": ORDER_ID,
-            "room_id": ROOM_ID,
-            "seller_id": SELLER_ID,
-            "offer_id": OFFER_ID,
-            "offer_revision": 1,
-            "catalog_snapshot_id": "snap:shop.example:01JE2ESNAP",
-            "price": {"amount": "25.00", "currency": "USDC"},
-            "payment_adapter": "evm_escrow",
-            "payment_capture_policy": "before_entitlement",
-            "entitlement_type": "external_entitlement",
-            "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-            "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-            "arbiter_instance": "arbiter.example",
-            "arbiter_actor": ARBITER_ID,
-            "arbitration_policy_id": "standard-digital-v1",
-            "arbitration_policy_version": "1",
-            "arbitration_window": "P14D",
-            "expires_at": "2027-01-01T00:00:00Z",
-        }, BUYER_TOKEN)
-        _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", f"/api/v1/seller/orders/{urllib.parse.quote(ORDER_ID, safe='')}/accept", {
-            "actor_id": SELLER_ID,
-            "offer_revision": 1,
-            "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-            "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-            "payment_capture_policy": "before_entitlement",
-            "arbitration_policy_version": "1",
-        }, SELLER_TOKEN)
-        _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", f"/api/v1/seller/orders/{urllib.parse.quote(ORDER_ID, safe='')}/evm-escrow/payment-intent", {
-            "actor_id": SELLER_ID,
-            "payment_id": PAYMENT_ID,
-            "buyer_evm_address": BUYER,
-            "seller_evm_address": SELLER,
-            "arbiter_evm_address": ARBITER,
-        }, SELLER_TOKEN)
-
-        order = http_json("GET", f"/admin/orders/{urllib.parse.quote(ORDER_ID, safe='')}", token=ADMIN_TOKEN)["order"]
-        confirmation = order["payment"]["body"]["confirmation"]
-        order_hash = confirmation["order_hash"]
         token = deployment["mock_erc20"]
         escrow = deployment["escrow_contract"]
-
         run(["cast", "send", escrow, "set_seller_operator(address,bool)", SELLER_OPERATOR, "true", "--private-key", ADMIN_KEY, "--rpc-url", RPC_URL])
-        run(["cast", "send", token, "mint(address,uint256)", BUYER, AMOUNT_UNITS, "--private-key", ADMIN_KEY, "--rpc-url", RPC_URL])
-        run(["cast", "send", token, "approve(address,uint256)", escrow, AMOUNT_UNITS, "--private-key", BUYER_KEY, "--rpc-url", RPC_URL])
-        run(["cast", "send", escrow, "deposit(bytes32,address,uint256,address,address,address)", order_hash, token, AMOUNT_UNITS, SELLER, BUYER, ARBITER, "--private-key", BUYER_KEY, "--rpc-url", RPC_URL])
-        mine_confirmations()
-        replay_evm_watcher()
-        _, txn_counter = poll_order(capture, txn_counter, "authorized")
-
-        run(["cast", "send", escrow, "release(bytes32)", order_hash, "--private-key", SELLER_OPERATOR_KEY, "--rpc-url", RPC_URL])
-        mine_confirmations()
-        replay_evm_watcher()
-        _, txn_counter = poll_order(capture, txn_counter, "captured")
-
-        _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", f"/api/v1/seller/orders/{urllib.parse.quote(ORDER_ID, safe='')}/entitlement-grant", {
-            "actor_id": SELLER_ID,
-            "payment_id": PAYMENT_ID,
-            "entitlement_id": ENTITLEMENT_ID,
-            "entitlement_type": "external_entitlement",
-            "external_ref": "https://shop.example/e2e/entitlement",
-            "evidence": {
-                "kind": "e2e",
-                "uri": "https://shop.example/e2e/evidence",
-                "sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
-            },
-        }, SELLER_TOKEN)
-
-        _, txn_counter = submit_and_ingest(capture, txn_counter, "POST", f"/api/v1/seller/orders/{urllib.parse.quote(ORDER_ID, safe='')}/complete", {
-            "actor_id": SELLER_ID,
-        }, SELLER_TOKEN)
-        poll_order(capture, txn_counter, "completed")
+        run(["cast", "send", escrow, "set_arbiter(address,bool)", ARBITER_OPERATOR, "true", "--private-key", ADMIN_KEY, "--rpc-url", RPC_URL])
+        txn_counter = run_release_flow(capture, txn_counter, token, escrow)
+        txn_counter = run_refund_flow(capture, txn_counter, token, escrow)
+        txn_counter = run_partial_refund_flow(capture, txn_counter, token, escrow)
         print("evm escrow e2e ok", flush=True)
     finally:
         server.terminate()

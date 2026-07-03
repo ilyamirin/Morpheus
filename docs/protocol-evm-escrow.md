@@ -94,6 +94,10 @@ Contract log mapping:
 - `EscrowRefunded` -> `io.marketplace.payment.refunded`
 - `EscrowPartiallyRefunded` -> `io.marketplace.payment.refunded` with partial amount evidence
 
+For partial refunds, Morpheus publishes the buyer refund amount as a protocol
+decimal amount using the configured token decimals. Raw on-chain token units are
+kept in the EVM log evidence for auditability.
+
 Buyer-submitted transaction hashes are UX hints only. Morpheus payment state must
 come from verified contract logs read through trusted RPC.
 

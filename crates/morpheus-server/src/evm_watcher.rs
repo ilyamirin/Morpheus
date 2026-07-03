@@ -146,6 +146,7 @@ struct ExpectedPaymentContext {
     payment_id: String,
     amount: String,
     currency: String,
+    token_decimals: u8,
     expected: ExpectedEscrowPayment,
 }
 
@@ -346,6 +347,7 @@ where
         &expected.payment_id,
         &expected.amount,
         &expected.currency,
+        expected.token_decimals,
         &decoded,
     )?;
     publisher
@@ -395,12 +397,14 @@ fn expected_payment_context(
     let confirmation = body
         .get("confirmation")
         .ok_or_else(|| watcher_error("evm escrow payment missing confirmation"))?;
+    let amount = required_str(body, "amount")?;
+    let amount_units = required_str(confirmation, "amount_units")?;
     let expected = ExpectedEscrowPayment {
         order_hash: required_str(confirmation, "order_hash")?.into(),
         chain_id: required_i64(confirmation, "chain_id")?,
         escrow_contract: required_str(confirmation, "escrow_contract")?.into(),
         token: required_str(confirmation, "token")?.into(),
-        amount: required_str(confirmation, "amount_units")?.into(),
+        amount: amount_units.into(),
         buyer: required_str(confirmation, "buyer_evm_address")?.into(),
         seller: required_str(confirmation, "seller_evm_address")?.into(),
     };
@@ -408,8 +412,10 @@ fn expected_payment_context(
         order_id: order.order_id,
         room_id: order.room_id,
         payment_id,
-        amount: required_str(body, "amount")?.into(),
+        amount: amount.into(),
         currency: required_str(body, "currency")?.into(),
+        token_decimals: optional_u8(confirmation, "token_decimals")?
+            .map_or_else(|| infer_token_decimals(amount, amount_units), Ok)?,
         expected,
     })
 }
@@ -438,6 +444,56 @@ fn required_i64(value: &Value, field: &str) -> Result<i64, ValidationError> {
         .get(field)
         .and_then(Value::as_i64)
         .ok_or_else(|| watcher_error(format!("evm escrow payment missing {field}")))
+}
+
+fn optional_u8(value: &Value, field: &str) -> Result<Option<u8>, ValidationError> {
+    let Some(raw) = value.get(field).and_then(Value::as_u64) else {
+        return Ok(None);
+    };
+    u8::try_from(raw)
+        .map(Some)
+        .map_err(|_| watcher_error(format!("evm escrow payment invalid {field}")))
+}
+
+fn infer_token_decimals(amount: &str, amount_units: &str) -> Result<u8, ValidationError> {
+    (0..=18)
+        .find(|decimals| {
+            decimal_amount_units(amount, *decimals).is_ok_and(|candidate| candidate == amount_units)
+        })
+        .ok_or_else(|| watcher_error("evm escrow payment missing token_decimals"))
+}
+
+fn decimal_amount_units(amount: &str, decimals: u8) -> Result<String, ValidationError> {
+    let (whole, fraction) = amount
+        .split_once('.')
+        .map_or((amount, ""), |(whole, fraction)| (whole, fraction));
+    if whole.is_empty()
+        || !whole.chars().all(|ch| ch.is_ascii_digit())
+        || !fraction.chars().all(|ch| ch.is_ascii_digit())
+        || fraction.len() > decimals as usize
+    {
+        return Err(watcher_error(
+            "evm escrow amount cannot be represented by inferred token decimals",
+        ));
+    }
+
+    let mut digits = String::with_capacity(whole.len() + decimals as usize);
+    let trimmed_whole = whole.trim_start_matches('0');
+    digits.push_str(if trimmed_whole.is_empty() {
+        "0"
+    } else {
+        trimmed_whole
+    });
+    digits.push_str(fraction);
+    for _ in fraction.len()..decimals as usize {
+        digits.push('0');
+    }
+    let trimmed = digits.trim_start_matches('0');
+    Ok(if trimmed.is_empty() {
+        "0".into()
+    } else {
+        trimmed.into()
+    })
 }
 
 fn watcher_error(message: impl Into<String>) -> ValidationError {

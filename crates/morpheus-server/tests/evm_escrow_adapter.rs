@@ -165,6 +165,7 @@ fn deposited_log_maps_to_payment_authorized() {
         "pay:shop.example:01JPAY",
         "25.00",
         "USDC",
+        6,
         &log,
     )
     .unwrap();
@@ -185,6 +186,7 @@ fn released_log_maps_to_protocol_valid_payment_captured() {
         "pay:shop.example:01JPAY",
         "25.00",
         "USDC",
+        6,
         &log,
     )
     .unwrap();
@@ -208,6 +210,7 @@ fn refunded_log_maps_to_protocol_valid_payment_refunded() {
         "pay:shop.example:01JPAY",
         "25.00",
         "USDC",
+        6,
         &log,
     )
     .unwrap();
@@ -240,6 +243,7 @@ fn refund_id_changes_with_log_index() {
         "pay:shop.example:01JPAY",
         "25.00",
         "USDC",
+        6,
         &first_log,
     )
     .unwrap();
@@ -248,6 +252,7 @@ fn refund_id_changes_with_log_index() {
         "pay:shop.example:01JPAY",
         "25.00",
         "USDC",
+        6,
         &second_log,
     )
     .unwrap();
@@ -260,22 +265,23 @@ fn refund_id_changes_with_log_index() {
 fn partial_refund_uses_buyer_amount_and_protocol_valid_evidence() {
     let mut log = deposited_log_fixture();
     log.event_name = "EscrowPartiallyRefunded".into();
-    log.amount = "25.00".into();
-    log.buyer_amount = Some("10.00".into());
-    log.seller_amount = Some("15.00".into());
+    log.amount = "25000000".into();
+    log.buyer_amount = Some("10000000".into());
+    log.seller_amount = Some("15000000".into());
 
     let mapped = map_escrow_log_to_payment_event(
         "ord:shop.example:01JORDER",
         "pay:shop.example:01JPAY",
         "25.00",
         "USDC",
+        6,
         &log,
     )
     .unwrap();
 
     assert_eq!(mapped.event_type, "io.marketplace.payment.refunded");
     assert_eq!(mapped.body["amount"], "10.00");
-    assert_eq!(mapped.body["evidence"]["log"]["seller_amount"], "15.00");
+    assert_eq!(mapped.body["evidence"]["log"]["seller_amount"], "15000000");
     assert_evm_log_evidence(&mapped.body, "EscrowPartiallyRefunded");
     assert_protocol_valid(&mapped.event_type, mapped.body);
 }
@@ -361,6 +367,7 @@ fn unsupported_escrow_log_event_is_rejected() {
         "pay:shop.example:01JPAY",
         "25.00",
         "USDC",
+        6,
         &log,
     )
     .unwrap_err();
@@ -379,6 +386,7 @@ fn refunded_log_rejects_short_tx_hash_without_panicking() {
         "pay:shop.example:01JPAY",
         "25.00",
         "USDC",
+        6,
         &log,
     )
     .unwrap_err();

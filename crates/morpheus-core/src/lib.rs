@@ -834,9 +834,10 @@ fn validate_event_references(
         "io.marketplace.payment.failed" | "io.marketplace.payment.cancelled" => {
             require_intent_payment_id(event, context).map(|_| ())
         }
-        "io.marketplace.payment.refund.requested"
-        | "io.marketplace.payment.refunded"
-        | "io.marketplace.payment.chargeback.opened" => {
+        "io.marketplace.payment.refund.requested" | "io.marketplace.payment.refunded" => {
+            require_refundable_payment_id(event, context).map(|_| ())
+        }
+        "io.marketplace.payment.chargeback.opened" => {
             require_captured_payment_id(event, context).map(|_| ())
         }
         "io.marketplace.entitlement.granted" => validate_entitlement_grant(event, context),
@@ -1131,6 +1132,47 @@ fn require_captured_payment_id(
     Ok(payment_id.to_string())
 }
 
+fn require_refundable_payment_id(
+    event: &OrderFlowEvent,
+    context: &OrderFlowContext,
+) -> ValidationResult<String> {
+    let payment_id = required_string(&event.body, "payment_id")?;
+    let amount = required_string(&event.body, "amount")?;
+    let currency = required_string(&event.body, "currency")?;
+    required_string(&event.body, "refund_id")?;
+    required_string(&event.body, "provider_ref")?;
+
+    if context.captured_payment_id.as_deref() == Some(payment_id) {
+        let expected = context.refund_constraint.clone().unwrap_or((
+            context.captured_amount.clone().unwrap_or_default(),
+            context.captured_currency.clone().unwrap_or_default(),
+        ));
+        assert_money_parts_equal(&expected.0, &expected.1, amount, currency)?;
+        return Ok(payment_id.to_string());
+    }
+
+    if context.authorized_payment_id.as_deref() == Some(payment_id) {
+        let intent = require_payment_intent(context)?;
+        if intent.payment_id != payment_id {
+            return Err(ValidationError::new(
+                ValidationCode::PaymentTermsMismatch,
+                "refund references a different payment_id",
+            ));
+        }
+        if let Some(expected) = &context.refund_constraint {
+            assert_money_parts_equal(&expected.0, &expected.1, amount, currency)?;
+        } else {
+            assert_money_parts_not_greater(&intent.amount, &intent.currency, amount, currency)?;
+        }
+        return Ok(payment_id.to_string());
+    }
+
+    Err(ValidationError::new(
+        ValidationCode::InvalidStateTransition,
+        "refund requires an authorized or captured payment",
+    ))
+}
+
 fn capture_ruling_remedy(
     event: &OrderFlowEvent,
     context: &mut OrderFlowContext,
@@ -1191,6 +1233,7 @@ fn transition(state: OrderState, event_type: &str) -> ValidationResult<OrderStat
             OrderState::EntitlementGrantedBeforeCapture
         }
         (OrderState::PaymentAuthorized, "io.marketplace.payment.failed") => OrderState::Cancelled,
+        (OrderState::PaymentAuthorized, "io.marketplace.payment.refunded") => OrderState::Refunded,
         (OrderState::PaymentCaptured, "io.marketplace.entitlement.granted") => {
             OrderState::EntitlementGranted
         }
@@ -1681,6 +1724,24 @@ fn assert_money_parts_equal(
     }
 }
 
+fn assert_money_parts_not_greater(
+    max_amount: &str,
+    expected_currency: &str,
+    actual_amount: &str,
+    actual_currency: &str,
+) -> ValidationResult<()> {
+    let max = max_amount.parse::<f64>().unwrap_or(f64::NAN);
+    let actual = actual_amount.parse::<f64>().unwrap_or(f64::NAN);
+    if expected_currency == actual_currency && actual > 0.0 && actual <= max {
+        Ok(())
+    } else {
+        Err(ValidationError::new(
+            ValidationCode::PaymentTermsMismatch,
+            "Refund amount or currency exceeds refundable payment terms",
+        ))
+    }
+}
+
 fn is_matrix_user_id(value: &str) -> bool {
     value.starts_with('@') && value.split(':').count() == 2
 }
@@ -1873,6 +1934,48 @@ pub mod fixtures {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escrow_refund_after_authorization_is_valid() {
+        let mut flow = fixtures::valid_order_flow();
+        flow.truncate(5);
+        flow.push(OrderFlowEvent {
+            event_type: "io.marketplace.payment.refunded".into(),
+            body: json!({
+                "order_id": "ord:customer.example:01JORDER",
+                "payment_id": "pay:customer.example:01JPAY",
+                "refund_id": "refund:evm.local:01JREFUND",
+                "amount": "100.00",
+                "currency": "USD",
+                "provider_ref": "evm_escrow:0xabc",
+            }),
+        });
+
+        let decision = validate_order_sequence(&flow).unwrap();
+
+        assert_eq!(decision.final_state, OrderState::Refunded);
+    }
+
+    #[test]
+    fn escrow_partial_refund_after_authorization_is_valid() {
+        let mut flow = fixtures::valid_order_flow();
+        flow.truncate(5);
+        flow.push(OrderFlowEvent {
+            event_type: "io.marketplace.payment.refunded".into(),
+            body: json!({
+                "order_id": "ord:customer.example:01JORDER",
+                "payment_id": "pay:customer.example:01JPAY",
+                "refund_id": "refund:evm.local:01JPARTIAL",
+                "amount": "40.00",
+                "currency": "USD",
+                "provider_ref": "evm_escrow:0xdef",
+            }),
+        });
+
+        let decision = validate_order_sequence(&flow).unwrap();
+
+        assert_eq!(decision.final_state, OrderState::Refunded);
+    }
 
     #[test]
     fn private_catalog_and_allowlist_edges_are_exercised() {

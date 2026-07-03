@@ -223,10 +223,15 @@ pub fn map_escrow_log_to_payment_event(
     payment_id: &str,
     amount: &str,
     currency: &str,
+    token_decimals: u8,
     log: &DecodedEscrowLog,
 ) -> Result<PaymentEventDraft, ValidationError> {
     let evidence = evm_log_evidence(log)?;
     let provider_ref = provider_ref(log);
+    let buyer_refund_amount = match log.buyer_amount.as_deref() {
+        Some(units) => decimal_units_amount(units, token_decimals)?,
+        None => amount.to_string(),
+    };
 
     match log.event_name.as_str() {
         "EscrowDeposited" => Ok(PaymentEventDraft {
@@ -251,7 +256,7 @@ pub fn map_escrow_log_to_payment_event(
                 "order_id": order_id,
                 "payment_id": payment_id,
                 "refund_id": refund_id_from_log(log)?,
-                "amount": log.buyer_amount.as_deref().unwrap_or(amount),
+                "amount": buyer_refund_amount,
                 "currency": currency,
                 "provider_ref": provider_ref,
                 "evidence": evidence,
@@ -424,6 +429,28 @@ fn sum_uint_strings(left: &str, right: &str) -> Result<String, ValidationError> 
     left.checked_add(right)
         .map(|value| value.to_string())
         .ok_or_else(|| evm_decode_error("evm escrow uint amount overflow"))
+}
+
+fn decimal_units_amount(units: &str, decimals: u8) -> Result<String, ValidationError> {
+    let value = units
+        .parse::<u128>()
+        .map_err(|err| evm_decode_error(format!("invalid evm escrow uint amount: {err}")))?;
+    if decimals == 0 {
+        return Ok(value.to_string());
+    }
+    let scale = 10u128
+        .checked_pow(decimals as u32)
+        .ok_or_else(|| evm_decode_error("evm escrow token decimals overflow"))?;
+    let whole = value / scale;
+    let fraction = value % scale;
+    let mut fraction_text = format!("{:0width$}", fraction, width = decimals as usize);
+    while fraction_text.len() > 2 && fraction_text.ends_with('0') {
+        fraction_text.pop();
+    }
+    while fraction_text.len() < 2 {
+        fraction_text.push('0');
+    }
+    Ok(format!("{whole}.{fraction_text}"))
 }
 
 fn required_topic(log: &crate::evm_rpc::RpcLog, index: usize) -> Result<&str, ValidationError> {
