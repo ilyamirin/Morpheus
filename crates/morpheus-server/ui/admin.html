@@ -185,6 +185,31 @@
         </article>
       </section>
 
+      <section class="admin-section" id="evm-arbiter" aria-labelledby="evm-arbiter-title">
+        <article class="surface admin-surface">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Escrow arbitration</p>
+              <h2 id="evm-arbiter-title">EVM escrow arbiter</h2>
+            </div>
+          </div>
+          <form class="stack-form compact-admin-form" data-form="evm-arbiter-refund">
+            <label class="field">
+              <span class="label">Order id</span>
+              <input class="input" name="order_id" value="ord:shop.example:01JORDER2">
+            </label>
+            <label class="field">
+              <span class="label">Buyer amount units</span>
+              <input class="input" name="buyer_amount_units" placeholder="leave empty for full refund">
+            </label>
+            <div class="button-row stretch">
+              <button class="btn btn-danger" type="submit" data-refund-mode="full">Refund</button>
+              <button class="btn" type="submit" data-refund-mode="partial">Partial refund</button>
+            </div>
+          </form>
+        </article>
+      </section>
+
       <section class="admin-section" id="debug" aria-labelledby="debug-title">
         <article class="surface admin-surface" id="admin-debug-panel">
           <div class="section-head">

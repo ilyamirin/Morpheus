@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { evmEscrowConfirmation, buildDepositCalls, buildReleaseCall } from "./evmWallet.js";
+import {
+  evmEscrowConfirmation,
+  buildDepositCalls,
+  buildReleaseCall,
+  buildRefundCall,
+  buildPartialRefundCall
+} from "./evmWallet.js";
 
 const order = {
   payment: {
@@ -34,3 +40,13 @@ const release = buildReleaseCall(order);
 assert.equal(release.address, order.payment.body.confirmation.escrow_contract);
 assert.equal(release.functionName, "release");
 assert.deepEqual(release.args, [order.payment.body.confirmation.order_hash]);
+
+const refund = buildRefundCall(order);
+assert.equal(refund.address, order.payment.body.confirmation.escrow_contract);
+assert.equal(refund.functionName, "refund");
+assert.deepEqual(refund.args, [order.payment.body.confirmation.order_hash]);
+
+const partialRefund = buildPartialRefundCall(order, "10000000");
+assert.equal(partialRefund.address, order.payment.body.confirmation.escrow_contract);
+assert.equal(partialRefund.functionName, "partial_refund");
+assert.deepEqual(partialRefund.args, [order.payment.body.confirmation.order_hash, 10000000n]);

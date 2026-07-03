@@ -18,7 +18,8 @@ use morpheus_protocol::{
 };
 use morpheus_store::{
     AppServiceTransactionRecord, CatalogOfferProjectionRecord, CatalogProductRecord,
-    CatalogSellerRecord, EventStore, OrderEventRecord, ProjectionErrorRecord, RawMatrixEventRecord,
+    CatalogSellerRecord, EventStore, OrderEventRecord, OrderProjectionRecord,
+    PaymentProjectionRecord, ProjectionErrorRecord, RawMatrixEventRecord,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -784,6 +785,7 @@ where
             "/admin/orders/{order_id}/replay",
             post(admin_order_replay::<S, P>),
         )
+        .route("/admin/orders/{order_id}", get(admin_order_show::<S, P>))
         .route("/api/v1/seller/announce", post(seller_announce::<S, P>))
         .route(
             "/api/v1/seller/products",
@@ -1583,6 +1585,29 @@ where
         })),
     )
         .into_response()
+}
+
+async fn admin_order_show<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+) -> axum::response::Response
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if !admin_authorized(&headers, &state.config.admin_token) {
+        return admin_unauthorized();
+    }
+    match enriched_order(&state.store, &order_id).await {
+        Ok(Some(order)) => Json(json!({ "order": order })).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code": "ORDER_NOT_FOUND", "error": "order not found"})),
+        )
+            .into_response(),
+        Err(err) => store_error_response(err.message, err.code),
+    }
 }
 
 async fn seller_announce<S, P>(
@@ -3139,30 +3164,50 @@ where
 {
     match (store.orders().await, store.payments().await) {
         (Ok(orders), Ok(payments)) => {
-            let mut payments_by_order = HashMap::new();
-            for payment in payments {
-                payments_by_order.insert(payment.order_id.clone(), payment);
-            }
-            let orders: Vec<Value> = orders
-                .into_iter()
-                .map(|order| {
-                    let mut value = json!(order);
-                    if let Some(payment) = payments_by_order.get(
-                        value
-                            .get("order_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default(),
-                    ) {
-                        value["payment"] = json!(payment);
-                    }
-                    value
-                })
-                .collect();
+            let orders = enrich_orders_with_payments(orders, payments);
             Json(json!({ "orders": orders })).into_response()
         }
         (Err(err), _) => store_error_response(err.message, err.code),
         (_, Err(err)) => store_error_response(err.message, err.code),
     }
+}
+
+async fn enriched_order<S: EventStore>(
+    store: &S,
+    order_id: &str,
+) -> Result<Option<Value>, ValidationError> {
+    let Some(order) = store.order(order_id).await? else {
+        return Ok(None);
+    };
+    let payments = store.payments().await?;
+    Ok(enrich_orders_with_payments(vec![order], payments)
+        .into_iter()
+        .next())
+}
+
+fn enrich_orders_with_payments(
+    orders: Vec<OrderProjectionRecord>,
+    payments: Vec<PaymentProjectionRecord>,
+) -> Vec<Value> {
+    let mut payments_by_order = HashMap::new();
+    for payment in payments {
+        payments_by_order.insert(payment.order_id.clone(), payment);
+    }
+    orders
+        .into_iter()
+        .map(|order| {
+            let mut value = json!(order);
+            if let Some(payment) = payments_by_order.get(
+                value
+                    .get("order_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            ) {
+                value["payment"] = json!(payment);
+            }
+            value
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

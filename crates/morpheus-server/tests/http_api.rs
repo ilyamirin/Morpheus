@@ -916,6 +916,7 @@ async fn admin_endpoints_reject_missing_malformed_and_wrong_bearer_auth() {
         ("POST", "/admin/catalog/rebuild"),
         ("POST", "/admin/evm-escrow/replay"),
         ("GET", "/admin/evm-escrow/status"),
+        ("GET", "/admin/orders/ord:customer.example:01JORDER"),
         ("POST", "/admin/orders/ord:customer.example:01JORDER/replay"),
     ];
     let rejected_authorization = [
@@ -1939,6 +1940,51 @@ async fn buyer_orders_include_evm_payment_confirmation_projection() {
     assert_eq!(
         order["payment"]["body"]["confirmation"]["buyer_evm_address"],
         "0x0000000000000000000000000000000000000004"
+    );
+}
+
+#[tokio::test]
+async fn admin_order_show_returns_payment_confirmation_for_arbiter_tools() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JARBEVM";
+    insert_evm_order(&store, order_id, "seller:shop.example:01JSELLER").await;
+    store
+        .upsert_payment(
+            "pay:shop.example:01JARBPAY",
+            order_id,
+            "authorized",
+            json!({
+                "order_id": order_id,
+                "payment_id": "pay:shop.example:01JARBPAY",
+                "adapter": "evm_escrow",
+                "currency": "USDC",
+                "confirmation": {
+                    "chain_id": 31337,
+                    "token": "0x0000000000000000000000000000000000000002",
+                    "amount_units": "25000000",
+                    "escrow_contract": "0x0000000000000000000000000000000000000001",
+                    "order_hash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    "buyer_evm_address": "0x0000000000000000000000000000000000000004",
+                    "seller_evm_address": "0x0000000000000000000000000000000000000003",
+                    "arbiter_evm_address": "0x0000000000000000000000000000000000000005"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    let (status, body) = send_admin_request(
+        store,
+        "GET",
+        &format!("/admin/orders/{order_id}"),
+        Some("Bearer admin-token"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["order"]["payment"]["body"]["confirmation"]["order_hash"],
+        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     );
 }
 

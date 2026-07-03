@@ -441,6 +441,17 @@ globalThis.MorpheusEvmWallet = {
     return api(path, { tokenRole, action, silent: true, result: false });
   }
 
+  async function fetchAdminOrder(orderId) {
+    const result = await api(`/admin/orders/${encodeURIComponent(orderId)}`, {
+      tokenRole: "admin",
+      action: "GET /admin/orders/{order_id}"
+    });
+    if (!result.ok || !result.body || !result.body.order || !evmEscrowConfirmation(result.body.order)) {
+      throw new Error("Order with EVM payment confirmation is not available");
+    }
+    return result.body.order;
+  }
+
   function currentSellerId() {
     const input = $('[data-form="seller-announce"] [name="seller_id"]');
     return (input && input.value.trim()) || DEMO.sellerId;
@@ -1603,6 +1614,7 @@ globalThis.MorpheusEvmWallet = {
   function bindAdmin() {
     initAdminSettings();
     const replay = $('[data-form="admin-replay"]');
+    const arbiterRefund = $('[data-form="evm-arbiter-refund"]');
     const executeAdminMaintenance = async (detail) => {
       if (!detail || !detail.action) return;
       if (detail.action === "admin-rebuild") {
@@ -1668,6 +1680,26 @@ globalThis.MorpheusEvmWallet = {
         title: "Replay order",
         message: `Replay projection for ${data.order_id || DEMO.orderId}.`
       });
+    });
+    arbiterRefund && arbiterRefund.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = form(arbiterRefund);
+      const mode = event.submitter ? event.submitter.dataset.refundMode : "full";
+      const action = mode === "partial" ? "EVM escrow partial refund" : "EVM escrow refund";
+      try {
+        if (mode === "partial" && !String(data.buyer_amount_units || "").trim()) {
+          throw new Error("Buyer amount units is required for partial refund");
+        }
+        const order = await fetchAdminOrder(data.order_id || DEMO.orderId);
+        const result = mode === "partial"
+          ? await requestEvmEscrowPartialRefund(order, data.buyer_amount_units)
+          : await requestEvmEscrowRefund(order);
+        showResult(action, "submitted_waiting_for_watcher", result);
+        toast("Transaction submitted", "success", "Waiting for Morpheus watcher confirmation.");
+      } catch (error) {
+        showResult(action, "wallet_unavailable", { error: error.message });
+        toast("Wallet unavailable", "error", error.message);
+      }
     });
     refreshAdmin();
     window.setInterval(() => {

@@ -34,6 +34,23 @@ export const escrowAbi = [
     stateMutability: "nonpayable",
     inputs: [{ name: "order_hash", type: "bytes32" }],
     outputs: []
+  },
+  {
+    type: "function",
+    name: "refund",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "order_hash", type: "bytes32" }],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "partial_refund",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "order_hash", type: "bytes32" },
+      { name: "buyer_amount", type: "uint256" }
+    ],
+    outputs: []
   }
 ];
 
@@ -133,10 +150,50 @@ export async function requestEvmEscrowRelease(order, ethereum = window.ethereum)
   };
 }
 
-export async function requestEvmEscrowRefund(_order) {
-  throw new Error("EVM wallet refund requires Task 9");
+export function buildRefundCall(order) {
+  const confirmation = requireConfirmation(order);
+  return {
+    address: confirmation.escrow_contract,
+    abi: escrowAbi,
+    functionName: "refund",
+    args: [confirmation.order_hash]
+  };
 }
 
-export async function requestEvmEscrowPartialRefund(_order, _buyerAmount) {
-  throw new Error("EVM wallet partial refund requires Task 9");
+export async function requestEvmEscrowRefund(order, ethereum = window.ethereum) {
+  const confirmation = requireConfirmation(order);
+  const wallet = createWalletClient({ transport: custom(requireEthereum(ethereum)) });
+  const [account] = await wallet.requestAddresses();
+  await switchWalletChain(ethereum, confirmation.chain_id);
+  const refund = buildRefundCall(order);
+  const refundTxHash = await wallet.writeContract({ ...refund, account });
+  return {
+    account,
+    refund_tx_hash: refundTxHash,
+    status: "submitted_waiting_for_watcher"
+  };
+}
+
+export function buildPartialRefundCall(order, buyerAmount) {
+  const confirmation = requireConfirmation(order);
+  return {
+    address: confirmation.escrow_contract,
+    abi: escrowAbi,
+    functionName: "partial_refund",
+    args: [confirmation.order_hash, BigInt(buyerAmount)]
+  };
+}
+
+export async function requestEvmEscrowPartialRefund(order, buyerAmount, ethereum = window.ethereum) {
+  const confirmation = requireConfirmation(order);
+  const wallet = createWalletClient({ transport: custom(requireEthereum(ethereum)) });
+  const [account] = await wallet.requestAddresses();
+  await switchWalletChain(ethereum, confirmation.chain_id);
+  const partialRefund = buildPartialRefundCall(order, buyerAmount);
+  const partialRefundTxHash = await wallet.writeContract({ ...partialRefund, account });
+  return {
+    account,
+    partial_refund_tx_hash: partialRefundTxHash,
+    status: "submitted_waiting_for_watcher"
+  };
 }
