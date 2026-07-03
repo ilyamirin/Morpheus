@@ -1,6 +1,7 @@
 use morpheus_protocol::{ValidationCode, validate_event_envelope};
 use morpheus_server::evm_escrow::{
-    DecodedEscrowLog, EvmEscrowIntentInput, compute_order_hash, map_escrow_log_to_payment_event,
+    DecodedEscrowLog, EvmEscrowIntentInput, ExpectedEscrowPayment, compute_order_hash,
+    map_escrow_log_to_payment_event, verify_decoded_log,
 };
 use serde_json::{Value, json};
 
@@ -44,6 +45,19 @@ fn deposited_log_fixture() -> DecodedEscrowLog {
         seller: Some("0x0000000000000000000000000000000000000003".into()),
         buyer_amount: None,
         seller_amount: None,
+    }
+}
+
+fn expected_payment_fixture() -> ExpectedEscrowPayment {
+    ExpectedEscrowPayment {
+        order_hash: "0x1111111111111111111111111111111111111111111111111111111111111111".into(),
+        chain_id: 31337,
+        escrow_contract: "0x0000000000000000000000000000000000000001".into(),
+        token: "0x0000000000000000000000000000000000000002".into(),
+        amount: "25000000".into(),
+        buyer: "0x0000000000000000000000000000000000000004".into(),
+        seller: "0x0000000000000000000000000000000000000003".into(),
+        arbiter: "0x0000000000000000000000000000000000000005".into(),
     }
 }
 
@@ -258,6 +272,41 @@ fn partial_refund_uses_buyer_amount_and_protocol_valid_evidence() {
     assert_eq!(mapped.body["evidence"]["log"]["seller_amount"], "15.00");
     assert_evm_log_evidence(&mapped.body, "EscrowPartiallyRefunded");
     assert_protocol_valid(&mapped.event_type, mapped.body);
+}
+
+#[test]
+fn watcher_accepts_matching_deposit_log() {
+    let expected = expected_payment_fixture();
+    let log = deposited_log_fixture();
+
+    verify_decoded_log(&expected, &log).unwrap();
+}
+
+#[test]
+fn watcher_accepts_case_insensitive_evm_identifiers() {
+    let mut expected = expected_payment_fixture();
+    expected.order_hash = expected.order_hash.to_ascii_uppercase();
+    expected.escrow_contract = "0x000000000000000000000000000000000000000A".into();
+    expected.token = "0x000000000000000000000000000000000000000B".into();
+    expected.buyer = "0x000000000000000000000000000000000000000C".into();
+    expected.seller = "0x000000000000000000000000000000000000000D".into();
+    let mut log = deposited_log_fixture();
+    log.escrow_contract = "0x000000000000000000000000000000000000000a".into();
+    log.token = "0x000000000000000000000000000000000000000b".into();
+    log.buyer = Some("0x000000000000000000000000000000000000000c".into());
+    log.seller = Some("0x000000000000000000000000000000000000000d".into());
+
+    verify_decoded_log(&expected, &log).unwrap();
+}
+
+#[test]
+fn watcher_rejects_amount_mismatch() {
+    let expected = expected_payment_fixture();
+    let mut log = deposited_log_fixture();
+    log.amount = "24000000".into();
+
+    let err = verify_decoded_log(&expected, &log).unwrap_err();
+    assert_eq!(err.code, ValidationCode::PaymentTermsMismatch);
 }
 
 #[test]

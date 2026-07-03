@@ -763,6 +763,10 @@ where
             post(admin_catalog_rebuild::<S, P>),
         )
         .route(
+            "/admin/evm-escrow/replay",
+            post(admin_evm_escrow_replay::<S, P>),
+        )
+        .route(
             "/admin/rooms/bootstrap",
             post(admin_rooms_bootstrap::<S, P>),
         )
@@ -1374,6 +1378,63 @@ where
         })),
     )
         .into_response()
+}
+
+async fn admin_evm_escrow_replay<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if !admin_authorized(&headers, &state.config.admin_token) {
+        return admin_unauthorized();
+    }
+
+    let evm = match state.config.evm_escrow.as_ref().filter(|evm| evm.enabled) {
+        Some(evm) => evm,
+        None => {
+            return validation_error_response(
+                "EVM_ESCROW_NOT_CONFIGURED",
+                "evm escrow payment config is absent or disabled",
+            );
+        }
+    };
+    let chain_id = match i64::try_from(evm.chain_id) {
+        Ok(chain_id) => chain_id,
+        Err(_) => {
+            return validation_error_response(
+                "EVM_ESCROW_CHAIN_ID_UNSUPPORTED",
+                "evm escrow chain_id exceeds supported signed range",
+            );
+        }
+    };
+    let checkpoint = match state
+        .store
+        .evm_escrow_checkpoint(chain_id, &evm.escrow_contract)
+        .await
+    {
+        Ok(checkpoint) => checkpoint,
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+
+    Json(json!({
+        "status": "ok",
+        "scanned": 0,
+        "accepted": 0,
+        "duplicates": 0,
+        "checkpoint": {
+            "chain_id": chain_id,
+            "escrow_contract": evm.escrow_contract,
+            "latest_scanned_block": checkpoint,
+        },
+        "rpc_scan": {
+            "enabled": false,
+            "reason": "json_rpc_log_scanning_not_implemented",
+        },
+    }))
+    .into_response()
 }
 
 async fn admin_rooms_bootstrap<S, P>(

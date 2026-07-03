@@ -45,6 +45,18 @@ pub struct DecodedEscrowLog {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpectedEscrowPayment {
+    pub order_hash: String,
+    pub chain_id: i64,
+    pub escrow_contract: String,
+    pub token: String,
+    pub amount: String,
+    pub buyer: String,
+    pub seller: String,
+    pub arbiter: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaymentEventDraft {
     pub event_type: String,
     pub body: Value,
@@ -124,6 +136,38 @@ pub fn map_escrow_log_to_payment_event(
             ValidationCode::UnknownEventType,
             format!("unsupported evm escrow event {}", log.event_name),
         )),
+    }
+}
+
+pub fn verify_decoded_log(
+    expected: &ExpectedEscrowPayment,
+    log: &DecodedEscrowLog,
+) -> Result<(), ValidationError> {
+    let matches = expected.order_hash.eq_ignore_ascii_case(&log.order_hash)
+        && expected.chain_id == log.chain_id
+        && expected
+            .escrow_contract
+            .eq_ignore_ascii_case(&log.escrow_contract)
+        && expected.token.eq_ignore_ascii_case(&log.token)
+        && expected.amount == log.amount
+        && log
+            .buyer
+            .as_deref()
+            .map(|buyer| expected.buyer.eq_ignore_ascii_case(buyer))
+            .unwrap_or(true)
+        && log
+            .seller
+            .as_deref()
+            .map(|seller| expected.seller.eq_ignore_ascii_case(seller))
+            .unwrap_or(true);
+
+    if matches {
+        Ok(())
+    } else {
+        Err(ValidationError::new(
+            ValidationCode::PaymentTermsMismatch,
+            "evm escrow log does not match payment intent",
+        ))
     }
 }
 
