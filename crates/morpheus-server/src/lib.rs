@@ -1997,6 +1997,27 @@ where
     ) {
         return response;
     }
+    let order = match state.store.order(&order_id).await {
+        Ok(Some(order)) => order,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"code": "ORDER_NOT_FOUND", "error": "order not found"})),
+            )
+                .into_response();
+        }
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    if order.seller_id != request.actor_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "code": "ACTOR_FORBIDDEN",
+                "error": "seller actor does not own this order",
+            })),
+        )
+            .into_response();
+    }
     match order_has_event(
         &state.store,
         &order_id,
@@ -2277,8 +2298,8 @@ where
     ) {
         return response;
     }
-    let room_id = match state.store.order(&order_id).await {
-        Ok(Some(order)) => order.room_id,
+    let order = match state.store.order(&order_id).await {
+        Ok(Some(order)) => order,
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
@@ -2288,6 +2309,17 @@ where
         }
         Err(err) => return store_error_response(err.message, err.code),
     };
+    if order.seller_id != request.actor_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "code": "ACTOR_FORBIDDEN",
+                "error": "seller actor does not own this order",
+            })),
+        )
+            .into_response();
+    }
+    let room_id = order.room_id;
     let existing_events = match state.store.order_events(&order_id).await {
         Ok(events) => events,
         Err(err) => return store_error_response(err.message, err.code),

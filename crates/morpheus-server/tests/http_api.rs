@@ -411,6 +411,68 @@ fn fixture_buyer_order_request(order_id: &str, offer_id: &str) -> Value {
     })
 }
 
+async fn seed_mock_order_created(store: InMemoryEventStore, order_id: &str) -> InMemoryEventStore {
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/buyer/orders",
+        Some("Bearer buyer-token"),
+        fixture_buyer_order_request(order_id, "offer:shop.example:01JOFFER"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    store
+}
+
+async fn seed_mock_order_with_payment_intent(
+    store: InMemoryEventStore,
+    order_id: &str,
+    payment_id: &str,
+) -> InMemoryEventStore {
+    let store = seed_mock_order_created(store, order_id).await;
+
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        &format!("/api/v1/seller/orders/{order_id}/accept"),
+        Some("Bearer seller-token"),
+        json!({
+            "actor_id": "seller:shop.example:01JSELLER",
+            "offer_revision": 1,
+            "seller_terms_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "offer_terms_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "payment_capture_policy": "before_entitlement",
+            "arbitration_policy_version": "1"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        &format!("/api/v1/seller/orders/{order_id}/payment-intent"),
+        Some("Bearer seller-token"),
+        json!({
+            "actor_id": "seller:shop.example:01JSELLER",
+            "payment_id": payment_id,
+            "adapter": "mock",
+            "amount": "100.00",
+            "currency": "USD",
+            "capture_policy": "before_entitlement",
+            "idempotency_key": format!("idem:{payment_id}"),
+            "provider_ref": format!("mock:{payment_id}"),
+            "confirmation": {"method": "redirect", "uri": "https://shop.example/pay/confirm"},
+            "expires_at": "2026-05-06T10:30:00Z"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+    store
+}
+
 #[tokio::test]
 async fn ui_html_routes_return_ok_without_auth() {
     for uri in ["/ui/admin", "/ui/seller", "/ui/buyer"] {
@@ -2451,6 +2513,69 @@ async fn seller_payment_capture_publishes_authorized_before_captured() {
         .collect::<Vec<_>>();
     assert!(events.contains(&"io.marketplace.payment.authorized".to_string()));
     assert!(events.contains(&"io.marketplace.payment.captured".to_string()));
+}
+
+#[tokio::test]
+async fn seller_payment_intent_rejects_wrong_order_seller() {
+    let order_id = "ord:shop.example:01JORDER_WRONG_PAY_INTENT";
+    let store = seed_mock_order_created(store_with_admin_projection_data().await, order_id).await;
+
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        &format!("/api/v1/seller/orders/{order_id}/payment-intent"),
+        Some("Bearer seller-token"),
+        json!({
+            "actor_id": "seller:shop.example:01JOTHER",
+            "payment_id": "pay:shop.example:01JWRONGINTENT",
+            "adapter": "mock",
+            "amount": "100.00",
+            "currency": "USD",
+            "capture_policy": "before_entitlement",
+            "idempotency_key": "idem:shop.example:01JWRONGINTENT",
+            "provider_ref": "mock:pi_01JWRONGINTENT",
+            "confirmation": {"method": "redirect", "uri": "https://shop.example/pay/confirm"},
+            "expires_at": "2026-05-06T10:30:00Z"
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["code"], "ACTOR_FORBIDDEN");
+}
+
+#[tokio::test]
+async fn seller_payment_capture_rejects_wrong_order_seller() {
+    let store = seed_mock_order_with_payment_intent(
+        store_with_admin_projection_data().await,
+        "ord:shop.example:01JORDER_WRONG_CAPTURE",
+        "pay:shop.example:01JWRONGCAPTURE",
+    )
+    .await;
+
+    let (status, body) = send_json_request(
+        store.clone(),
+        "POST",
+        "/api/v1/seller/orders/ord:shop.example:01JORDER_WRONG_CAPTURE/payment-capture",
+        Some("Bearer seller-token"),
+        json!({
+            "actor_id": "seller:shop.example:01JOTHER",
+            "payment_id": "pay:shop.example:01JWRONGCAPTURE",
+            "adapter": "mock",
+            "amount": "100.00",
+            "currency": "USD",
+            "provider_ref": "mock:cap_01JWRONGCAPTURE",
+            "evidence": {
+                "kind": "capture",
+                "uri": "https://shop.example/evidence/capture",
+                "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["code"], "ACTOR_FORBIDDEN");
 }
 
 #[tokio::test]
