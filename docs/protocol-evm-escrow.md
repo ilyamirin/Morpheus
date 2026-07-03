@@ -35,6 +35,12 @@ mox run script/deploy.py --network local
 cast code "$(jq -r .escrow_contract deployments/local.json)" --rpc-url http://127.0.0.1:8545
 ```
 
+Run the full local server/watcher flow:
+
+```sh
+make e2e-evm-escrow
+```
+
 Foundry is supporting tooling only: Anvil provides local JSON-RPC, and Cast is used
 for manual inspection. Moccasin/Titanoboa remain the source of truth for compiling
 and testing Vyper contracts.
@@ -53,6 +59,8 @@ escrow_contract = "0x..."
 default_token = "0x..."
 confirmations = 1
 poll_interval_secs = 2
+start_block = 0
+max_scan_blocks = 100
 deployments_path = "contracts/deployments/local.json"
 
 [[payments.evm_escrow.tokens]]
@@ -88,6 +96,26 @@ Contract log mapping:
 Buyer-submitted transaction hashes are UX hints only. Morpheus payment state must
 come from verified contract logs read through trusted RPC.
 
+## Watcher Operation
+
+The embedded watcher starts only when `[payments.evm_escrow].enabled = true`.
+It reads the JSON-RPC URL from `rpc_url_env`, scans bounded block ranges from the
+durable checkpoint, waits configured confirmations, verifies successful receipts,
+deduplicates `(chain_id, tx_hash, log_index)`, and publishes payment events only
+from matching finalized logs. `start_block` and `max_scan_blocks` keep local
+replay and production backfills explicit and bounded.
+
+Morpheus never treats a submitted transaction hash as final payment state. Wallet
+transaction hashes are useful for UX and debugging only; projected payment state
+is updated after the watcher verifies finalized logs.
+
+## Wallet Roles
+
+- Buyer wallet submits ERC-20 `approve` and escrow `deposit`.
+- Seller/operator wallet submits escrow `release`.
+- Arbiter wallet submits escrow `refund` and `partial_refund`.
+- Morpheus server does not hold private keys or sign custody-changing transactions.
+
 ## Watcher Verification
 
 The watcher accepts payment state only after it can match the decoded contract log
@@ -100,12 +128,6 @@ to the payment intent:
 - buyer, seller, and arbiter-relevant addresses match the intent for that event type;
 - `order_hash` equals the server-computed locked order hash;
 - log identity `(chain_id, tx_hash, log_index)` has not already been processed.
-
-Production log scanning must also verify receipt success and configured finality
-confirmations before publishing payment events. The current server exposes a bounded
-admin replay endpoint and durable checkpoint/log storage; continuous JSON-RPC log
-scanning is intentionally left as an explicit follow-up instead of pretending that
-background polling is active.
 
 ## Production Options
 
@@ -125,3 +147,13 @@ Production deployment options:
 Before any mainnet deployment, the contract needs dedicated security review,
 invariant/property testing, monitored RPC providers, conservative deposit limits,
 and an explicit incident response process.
+
+## Production Guardrails
+
+- Do not use mainnet funds before an external contract audit.
+- Use monitored RPC providers and alert on lag, failed calls, and reorg-sensitive ranges.
+- Configure network-specific confirmations instead of reusing local Anvil values.
+- Use conservative deposit limits until the adapter has production history.
+- Keep wallet private keys, RPC credentials, and signer material outside Matrix events and committed config.
+- Keep a pause/admin runbook ready before testnet or production funds.
+- Treat deployment JSON as an operator artifact; production config must still pin the intended contract and token addresses explicitly.
