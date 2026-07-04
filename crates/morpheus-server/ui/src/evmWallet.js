@@ -1,5 +1,5 @@
 import { createWalletClient, custom } from "viem";
-import { roleAddressMismatch } from "./evmPaymentLifecycle.js";
+import { normalizeAddress, roleAddress, roleAddressMismatch } from "./evmPaymentLifecycle.js";
 
 export const erc20Abi = [
   {
@@ -75,6 +75,10 @@ export function requireEthereum(ethereum) {
 }
 
 export function requireRoleWallet(role, account, confirmation) {
+  const actual = normalizeAddress(account);
+  if (!actual) throw new Error("Connected wallet address is not available");
+  const expected = roleAddress(role, confirmation);
+  if (!expected) throw new Error(`Expected ${role} wallet is not available for this order`);
   const mismatch = roleAddressMismatch(role, account, confirmation);
   if (mismatch) throw new Error(mismatch);
   return account;
@@ -83,7 +87,9 @@ export function requireRoleWallet(role, account, confirmation) {
 export function classifyWalletError(error) {
   const message = String(error?.message || error || "Wallet request failed");
   if (/reject|denied|cancel/i.test(message)) return { code: "wallet_rejected", message };
-  if (/switchEthereumChain|wrong chain|chain/i.test(message)) return { code: "chain_mismatch", message };
+  if (/switchEthereumChain|wrong chain|unsupported chain|chain id/i.test(message)) {
+    return { code: "chain_mismatch", message };
+  }
   return { code: "wallet_error", message };
 }
 
