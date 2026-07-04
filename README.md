@@ -45,8 +45,10 @@ User-facing edge cases now covered:
 
 - [Full HTML Documentation](https://ilyamirin.github.io/Morpheus) is the broad GitHub Pages documentation for principles, installation, configuration, operation, and federated E2E.
 - [Protocol](docs/protocol.md) describes the Morpheus wire protocol, event model, lifecycles, authority rules, and conformance expectations.
+- [Payment Design Manifesto](docs/payment-design-manifesto.md) explains how Morpheus designs payments for federated marketplaces, escrow, developing-market constraints, privacy, and operational safety.
 - [EVM Escrow Payment Adapter](docs/protocol-evm-escrow.md) describes the Vyper-based ERC-20 escrow adapter, local Anvil execution, and watcher verification model.
 - [EVM Escrow Production Runbook](docs/evm-escrow-production-runbook.md) covers deployment options, readiness checks, replay, monitoring, and launch gates.
+- [EVM Escrow and Crypto Marketplace Research](docs/evm-escrow-research.md) summarizes arXiv papers on smart-contract escrow, crypto marketplace payments, arbitration, privacy, and contract security.
 - [Rust Implementation](docs/rust-implementation.md) describes the workspace architecture, crates, runtime flow, storage, config, tests, and operational scope.
 - [TODO](TODO.md) tracks near-term product and implementation follow-ups.
 

@@ -69,10 +69,50 @@ symbol = "USDC"
 contract = "0x..."
 decimals = 6
 currency = "USDC"
+
+[payments.evm_escrow.policy]
+min_order_amount = "1.00"
+max_order_amount = "100.00"
+high_value_amount = "50.00"
+deposit_timeout_secs = 900
+fulfillment_timeout_secs = 86400
+buyer_review_timeout_secs = 3600
+dispute_timeout_secs = 172800
+estimated_fee_units = "1000000000000000"
+fee_token_symbol = "ETH"
+risk_categories = ["electronics", "preorder"]
 ```
 
 RPC URLs, private keys, and signer credentials must stay outside Matrix events and
 committed config. Use environment variables, wallet tooling, or an external signer.
+
+## Policy Metadata
+
+`[payments.evm_escrow.policy]` describes server-side safeguards and human-readable
+metadata around escrow orders. It does not replace the custody rules enforced by
+the escrow contract: the contract still decides which wallet roles can deposit,
+release, refund, or partially refund funds, and Morpheus still treats finalized
+contract logs as the custody source of truth.
+
+Policy fields:
+
+- `min_order_amount` and `max_order_amount` bound the configured order amount
+  accepted by the EVM escrow adapter before a payment intent is issued.
+- `high_value_amount` marks orders that should receive elevated operator,
+  seller, buyer, or arbiter attention. It is metadata, not a contract limit.
+- `deposit_timeout_secs`, `fulfillment_timeout_secs`,
+  `buyer_review_timeout_secs`, and `dispute_timeout_secs` publish the expected
+  payment and dispute windows for the market.
+- `estimated_fee_units` and `fee_token_symbol` expose an operator-provided fee
+  hint, such as gas units or native-token units, so users can compare expected
+  network cost with the order value before signing.
+- `risk_categories` names market categories that should be treated as elevated
+  risk by buyer, seller, and operator surfaces.
+
+The server exposes this metadata through `/admin/evm-escrow/status` and includes
+the relevant policy and fee hint in EVM payment confirmation evidence. Buyers and
+sellers can therefore see the configured payment window and fee assumptions before
+the buyer signs a wallet transaction.
 
 ## Payment Flow
 
@@ -162,5 +202,6 @@ and an explicit incident response process.
 - Configure network-specific confirmations instead of reusing local Anvil values.
 - Use conservative deposit limits until the adapter has production history.
 - Keep wallet private keys, RPC credentials, and signer material outside Matrix events and committed config.
-- Keep a pause/admin runbook ready before testnet or production funds.
+- Keep an order-intake shutdown and incident runbook ready before testnet or
+  production funds.
 - Treat deployment JSON as an operator artifact; production config must still pin the intended contract and token addresses explicitly.
