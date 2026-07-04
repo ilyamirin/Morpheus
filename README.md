@@ -109,9 +109,23 @@ MORPHEUS_BUYER_TOKEN=buyer-token \
 cargo run -p morpheus-server -- --config config/local.toml
 ```
 
+Run local OIDC SSO with Keycloak:
+
+```bash
+docker compose up -d keycloak
+MORPHEUS_OIDC_CLIENT_SECRET=morpheus-local-secret \
+MORPHEUS_SESSION_SECRET=dev-session-secret \
+cargo run -p morpheus-server -- --config config/local-oidc.toml
+```
+
+The local realm is imported from `config/oidc/keycloak/morpheus-realm.json`.
+Keycloak listens on `http://127.0.0.1:18090`; the dev user is
+`morpheus-admin` / `morpheus-password` and has `admin`, `seller`, and `buyer`
+roles plus local seller/customer actor claims.
+
 ## CLI
 
-The CLI is JSON-first and role-token based.
+The CLI is JSON-first and role-token based. Browser UI deployments can use native OIDC SSO sessions instead of browser-entered role tokens; CLI/dev automation can continue to use scoped role bearer tokens.
 
 ```bash
 cargo run -p morpheus-cli -- admin health --server-url http://127.0.0.1:8080 --token admin-token
@@ -126,6 +140,8 @@ MORPHEUS_ADMIN_TOKEN=admin-token
 MORPHEUS_SELLER_TOKEN=seller-token
 MORPHEUS_BUYER_TOKEN=buyer-token
 ```
+
+OIDC mode is configured under `[auth]` with `mode = "oidc"` plus issuer, authorization endpoint, token endpoint, client id, client secret env, redirect URL, and session secret env. In OIDC mode the UI uses an HttpOnly `morpheus_session` cookie; browser bearer-token fields are hidden. Matrix Application Service `homeserver_token` and `appservice_token` remain service secrets and are not replaced by user SSO.
 
 ## Three-Instance E2E
 

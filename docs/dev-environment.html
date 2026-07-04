@@ -325,8 +325,9 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                 <h2>6. UI кабинеты: куда ходить и что проверять</h2>
               </div>
               <p>
-                Все UI используют bearer token из input-а и хранят его только в `localStorage`. Для E2E placeholders:
-                `admin-token`, `seller-token`, `buyer-token`. UI не выдаёт secrets с backend-а.
+                В локальном/E2E режиме UI использует bearer token из input-а и хранит его только в `localStorage`.
+                Production UI может работать через OIDC SSO и HttpOnly `morpheus_session` cookie без browser bearer tokens.
+                Для E2E placeholders: `admin-token`, `seller-token`, `buyer-token`. UI не выдаёт secrets с backend-а.
               </p>
               <div class="screenshot-grid">
                 <figure class="screenshot-card">
@@ -564,8 +565,9 @@ cargo run -p morpheus-cli -- --server-url "$SERVER" seller offer upsert --json '
                 <h2>9. То же через HTTP API</h2>
               </div>
               <p>
-                HTTP API использует role bearer tokens. Seller endpoints требуют `seller-token` и local seller actor.
-                Buyer order endpoints требуют `buyer-token` и local customer actor. Admin endpoints требуют `admin-token`.
+                HTTP API принимает role bearer tokens для CLI/dev automation или `morpheus_session` cookie после OIDC SSO.
+                Seller endpoints требуют seller role и local seller actor. Buyer order endpoints требуют buyer role
+                и local customer actor. Admin endpoints требуют admin role.
               </p>
               <div class="api-doc-grid">
                 <article>

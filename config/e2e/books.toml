@@ -26,6 +26,7 @@ bind = "0.0.0.0:8080"
 bearer_token_env = "MORPHEUS_ADMIN_TOKEN"
 
 [auth]
+mode = "static_tokens"
 seller_token_env = "MORPHEUS_SELLER_TOKEN"
 buyer_token_env = "MORPHEUS_BUYER_TOKEN"
 

@@ -1,7 +1,7 @@
 use axum::body::{Body, to_bytes};
 use http::{Request, StatusCode};
 use morpheus_protocol::validate_event_envelope;
-use morpheus_server::{ServerConfig, build_router};
+use morpheus_server::{AuthServerConfig, ServerConfig, build_router};
 use morpheus_store::{EventStore, InMemoryEventStore};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -239,9 +239,7 @@ async fn send_transaction_to_store(
             order_room_alias_prefix: Some("#marketplace-order-".into()),
             appservice_sender_localpart: "market".into(),
             homeserver_token: "hs-token".into(),
-            admin_token: "admin-token".into(),
-            seller_token: "seller-token".into(),
-            buyer_token: "buyer-token".into(),
+            auth: AuthServerConfig::static_tokens("admin-token", "seller-token", "buyer-token"),
         },
         store,
     );

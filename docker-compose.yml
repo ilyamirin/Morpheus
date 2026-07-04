@@ -28,5 +28,19 @@ services:
     depends_on:
       - postgres
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "18090:8080"
+    volumes:
+      - ./config/oidc/keycloak:/opt/keycloak/data/import:ro
+
 volumes:
   morpheus-postgres:

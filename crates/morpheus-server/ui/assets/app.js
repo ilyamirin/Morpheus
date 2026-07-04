@@ -6,6 +6,7 @@
   const OFFER_TERMS_HASH = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
   const UI_CONFIG = readUiConfig();
   const LOCAL_INSTANCE = UI_CONFIG.instance_id || "local.example";
+  const SESSION_AUTH = UI_CONFIG.auth_mode === "oidc";
   const PAGE_NONCE = Date.now().toString(36).toUpperCase();
   const DEMO = {
     sellerId: protocolId("seller", LOCAL_INSTANCE, "SELLER01"),
@@ -292,6 +293,14 @@
   }
 
   function initTokens() {
+    document.body.dataset.authMode = UI_CONFIG.auth_mode || "static_tokens";
+    if (SESSION_AUTH) {
+      $$("[data-token]").forEach((input) => {
+        const field = input.closest(".token-field");
+        if (field) field.hidden = true;
+      });
+      return;
+    }
     $$("[data-token]").forEach((input) => {
       const role = input.dataset.token;
       const storageKey = `morpheus.ui.token.${role}`;
@@ -373,11 +382,12 @@
     const headers = {};
     const label = action || `${method} ${path}`;
     if (body !== undefined) headers["content-type"] = "application/json";
-    if (tokenRole) headers.authorization = `Bearer ${token(tokenRole)}`;
+    if (tokenRole && !SESSION_AUTH) headers.authorization = `Bearer ${token(tokenRole)}`;
     try {
       const response = await fetch(path, {
         method,
         headers,
+        credentials: SESSION_AUTH ? "same-origin" : "same-origin",
         body: body === undefined ? undefined : JSON.stringify(body)
       });
       const contentType = response.headers.get("content-type") || "";
@@ -394,6 +404,9 @@
       }
       if (result) showResult(label, response.status, responseBody);
       if (!silent) toast(label, response.ok ? "success" : "error", `${response.status} ${response.statusText}`);
+      if (SESSION_AUTH && response.status === 401 && tokenRole) {
+        window.location.href = `/auth/login?return_to=${encodeURIComponent(window.location.pathname + window.location.hash)}`;
+      }
       return { ok: response.ok, status: response.status, body: responseBody };
     } catch (error) {
       const responseBody = { error: error.message, hint: "Server route may not be mounted yet." };

@@ -1,0 +1,111 @@
+{
+  "realm": "morpheus",
+  "enabled": true,
+  "displayName": "Morpheus Local",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "roles": {
+    "realm": [
+      { "name": "admin", "description": "Morpheus operator access" },
+      { "name": "seller", "description": "Morpheus seller access" },
+      { "name": "buyer", "description": "Morpheus buyer access" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "morpheus-local",
+      "name": "Morpheus Local UI",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "morpheus-local-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1:8080/auth/callback",
+        "http://127.0.0.1:19081/auth/callback"
+      ],
+      "webOrigins": [
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:19081"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "protocolMappers": [
+        {
+          "name": "morpheus realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "morpheus seller actors",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "morpheus_sellers",
+            "multivalued": "true",
+            "aggregate.attrs": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "morpheus_sellers",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "morpheus buyer actors",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "morpheus_customers",
+            "multivalued": "true",
+            "aggregate.attrs": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "morpheus_customers",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "morpheus-admin",
+      "enabled": true,
+      "email": "morpheus-admin@example.local",
+      "emailVerified": true,
+      "firstName": "Morpheus",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "morpheus-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["admin", "seller", "buyer"],
+      "attributes": {
+        "morpheus_sellers": ["seller:shop.example:SELLER01"],
+        "morpheus_customers": ["customer:shop.example:CUSTOMER01"]
+      }
+    }
+  ]
+}

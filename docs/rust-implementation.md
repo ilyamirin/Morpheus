@@ -178,7 +178,7 @@ GET  /api/v1/buyer/orders/{order_id}
 POST /api/v1/buyer/orders/{order_id}/cancel
 ```
 
-Admin, seller, and buyer routes require their matching static role bearer token. Admin tokens do not authorize seller/buyer routes.
+Admin, seller, and buyer routes accept either their matching static role bearer token or an authenticated `morpheus_session` cookie. Static tokens remain the local/dev and CLI path. OIDC mode is the browser SSO path: `/auth/login` starts authorization-code login with PKCE, `/auth/callback` creates an HttpOnly session cookie, `/auth/session` reports the current principal, and `/auth/logout` clears the cookie. Admin tokens do not authorize seller/buyer routes, and OIDC seller/buyer sessions can be bound to explicit `seller:*` and `customer:*` actor IDs.
 
 The server crate exposes both a reusable router and a standalone binary. The binary runs as:
 
@@ -189,7 +189,7 @@ MORPHEUS_BUYER_TOKEN=buyer-token \
 cargo run -p morpheus-server -- --config config/local.toml
 ```
 
-It loads TOML config, reads role bearer tokens from configured env vars, runs Postgres migrations, constructs `PostgresEventStore`, configures the Synapse publisher, starts remote catalog indexing, and binds the configured address.
+It loads TOML config, builds either static-token auth or OIDC session auth from configured env vars, runs Postgres migrations, constructs `PostgresEventStore`, configures the Synapse publisher, starts remote catalog indexing, and binds the configured address.
 
 ### `morpheus-cli`
 
@@ -292,6 +292,50 @@ Main sections:
 [auth]
 [[allowlist.instances]]
 ```
+
+Static local auth:
+
+```toml
+[auth]
+mode = "static_tokens"
+seller_token_env = "MORPHEUS_SELLER_TOKEN"
+buyer_token_env = "MORPHEUS_BUYER_TOKEN"
+```
+
+OIDC browser SSO auth:
+
+```toml
+[auth]
+mode = "oidc"
+
+[auth.oidc]
+issuer = "https://idp.example/realms/morpheus"
+authorization_endpoint = "https://idp.example/realms/morpheus/protocol/openid-connect/auth"
+token_endpoint = "https://idp.example/realms/morpheus/protocol/openid-connect/token"
+jwks_url = "https://idp.example/realms/morpheus/protocol/openid-connect/certs"
+client_id = "morpheus"
+client_secret_env = "MORPHEUS_OIDC_CLIENT_SECRET"
+redirect_url = "https://market.example/auth/callback"
+session_secret_env = "MORPHEUS_SESSION_SECRET"
+role_claim = "roles"
+seller_actor_claim = "morpheus_sellers"
+buyer_actor_claim = "morpheus_customers"
+```
+
+The repository includes a local Keycloak realm for this mode:
+
+```bash
+docker compose up -d keycloak
+MORPHEUS_OIDC_CLIENT_SECRET=morpheus-local-secret \
+MORPHEUS_SESSION_SECRET=dev-session-secret \
+cargo run -p morpheus-server -- --config config/local-oidc.toml
+```
+
+`config/local-oidc.toml` points at `http://127.0.0.1:18090/realms/morpheus`.
+The imported dev user is `morpheus-admin` / `morpheus-password`; its realm
+roles are `admin`, `seller`, and `buyer`, with `morpheus_sellers` and
+`morpheus_customers` attributes bound to the local demo seller/customer actor
+IDs.
 
 Validate it with:
 

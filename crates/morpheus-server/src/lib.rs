@@ -1,8 +1,8 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse},
+    http::{HeaderMap, StatusCode, header},
+    response::{Html, IntoResponse, Redirect},
     routing::{get, post, put},
 };
 use chrono::Utc;
@@ -24,10 +24,16 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashSet};
 use ulid::Ulid;
 
+mod auth;
 mod context_validation;
 mod projection;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+pub use auth::{
+    AuthPrincipal, AuthRole, AuthServerConfig, AuthServerMode, AuthSessionSeed, OidcServerConfig,
+    actor_binding_allows, bearer_authorized, encode_insecure_test_id_token,
+};
+
+#[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub instance_id: String,
     pub matrix_server_name: String,
@@ -36,9 +42,7 @@ pub struct ServerConfig {
     pub order_room_alias_prefix: Option<String>,
     pub appservice_sender_localpart: String,
     pub homeserver_token: String,
-    pub admin_token: String,
-    pub seller_token: String,
-    pub buyer_token: String,
+    pub auth: AuthServerConfig,
 }
 
 #[derive(Clone)]
@@ -726,7 +730,7 @@ where
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics))
-        .route("/ui/admin", get(ui_admin))
+        .route("/ui/admin", get(ui_admin::<S, P>))
         .route("/ui/seller", get(ui_seller::<S, P>))
         .route("/ui/buyer", get(ui_buyer::<S, P>))
         .route("/ui/assets/favicon.svg", get(ui_favicon_svg))
@@ -744,6 +748,10 @@ where
         )
         .route("/ui/assets/products/seed/{file}", get(ui_seed_product_jpg))
         .route("/admin/health", get(healthz))
+        .route("/auth/login", get(auth_login::<S, P>))
+        .route("/auth/callback", get(auth_callback::<S, P>))
+        .route("/auth/logout", post(auth_logout).get(auth_logout))
+        .route("/auth/session", get(auth_session::<S, P>))
         .route(
             "/_matrix/app/v1/transactions/{txn_id}",
             put(appservice_transaction::<S, P>),
@@ -836,8 +844,15 @@ async fn metrics() -> impl IntoResponse {
     "morpheus_server_info 1\n"
 }
 
-async fn ui_admin() -> impl IntoResponse {
-    Html(include_str!("../ui/admin.html"))
+async fn ui_admin<S, P>(State(state): State<AppState<S, P>>) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    Html(render_ui_page(
+        include_str!("../ui/admin.html"),
+        &state.config,
+    ))
 }
 
 async fn ui_seller<S, P>(State(state): State<AppState<S, P>>) -> impl IntoResponse
@@ -867,6 +882,7 @@ fn render_ui_page(template: &str, config: &ServerConfig) -> String {
         "instance_id": config.instance_id,
         "matrix_server_name": config.matrix_server_name,
         "catalog_room_id": config.catalog_room_id,
+        "auth_mode": config.auth.mode_name(),
     });
     let script = format!(
         r#"<script id="morpheus-ui-config" type="application/json">{}</script>"#,
@@ -1058,6 +1074,112 @@ where
     match ingest_transaction(&state.store, txn_id, transaction).await {
         Ok(()) => (StatusCode::OK, Json(json!({}))).into_response(),
         Err(response) => response,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthLoginQuery {
+    return_to: Option<String>,
+}
+
+async fn auth_login<S, P>(
+    State(state): State<AppState<S, P>>,
+    Query(query): Query<AuthLoginQuery>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    match state
+        .config
+        .auth
+        .begin_oidc_login(query.return_to.as_deref())
+    {
+        Some(location) => Redirect::to(&location).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code": "OIDC_NOT_CONFIGURED", "error": "oidc is not configured"})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthCallbackQuery {
+    state: String,
+    code: String,
+}
+
+async fn auth_callback<S, P>(
+    State(state): State<AppState<S, P>>,
+    Query(query): Query<AuthCallbackQuery>,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    match state
+        .config
+        .auth
+        .complete_oidc_login(&query.state, &query.code)
+        .await
+    {
+        Ok(login) => (
+            StatusCode::SEE_OTHER,
+            [
+                (header::LOCATION, login.return_to),
+                (
+                    header::SET_COOKIE,
+                    format!(
+                        "morpheus_session={}; Path=/; Max-Age=28800; HttpOnly; SameSite=Lax",
+                        login.session_id
+                    ),
+                ),
+            ],
+        )
+            .into_response(),
+        Err(message) => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "OIDC_LOGIN_FAILED", "error": message})),
+        )
+            .into_response(),
+    }
+}
+
+async fn auth_logout() -> impl IntoResponse {
+    (
+        StatusCode::SEE_OTHER,
+        [
+            (header::LOCATION, "/ui/buyer".to_string()),
+            (
+                header::SET_COOKIE,
+                "morpheus_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax".to_string(),
+            ),
+        ],
+    )
+        .into_response()
+}
+
+async fn auth_session<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    match state.config.auth.session_principal(&headers) {
+        Some(principal) => Json(json!({
+            "authenticated": true,
+            "auth_mode": state.config.auth.mode_name(),
+            "principal": principal,
+        }))
+        .into_response(),
+        None => Json(json!({
+            "authenticated": false,
+            "auth_mode": state.config.auth.mode_name(),
+        }))
+        .into_response(),
     }
 }
 
@@ -1279,13 +1401,14 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    if !admin_authorized(&headers, &state.config.admin_token) {
+    if !admin_authorized(&headers, &state.config.auth) {
         return admin_unauthorized();
     }
     Json(json!({
         "admin": {
-            "auth_scheme": "Bearer",
-            "token_configured": !state.config.admin_token.is_empty(),
+            "auth_scheme": "Bearer or Session",
+            "token_configured": !state.config.auth.admin_token.is_empty(),
+            "auth_mode": state.config.auth.mode_name(),
         },
         "appservice": {
             "homeserver_token_configured": !state.config.homeserver_token.is_empty(),
@@ -1302,7 +1425,7 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    if !admin_authorized(&headers, &state.config.admin_token) {
+    if !admin_authorized(&headers, &state.config.auth) {
         return admin_unauthorized();
     }
     Json(json!({
@@ -1321,7 +1444,7 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    if !admin_authorized(&headers, &state.config.admin_token) {
+    if !admin_authorized(&headers, &state.config.auth) {
         return admin_unauthorized();
     }
     projection_summary(&state.store).await
@@ -1335,7 +1458,7 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    if !admin_authorized(&headers, &state.config.admin_token) {
+    if !admin_authorized(&headers, &state.config.auth) {
         return admin_unauthorized();
     }
     match state.store.projection_errors().await {
@@ -1352,7 +1475,7 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    if !admin_authorized(&headers, &state.config.admin_token) {
+    if !admin_authorized(&headers, &state.config.auth) {
         return admin_unauthorized();
     }
     let catalog = match catalog_summary(&state.store).await {
@@ -1377,7 +1500,7 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    if !admin_authorized(&headers, &state.config.admin_token) {
+    if !admin_authorized(&headers, &state.config.auth) {
         return admin_unauthorized();
     }
     (
@@ -1401,7 +1524,7 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    if !admin_authorized(&headers, &state.config.admin_token) {
+    if !admin_authorized(&headers, &state.config.auth) {
         return admin_unauthorized();
     }
     let order = match state.store.order(&order_id).await {
@@ -1448,7 +1571,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.seller_token,
+        &state.config.auth,
+        AuthRole::Seller,
         "seller",
         &state.config.instance_id,
         &request.seller_id,
@@ -1488,7 +1612,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.seller_token,
+        &state.config.auth,
+        AuthRole::Seller,
         "seller",
         &state.config.instance_id,
         &request.seller_id,
@@ -1544,7 +1669,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.seller_token,
+        &state.config.auth,
+        AuthRole::Seller,
         "seller",
         &state.config.instance_id,
         &request.seller_id,
@@ -1591,7 +1717,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.seller_token,
+        &state.config.auth,
+        AuthRole::Seller,
         "seller",
         &state.config.instance_id,
         &request.seller_id,
@@ -1624,7 +1751,7 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    if !bearer_authorized(&headers, &state.config.seller_token) {
+    if !role_authorized(&headers, &state.config.auth, AuthRole::Seller) {
         return role_unauthorized();
     }
     list_orders(&state.store).await
@@ -1642,7 +1769,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.seller_token,
+        &state.config.auth,
+        AuthRole::Seller,
         "seller",
         &state.config.instance_id,
         &request.actor_id,
@@ -1698,7 +1826,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.seller_token,
+        &state.config.auth,
+        AuthRole::Seller,
         "seller",
         &state.config.instance_id,
         &request.actor_id,
@@ -1783,7 +1912,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.seller_token,
+        &state.config.auth,
+        AuthRole::Seller,
         "seller",
         &state.config.instance_id,
         &request.actor_id,
@@ -1835,7 +1965,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.seller_token,
+        &state.config.auth,
+        AuthRole::Seller,
         "seller",
         &state.config.instance_id,
         &request.actor_id,
@@ -1980,7 +2111,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.seller_token,
+        &state.config.auth,
+        AuthRole::Seller,
         "seller",
         &state.config.instance_id,
         &request.actor_id,
@@ -2015,7 +2147,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.buyer_token,
+        &state.config.auth,
+        AuthRole::Buyer,
         "customer",
         &state.config.instance_id,
         &request.customer_id,
@@ -2176,7 +2309,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.buyer_token,
+        &state.config.auth,
+        AuthRole::Buyer,
         "customer",
         &state.config.instance_id,
         &request.actor_id,
@@ -2201,7 +2335,7 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    if !bearer_authorized(&headers, &state.config.buyer_token) {
+    if !role_authorized(&headers, &state.config.auth, AuthRole::Buyer) {
         return role_unauthorized();
     }
     list_orders(&state.store).await
@@ -2216,7 +2350,7 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
-    if !bearer_authorized(&headers, &state.config.buyer_token) {
+    if !role_authorized(&headers, &state.config.auth, AuthRole::Buyer) {
         return role_unauthorized();
     }
     match state.store.order(&order_id).await {
@@ -2343,7 +2477,8 @@ where
 {
     if let Some(response) = authorize_actor(
         &headers,
-        &state.config.seller_token,
+        &state.config.auth,
+        AuthRole::Seller,
         "seller",
         &state.config.instance_id,
         &request.actor_id,
@@ -2507,16 +2642,23 @@ fn marketplace_event(
 
 fn authorize_actor(
     headers: &HeaderMap,
-    token: &str,
+    auth: &AuthServerConfig,
+    role: AuthRole,
     kind: &str,
     instance_id: &str,
     actor_id: &str,
 ) -> Option<axum::response::Response> {
-    if !bearer_authorized(headers, token) {
+    let Some(principal) = auth.principal_for_role(headers, role) else {
         return Some(role_unauthorized());
-    }
+    };
     match parse_actor_id(actor_id) {
-        Ok(actor) if actor.kind == kind && actor.instance_id == instance_id => None,
+        Ok(actor)
+            if actor.kind == kind
+                && actor.instance_id == instance_id
+                && actor_binding_allows(&principal, role, actor_id) =>
+        {
+            None
+        }
         Ok(_) => Some(
             (
                 StatusCode::FORBIDDEN,
@@ -2537,11 +2679,8 @@ fn authorize_actor(
     }
 }
 
-fn bearer_authorized(headers: &HeaderMap, token: &str) -> bool {
-    headers
-        .get("authorization")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value == format!("Bearer {token}"))
+fn role_authorized(headers: &HeaderMap, auth: &AuthServerConfig, role: AuthRole) -> bool {
+    auth.principal_for_role(headers, role).is_some()
 }
 
 fn role_unauthorized() -> axum::response::Response {
@@ -2552,8 +2691,8 @@ fn role_unauthorized() -> axum::response::Response {
         .into_response()
 }
 
-fn admin_authorized(headers: &HeaderMap, token: &str) -> bool {
-    bearer_authorized(headers, token)
+fn admin_authorized(headers: &HeaderMap, auth: &AuthServerConfig) -> bool {
+    role_authorized(headers, auth, AuthRole::Admin)
 }
 
 fn admin_unauthorized() -> axum::response::Response {

@@ -2,10 +2,10 @@ use std::{env, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use morpheus_config::load_config;
+use morpheus_config::{AuthMode, MorpheusConfig, load_config};
 use morpheus_server::{
-    RemoteCatalogSource, ServerConfig, SynapseMatrixPublisher, build_router_with_publisher,
-    ensure_catalog_room, sync_remote_catalog_once,
+    AuthServerConfig, OidcServerConfig, RemoteCatalogSource, ServerConfig, SynapseMatrixPublisher,
+    build_router_with_publisher, ensure_catalog_room, sync_remote_catalog_once,
 };
 use morpheus_store::{PostgresEventStore, migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -23,24 +23,7 @@ struct Cli {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = load_config(&cli.config)?;
-    let admin_token = env::var(&config.admin.bearer_token_env).with_context(|| {
-        format!(
-            "missing admin bearer token env {}",
-            config.admin.bearer_token_env
-        )
-    })?;
-    let seller_token = env::var(&config.auth.seller_token_env).with_context(|| {
-        format!(
-            "missing seller bearer token env {}",
-            config.auth.seller_token_env
-        )
-    })?;
-    let buyer_token = env::var(&config.auth.buyer_token_env).with_context(|| {
-        format!(
-            "missing buyer bearer token env {}",
-            config.auth.buyer_token_env
-        )
-    })?;
+    let auth = build_auth_runtime(&config)?;
     let remote_catalog_sources = config
         .allowlist
         .as_ref()
@@ -109,9 +92,7 @@ async fn main() -> Result<()> {
             order_room_alias_prefix: config.instance.order_room_alias_prefix,
             appservice_sender_localpart: config.appservice.sender_localpart,
             homeserver_token: config.appservice.homeserver_token,
-            admin_token,
-            seller_token,
-            buyer_token,
+            auth,
         },
         store,
         publisher,
@@ -123,6 +104,76 @@ async fn main() -> Result<()> {
         .await
         .context("serving morpheus-server")?;
     Ok(())
+}
+
+fn build_auth_runtime(config: &MorpheusConfig) -> Result<AuthServerConfig> {
+    match config.auth.mode {
+        AuthMode::StaticTokens => {
+            let admin_token = env::var(&config.admin.bearer_token_env).with_context(|| {
+                format!(
+                    "missing admin bearer token env {}",
+                    config.admin.bearer_token_env
+                )
+            })?;
+            let seller_token = env::var(&config.auth.seller_token_env).with_context(|| {
+                format!(
+                    "missing seller bearer token env {}",
+                    config.auth.seller_token_env
+                )
+            })?;
+            let buyer_token = env::var(&config.auth.buyer_token_env).with_context(|| {
+                format!(
+                    "missing buyer bearer token env {}",
+                    config.auth.buyer_token_env
+                )
+            })?;
+            Ok(AuthServerConfig::static_tokens(
+                &admin_token,
+                &seller_token,
+                &buyer_token,
+            ))
+        }
+        AuthMode::Oidc => {
+            let oidc = config
+                .auth
+                .oidc
+                .as_ref()
+                .context("auth oidc section is required in oidc mode")?;
+            let client_secret = env::var(&oidc.client_secret_env).with_context(|| {
+                format!("missing OIDC client secret env {}", oidc.client_secret_env)
+            })?;
+            let session_secret = env::var(&oidc.session_secret_env).with_context(|| {
+                format!("missing session secret env {}", oidc.session_secret_env)
+            })?;
+            Ok(AuthServerConfig::oidc(
+                OidcServerConfig {
+                    issuer: oidc.issuer.clone(),
+                    authorization_endpoint: oidc.authorization_endpoint.clone(),
+                    token_endpoint: oidc.token_endpoint.clone(),
+                    jwks_url: oidc.jwks_url.clone(),
+                    client_id: oidc.client_id.clone(),
+                    client_secret,
+                    redirect_url: oidc.redirect_url.clone(),
+                    session_secret,
+                    role_claim: oidc.role_claim.clone(),
+                    seller_actor_claim: oidc.seller_actor_claim.clone(),
+                    buyer_actor_claim: oidc.buyer_actor_claim.clone(),
+                    allow_insecure_test_tokens: oidc.allow_insecure_test_tokens,
+                },
+                optional_env(&config.admin.bearer_token_env),
+                optional_env(&config.auth.seller_token_env),
+                optional_env(&config.auth.buyer_token_env),
+            ))
+        }
+    }
+}
+
+fn optional_env(name: &str) -> String {
+    if name.is_empty() {
+        String::new()
+    } else {
+        env::var(name).unwrap_or_default()
+    }
 }
 
 fn spawn_remote_catalog_indexer(store: PostgresEventStore, sources: Vec<RemoteCatalogSource>) {

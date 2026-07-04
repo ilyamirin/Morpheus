@@ -3,7 +3,8 @@ use axum::body::{Body, to_bytes};
 use http::{Request, StatusCode};
 use morpheus_protocol::ValidationError;
 use morpheus_server::{
-    MatrixPublisher, RemoteCatalogSource, ServerConfig, SynapseMatrixPublisher, build_router,
+    AuthPrincipal, AuthRole, AuthServerConfig, AuthSessionSeed, MatrixPublisher,
+    RemoteCatalogSource, ServerConfig, SynapseMatrixPublisher, build_router,
     build_router_with_publisher, sync_remote_catalog_once,
 };
 use morpheus_store::{
@@ -59,10 +60,34 @@ fn server_config() -> ServerConfig {
         order_room_alias_prefix: Some("#marketplace-order-".into()),
         appservice_sender_localpart: "market".into(),
         homeserver_token: "hs-token".into(),
-        admin_token: "admin-token".into(),
-        seller_token: "seller-token".into(),
-        buyer_token: "buyer-token".into(),
+        auth: AuthServerConfig::static_tokens("admin-token", "seller-token", "buyer-token"),
     }
+}
+
+fn server_config_with_sessions(sessions: Vec<AuthSessionSeed>) -> ServerConfig {
+    let mut config = server_config();
+    config.auth = AuthServerConfig::static_tokens_with_sessions(
+        "admin-token",
+        "seller-token",
+        "buyer-token",
+        sessions,
+    );
+    config
+}
+
+fn server_config_with_oidc_test_token(code: &str, id_token: &str) -> ServerConfig {
+    let mut config = server_config();
+    config.auth = AuthServerConfig::oidc_test(
+        "https://idp.example/realms/morpheus",
+        "https://idp.example/realms/morpheus/protocol/openid-connect/auth",
+        "https://idp.example/realms/morpheus/protocol/openid-connect/token",
+        "morpheus",
+        "secret",
+        "http://127.0.0.1:8080/auth/callback",
+        "test-session-secret",
+        vec![(code.into(), id_token.into())],
+    );
+    config
 }
 
 async fn send_admin_request(
@@ -109,6 +134,87 @@ async fn send_json_request(
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let body = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({}));
     (status, body)
+}
+
+async fn send_request_with_cookie(
+    config: ServerConfig,
+    method: &str,
+    uri: &str,
+    cookie: Option<&str>,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let app = build_router(config, InMemoryEventStore::default());
+    let mut request = Request::builder().method(method).uri(uri);
+    if body.is_some() {
+        request = request.header("content-type", "application/json");
+    }
+    if let Some(cookie) = cookie {
+        request = request.header("cookie", cookie);
+    }
+    let response = app
+        .oneshot(
+            request
+                .body(match body {
+                    Some(body) => Body::from(body.to_string()),
+                    None => Body::empty(),
+                })
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({}));
+    (status, body)
+}
+
+async fn send_request_returning_headers(
+    config: ServerConfig,
+    method: &str,
+    uri: &str,
+    cookie: Option<&str>,
+) -> (StatusCode, http::HeaderMap, Value) {
+    let app = build_router(config, InMemoryEventStore::default());
+    let mut request = Request::builder().method(method).uri(uri);
+    if let Some(cookie) = cookie {
+        request = request.header("cookie", cookie);
+    }
+    let response = app
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({}));
+    (status, headers, body)
+}
+
+fn insecure_test_id_token(nonce: &str) -> String {
+    morpheus_server::encode_insecure_test_id_token(json!({
+        "iss": "https://idp.example/realms/morpheus",
+        "aud": "morpheus",
+        "sub": "user:seller@example.com",
+        "name": "Seller User",
+        "exp": 4_102_444_800i64,
+        "nonce": nonce,
+        "roles": ["seller"],
+        "morpheus_sellers": ["seller:shop.example:01JSELLER"],
+        "morpheus_customers": [],
+    }))
+}
+
+fn query_param(location: &str, key: &str) -> String {
+    let query = location
+        .split_once('?')
+        .map(|(_, query)| query)
+        .unwrap_or("");
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(name, _)| *name == key)
+        .map(|(_, value)| value.to_string())
+        .unwrap_or_default()
 }
 
 async fn send_ui_request(uri: &str) -> (StatusCode, Option<String>) {
@@ -396,6 +502,8 @@ async fn admin_ui_uses_auto_refresh_instead_of_per_metric_refresh_buttons() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(content_type.as_deref(), Some("text/html; charset=utf-8"));
+    assert!(body.contains(r#""auth_mode":"static_tokens""#));
+    assert!(body.contains("morpheus-ui-config"));
     assert_contains_all(
         &body,
         &[
@@ -577,6 +685,29 @@ async fn ui_javascript_does_not_ship_shop_example_as_runtime_default() {
         "{content_type:?}"
     );
     assert_contains_none(&body, &["shop.example"]);
+}
+
+#[tokio::test]
+async fn ui_javascript_supports_oidc_session_auth_without_browser_bearer_tokens() {
+    let (status, content_type, body) = send_ui_body_request("/ui/assets/app.js").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type
+            .as_deref()
+            .is_some_and(|value| value.contains("javascript")),
+        "{content_type:?}"
+    );
+    assert_contains_all(
+        &body,
+        &[
+            r#"const SESSION_AUTH = UI_CONFIG.auth_mode === "oidc""#,
+            r#"if (tokenRole && !SESSION_AUTH) headers.authorization"#,
+            r#"credentials: SESSION_AUTH ? "same-origin" : "same-origin""#,
+            r#"document.body.dataset.authMode = UI_CONFIG.auth_mode || "static_tokens""#,
+            r#"window.location.href = `/auth/login?return_to=${encodeURIComponent(window.location.pathname + window.location.hash)}`"#,
+        ],
+    );
 }
 
 #[tokio::test]
@@ -879,13 +1010,197 @@ async fn admin_config_accepts_bearer_auth_and_reports_configured_tokens() {
         body,
         json!({
             "admin": {
-                "auth_scheme": "Bearer",
+                "auth_scheme": "Bearer or Session",
+                "auth_mode": "static_tokens",
                 "token_configured": true,
             },
             "appservice": {
                 "homeserver_token_configured": true,
             },
         })
+    );
+}
+
+#[tokio::test]
+async fn auth_session_reports_anonymous_request_without_cookie() {
+    let (status, body) =
+        send_request_with_cookie(server_config(), "GET", "/auth/session", None, None).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({
+            "authenticated": false,
+            "auth_mode": "static_tokens",
+        })
+    );
+}
+
+#[tokio::test]
+async fn auth_session_cookie_authorizes_admin_routes_without_bearer_token() {
+    let config = server_config_with_sessions(vec![AuthSessionSeed {
+        session_id: "admin-session".into(),
+        principal: AuthPrincipal {
+            subject: "user:admin@example.com".into(),
+            display_name: Some("Admin User".into()),
+            roles: vec![AuthRole::Admin],
+            seller_actor_ids: vec![],
+            buyer_actor_ids: vec![],
+        },
+    }]);
+
+    let (status, body) = send_request_with_cookie(
+        config,
+        "GET",
+        "/admin/config",
+        Some("morpheus_session=admin-session"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["admin"]["auth_scheme"], "Bearer or Session");
+}
+
+#[tokio::test]
+async fn auth_session_cookie_limits_seller_to_bound_actor_ids() {
+    let config = server_config_with_sessions(vec![AuthSessionSeed {
+        session_id: "seller-session".into(),
+        principal: AuthPrincipal {
+            subject: "user:seller@example.com".into(),
+            display_name: Some("Seller User".into()),
+            roles: vec![AuthRole::Seller],
+            seller_actor_ids: vec!["seller:shop.example:01JSELLER".into()],
+            buyer_actor_ids: vec![],
+        },
+    }]);
+
+    let allowed = json!({
+        "seller_id": "seller:shop.example:01JSELLER",
+        "display_name": "Fixture Seller",
+        "legal_profile_ref": "https://shop.example/legal",
+        "terms_ref": "https://shop.example/terms",
+        "terms_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "supported_payment_adapters": ["mock"],
+        "supported_entitlement_types": ["external_entitlement"]
+    });
+    let (allowed_status, _) = send_request_with_cookie(
+        config.clone(),
+        "POST",
+        "/api/v1/seller/announce",
+        Some("morpheus_session=seller-session"),
+        Some(allowed),
+    )
+    .await;
+    assert_eq!(allowed_status, StatusCode::ACCEPTED);
+
+    let forbidden = json!({
+        "seller_id": "seller:shop.example:02JOTHER",
+        "display_name": "Other Seller",
+        "legal_profile_ref": "https://shop.example/legal",
+        "terms_ref": "https://shop.example/terms",
+        "terms_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "supported_payment_adapters": ["mock"],
+        "supported_entitlement_types": ["external_entitlement"]
+    });
+    let (forbidden_status, body) = send_request_with_cookie(
+        config,
+        "POST",
+        "/api/v1/seller/announce",
+        Some("morpheus_session=seller-session"),
+        Some(forbidden),
+    )
+    .await;
+    assert_eq!(forbidden_status, StatusCode::FORBIDDEN);
+    assert_eq!(body["code"], "ACTOR_FORBIDDEN");
+}
+
+#[tokio::test]
+async fn oidc_login_redirects_to_provider_with_state_nonce_and_pkce() {
+    let config = server_config_with_oidc_test_token("unused", "unused");
+    let (status, headers, _) =
+        send_request_returning_headers(config, "GET", "/auth/login?return_to=/ui/admin", None)
+            .await;
+
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let location = headers
+        .get("location")
+        .and_then(|value| value.to_str().ok())
+        .unwrap();
+    assert!(
+        location.starts_with("https://idp.example/realms/morpheus/protocol/openid-connect/auth?")
+    );
+    assert_eq!(query_param(location, "client_id"), "morpheus");
+    assert_eq!(query_param(location, "response_type"), "code");
+    assert_eq!(query_param(location, "scope"), "openid+profile+email");
+    assert!(!query_param(location, "state").is_empty());
+    assert!(!query_param(location, "nonce").is_empty());
+    assert_eq!(query_param(location, "code_challenge_method"), "S256");
+    assert!(!query_param(location, "code_challenge").is_empty());
+}
+
+#[tokio::test]
+async fn oidc_callback_creates_http_only_session_from_test_claims() {
+    let mut config = server_config();
+    config.auth = AuthServerConfig::oidc_test(
+        "https://idp.example/realms/morpheus",
+        "https://idp.example/realms/morpheus/protocol/openid-connect/auth",
+        "https://idp.example/realms/morpheus/protocol/openid-connect/token",
+        "morpheus",
+        "secret",
+        "http://127.0.0.1:8080/auth/callback",
+        "test-session-secret",
+        Vec::new(),
+    );
+
+    let (_, login_headers, _) = send_request_returning_headers(
+        config.clone(),
+        "GET",
+        "/auth/login?return_to=/ui/seller",
+        None,
+    )
+    .await;
+    let location = login_headers
+        .get("location")
+        .and_then(|value| value.to_str().ok())
+        .unwrap();
+    let state = query_param(location, "state");
+    let nonce = query_param(location, "nonce");
+    config
+        .auth
+        .add_insecure_test_token("code-1", &insecure_test_id_token(&nonce));
+
+    let (status, callback_headers, _) = send_request_returning_headers(
+        config.clone(),
+        "GET",
+        &format!("/auth/callback?state={state}&code=code-1"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        callback_headers
+            .get("location")
+            .and_then(|value| value.to_str().ok()),
+        Some("/ui/seller")
+    );
+    let cookie = callback_headers
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
+        .unwrap();
+    assert!(cookie.starts_with("morpheus_session="));
+    assert!(cookie.contains("HttpOnly"));
+    assert!(cookie.contains("SameSite=Lax"));
+
+    let (session_status, session_body) =
+        send_request_with_cookie(config, "GET", "/auth/session", Some(cookie), None).await;
+    assert_eq!(session_status, StatusCode::OK);
+    assert_eq!(session_body["authenticated"], true);
+    assert_eq!(session_body["principal"]["roles"], json!(["seller"]));
+    assert_eq!(
+        session_body["principal"]["seller_actor_ids"],
+        json!(["seller:shop.example:01JSELLER"])
     );
 }
 

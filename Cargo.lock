@@ -1165,6 +1165,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "base64",
  "chrono",
  "clap",
  "http",
@@ -1174,14 +1175,18 @@ dependencies = [
  "morpheus-matrix",
  "morpheus-protocol",
  "morpheus-store",
+ "rand 0.8.6",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "tempfile",
  "tokio",
  "tower",
  "ulid",
+ "url",
 ]
 
 [[package]]

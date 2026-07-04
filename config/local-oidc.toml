@@ -26,9 +26,22 @@ bind = "127.0.0.1:8080"
 bearer_token_env = "MORPHEUS_ADMIN_TOKEN"
 
 [auth]
-mode = "static_tokens"
+mode = "oidc"
 seller_token_env = "MORPHEUS_SELLER_TOKEN"
 buyer_token_env = "MORPHEUS_BUYER_TOKEN"
+
+[auth.oidc]
+issuer = "http://127.0.0.1:18090/realms/morpheus"
+authorization_endpoint = "http://127.0.0.1:18090/realms/morpheus/protocol/openid-connect/auth"
+token_endpoint = "http://127.0.0.1:18090/realms/morpheus/protocol/openid-connect/token"
+jwks_url = "http://127.0.0.1:18090/realms/morpheus/protocol/openid-connect/certs"
+client_id = "morpheus-local"
+client_secret_env = "MORPHEUS_OIDC_CLIENT_SECRET"
+redirect_url = "http://127.0.0.1:8080/auth/callback"
+session_secret_env = "MORPHEUS_SESSION_SECRET"
+role_claim = "roles"
+seller_actor_claim = "morpheus_sellers"
+buyer_actor_claim = "morpheus_customers"
 
 [[allowlist.instances]]
 instance_id = "shop.example"
@@ -37,11 +50,3 @@ status = "active"
 catalog_room_alias = "#marketplace-catalog:shop.example"
 homeserver_url = "http://localhost:8008"
 morpheus_url = "http://127.0.0.1:8080"
-
-[[allowlist.instances]]
-instance_id = "arbiter.example"
-capabilities = ["arbitration"]
-status = "active"
-catalog_room_alias = "#marketplace-catalog:other.example"
-homeserver_url = "http://localhost:8009"
-morpheus_url = "http://127.0.0.1:8081"

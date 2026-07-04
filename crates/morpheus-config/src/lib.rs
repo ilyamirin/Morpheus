@@ -51,8 +51,57 @@ pub struct AdminConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthConfig {
+    #[serde(default = "default_auth_mode")]
+    pub mode: AuthMode,
+    #[serde(default)]
     pub seller_token_env: String,
+    #[serde(default)]
     pub buyer_token_env: String,
+    #[serde(default)]
+    pub oidc: Option<OidcConfig>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMode {
+    StaticTokens,
+    Oidc,
+}
+
+fn default_auth_mode() -> AuthMode {
+    AuthMode::StaticTokens
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OidcConfig {
+    pub issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub jwks_url: Option<String>,
+    pub client_id: String,
+    pub client_secret_env: String,
+    pub redirect_url: String,
+    pub session_secret_env: String,
+    #[serde(default = "default_role_claim")]
+    pub role_claim: String,
+    #[serde(default = "default_seller_actor_claim")]
+    pub seller_actor_claim: String,
+    #[serde(default = "default_buyer_actor_claim")]
+    pub buyer_actor_claim: String,
+    #[serde(default)]
+    pub allow_insecure_test_tokens: bool,
+}
+
+fn default_role_claim() -> String {
+    "roles".into()
+}
+
+fn default_seller_actor_claim() -> String {
+    "morpheus_sellers".into()
+}
+
+fn default_buyer_actor_claim() -> String {
+    "morpheus_customers".into()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,14 +202,7 @@ pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
         !config.admin.bearer_token_env.is_empty(),
         "admin bearer_token_env is required"
     );
-    anyhow::ensure!(
-        !config.auth.seller_token_env.is_empty(),
-        "auth seller_token_env is required"
-    );
-    anyhow::ensure!(
-        !config.auth.buyer_token_env.is_empty(),
-        "auth buyer_token_env is required"
-    );
+    validate_auth_config(&config.auth)?;
     if let Some(allowlist) = &config.allowlist {
         for entry in &allowlist.instances {
             anyhow::ensure!(
@@ -181,6 +223,73 @@ pub fn validate_config(config: &MorpheusConfig) -> Result<()> {
                     "allowlist catalog_room_alias must be a Matrix room alias"
                 );
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_auth_config(auth: &AuthConfig) -> Result<()> {
+    match auth.mode {
+        AuthMode::StaticTokens => {
+            anyhow::ensure!(
+                !auth.seller_token_env.is_empty(),
+                "auth seller_token_env is required in static_tokens mode"
+            );
+            anyhow::ensure!(
+                !auth.buyer_token_env.is_empty(),
+                "auth buyer_token_env is required in static_tokens mode"
+            );
+        }
+        AuthMode::Oidc => {
+            let oidc = auth
+                .oidc
+                .as_ref()
+                .context("auth oidc section is required in oidc mode")?;
+            anyhow::ensure!(
+                !oidc.issuer.is_empty(),
+                "auth oidc issuer is required in oidc mode"
+            );
+            anyhow::ensure!(
+                !oidc.authorization_endpoint.is_empty(),
+                "auth oidc authorization_endpoint is required in oidc mode"
+            );
+            anyhow::ensure!(
+                !oidc.token_endpoint.is_empty(),
+                "auth oidc token_endpoint is required in oidc mode"
+            );
+            anyhow::ensure!(
+                oidc.allow_insecure_test_tokens
+                    || oidc.jwks_url.as_ref().is_some_and(|url| !url.is_empty()),
+                "auth oidc jwks_url is required in oidc mode unless allow_insecure_test_tokens is true"
+            );
+            anyhow::ensure!(
+                !oidc.client_id.is_empty(),
+                "auth oidc client_id is required in oidc mode"
+            );
+            anyhow::ensure!(
+                !oidc.client_secret_env.is_empty(),
+                "auth oidc client_secret_env is required in oidc mode"
+            );
+            anyhow::ensure!(
+                !oidc.redirect_url.is_empty(),
+                "auth oidc redirect_url is required in oidc mode"
+            );
+            anyhow::ensure!(
+                !oidc.session_secret_env.is_empty(),
+                "auth oidc session_secret_env is required in oidc mode"
+            );
+            anyhow::ensure!(
+                !oidc.role_claim.is_empty(),
+                "auth oidc role_claim is required in oidc mode"
+            );
+            anyhow::ensure!(
+                !oidc.seller_actor_claim.is_empty(),
+                "auth oidc seller_actor_claim is required in oidc mode"
+            );
+            anyhow::ensure!(
+                !oidc.buyer_actor_claim.is_empty(),
+                "auth oidc buyer_actor_claim is required in oidc mode"
+            );
         }
     }
     Ok(())
@@ -220,8 +329,10 @@ mod tests {
                 bearer_token_env: "MORPHEUS_ADMIN_TOKEN".into(),
             },
             auth: AuthConfig {
+                mode: AuthMode::StaticTokens,
                 seller_token_env: "MORPHEUS_SELLER_TOKEN".into(),
                 buyer_token_env: "MORPHEUS_BUYER_TOKEN".into(),
+                oidc: None,
             },
             allowlist: Some(AllowlistConfig {
                 instances: vec![AllowlistInstance {
@@ -251,7 +362,7 @@ mod tests {
         config.auth.seller_token_env.clear();
         assert_eq!(
             validate_config(&config).unwrap_err().to_string(),
-            "auth seller_token_env is required"
+            "auth seller_token_env is required in static_tokens mode"
         );
 
         let mut config = valid_config();
@@ -271,6 +382,50 @@ mod tests {
         assert_eq!(
             validate_config(&config).unwrap_err().to_string(),
             "allowlist capabilities are required"
+        );
+    }
+
+    #[test]
+    fn validates_auth_static_tokens_require_role_token_envs() {
+        let mut config = valid_config();
+        config.auth.mode = AuthMode::StaticTokens;
+        config.auth.seller_token_env.clear();
+        assert_eq!(
+            validate_config(&config).unwrap_err().to_string(),
+            "auth seller_token_env is required in static_tokens mode"
+        );
+    }
+
+    #[test]
+    fn validates_auth_oidc_requires_provider_and_session_settings() {
+        let mut config = valid_config();
+        config.auth.mode = AuthMode::Oidc;
+        config.auth.seller_token_env.clear();
+        config.auth.buyer_token_env.clear();
+        config.auth.oidc = Some(OidcConfig {
+            issuer: "https://idp.example/realms/morpheus".into(),
+            authorization_endpoint:
+                "https://idp.example/realms/morpheus/protocol/openid-connect/auth".into(),
+            token_endpoint: "https://idp.example/realms/morpheus/protocol/openid-connect/token"
+                .into(),
+            jwks_url: Some(
+                "https://idp.example/realms/morpheus/protocol/openid-connect/certs".into(),
+            ),
+            client_id: "morpheus".into(),
+            client_secret_env: "MORPHEUS_OIDC_CLIENT_SECRET".into(),
+            redirect_url: "http://127.0.0.1:8080/auth/callback".into(),
+            session_secret_env: "MORPHEUS_SESSION_SECRET".into(),
+            role_claim: "roles".into(),
+            seller_actor_claim: "morpheus_sellers".into(),
+            buyer_actor_claim: "morpheus_customers".into(),
+            allow_insecure_test_tokens: false,
+        });
+        assert!(validate_config(&config).is_ok());
+
+        config.auth.oidc.as_mut().unwrap().client_secret_env.clear();
+        assert_eq!(
+            validate_config(&config).unwrap_err().to_string(),
+            "auth oidc client_secret_env is required in oidc mode"
         );
     }
 }
