@@ -219,8 +219,10 @@ Rules:
 - Payment intent must reference the order and locked payment adapter.
 - Intent `capture_policy` must match `order.created`.
 - Capture policy controls whether payment may be captured before or after entitlement.
-- Refunds must reference a captured payment and carry a stable `refund_id`.
-- Refund amount and currency are constrained by captured amount and any dispute ruling.
+- Refunds must carry a stable `refund_id`.
+- Standard provider refunds must reference a captured payment.
+- Escrow-style refunds may reference an authorized payment when funds are already in protocol custody.
+- Refund amount and currency are constrained by captured amount, authorized escrow amount, and any dispute ruling.
 - Payment provider references and receipts are evidence, not secrets.
 
 The initial implementation is protocol-level only. Real payment provider adapters should sit behind a separate adapter trait and emit valid protocol events after provider verification.

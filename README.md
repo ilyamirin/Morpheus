@@ -28,6 +28,7 @@ Implemented today:
 - Buyer resilience flows for stale offers, pending order projections, and temporarily unavailable trusted remote catalogs.
 - Seller product image upload in the dev UI: images are compressed in-browser and published as product media metadata, with category images as fallback.
 - Three-instance Docker E2E stack: books, smartphone cases, and fashion marketplaces, each with its own Morpheus server, Synapse homeserver, and Postgres database.
+- EVM escrow adapter MVP: Vyper ERC-20 escrow, embedded finalized-log watcher, viem wallet actions for buyer deposit, seller release, and arbiter refund, plus local Anvil E2E wiring.
 
 Important current limitation:
 
@@ -44,6 +45,10 @@ User-facing edge cases now covered:
 
 - [Full HTML Documentation](https://ilyamirin.github.io/Morpheus) is the broad GitHub Pages documentation for principles, installation, configuration, operation, and federated E2E.
 - [Protocol](docs/protocol.md) describes the Morpheus wire protocol, event model, lifecycles, authority rules, and conformance expectations.
+- [Payment Design Manifesto](docs/payment-design-manifesto.md) explains how Morpheus designs payments for federated marketplaces, escrow, developing-market constraints, privacy, and operational safety.
+- [EVM Escrow Payment Adapter](docs/protocol-evm-escrow.md) describes the Vyper-based ERC-20 escrow adapter, local Anvil execution, and watcher verification model.
+- [EVM Escrow Production Runbook](docs/evm-escrow-production-runbook.md) covers deployment options, readiness checks, replay, monitoring, and launch gates.
+- [EVM Escrow and Crypto Marketplace Research](docs/evm-escrow-research.md) summarizes arXiv papers on smart-contract escrow, crypto marketplace payments, arbitration, privacy, and contract security.
 - [Rust Implementation](docs/rust-implementation.md) describes the workspace architecture, crates, runtime flow, storage, config, tests, and operational scope.
 - [TODO](TODO.md) tracks near-term product and implementation follow-ups.
 
@@ -53,7 +58,7 @@ User-facing edge cases now covered:
 - Federation: [Matrix](https://matrix.org/) Application Service events on [Element Synapse](https://github.com/element-hq/synapse).
 - Storage: [PostgreSQL](https://www.postgresql.org/) for server deployments; [SQLite](https://www.sqlite.org/) and in-memory stores for local/dev/test flows.
 - Local infrastructure: [Docker](https://www.docker.com/) Compose, [nginx](https://nginx.org/) TLS federation proxies, and generated local CA certificates for E2E.
-- UI: static HTML, vanilla JavaScript, and committed CSS. There is no React, npm, Tailwind runtime, or frontend build step in the active workflow.
+- UI: static HTML, vanilla JavaScript, committed CSS, and a small Vite/viem build that emits the committed `app.bundle.js`. There is no React or Tailwind runtime.
 - Dev assets: product images were generated through [Replicate](https://replicate.com/) and checked in as compressed static PNG/JPEG assets.
 
 ## Quick Start
@@ -82,6 +87,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo nextest run --workspace
 cargo run -p morpheus-cli -- conformance run
+npm run test:ui-wallet
+npm run build:ui
 ```
 
 Validate config and generate a Synapse Application Service registration:
@@ -179,6 +186,26 @@ Stop the stack:
 ```bash
 make e2e-three-synapse-down
 ```
+
+## EVM Escrow E2E
+
+Run the local escrow flow:
+
+```bash
+make e2e-evm-escrow
+```
+
+Required tools:
+
+- Foundry: `anvil`, `cast`
+- Moccasin: `mox`
+- Docker Compose
+- Node/npm for the viem UI bundle
+
+The runner starts Anvil, tests/deploys the Vyper contracts, starts local Postgres,
+launches `morpheus-server` with EVM escrow enabled, submits the Morpheus order and
+payment intent flow, sends token/escrow transactions with Cast, and waits for the
+embedded watcher to project authorized and captured payment states.
 
 ## Main Crates
 

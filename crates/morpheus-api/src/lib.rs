@@ -152,6 +152,15 @@ pub struct PaymentIntentRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvmEscrowPaymentIntentRequest {
+    pub actor_id: String,
+    pub payment_id: String,
+    pub buyer_evm_address: String,
+    pub seller_evm_address: String,
+    pub arbiter_evm_address: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaymentCaptureRequest {
     pub actor_id: String,
     pub payment_id: String,

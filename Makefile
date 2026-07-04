@@ -1,4 +1,4 @@
-.PHONY: check rust-check coverage-protocol e2e-three-synapse e2e-three-synapse-down
+.PHONY: check rust-check coverage-protocol e2e-three-synapse e2e-three-synapse-down e2e-evm-escrow
 
 check: rust-check coverage-protocol
 
@@ -16,3 +16,6 @@ e2e-three-synapse:
 e2e-three-synapse-down:
 	docker compose -f docker-compose.e2e.yml down -v
 	find .local/e2e -path '.local/e2e/synapse-*' -type f \( -name 'homeserver.db' -o -name 'homeserver.db-*' \) -delete
+
+e2e-evm-escrow:
+	./scripts/e2e/run-evm-escrow.sh

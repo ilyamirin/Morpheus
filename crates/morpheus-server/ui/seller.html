@@ -230,6 +230,18 @@
         <span>Seller bearer token</span>
         <input class="input" data-token="seller" placeholder="seller-token" autocomplete="off">
       </label>
+      <label class="token-field" title="Stored locally only">
+        <span>Seller EVM address</span>
+        <input class="input" data-evm-address="seller_evm_address" placeholder="0x..." autocomplete="off">
+      </label>
+      <label class="token-field" title="Stored locally only">
+        <span>Buyer EVM address</span>
+        <input class="input" data-evm-address="buyer_evm_address" placeholder="0x..." autocomplete="off">
+      </label>
+      <label class="token-field" title="Stored locally only">
+        <span>Arbiter EVM address</span>
+        <input class="input" data-evm-address="arbiter_evm_address" placeholder="0x..." autocomplete="off">
+      </label>
       <form class="stack-form compact-form" data-form="seller-settings-profile">
         <label class="field">
           <span class="label">Seller display name</span>
@@ -242,6 +254,6 @@
     </aside>
 
     <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
-    <script src="/ui/assets/app.js" defer></script>
+    <script src="/ui/assets/app.bundle.js" defer></script>
   </body>
 </html>

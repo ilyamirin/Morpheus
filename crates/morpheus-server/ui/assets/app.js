@@ -314,11 +314,29 @@
       input.addEventListener("input", persist);
       input.addEventListener("change", persist);
     });
+    $$("[data-evm-address]").forEach((input) => {
+      const name = input.dataset.evmAddress;
+      const storageKey = `morpheus.ui.evm.${name}`;
+      const stored = localStorage.getItem(storageKey);
+      if (stored) input.value = stored;
+      const persist = () => {
+        const value = input.value.trim();
+        if (value) localStorage.setItem(storageKey, value);
+        else localStorage.removeItem(storageKey);
+      };
+      input.addEventListener("input", persist);
+      input.addEventListener("change", persist);
+    });
   }
 
   function token(role) {
     const input = $(`[data-token="${role}"]`);
     return (input && (input.value.trim() || input.placeholder)) || `${role}-token`;
+  }
+
+  function configuredEvmAddress(name) {
+    const input = $(`[data-evm-address="${name}"]`);
+    return input ? input.value.trim() : "";
   }
 
   function form(formEl) {
@@ -508,6 +526,21 @@
         expires_at: "2026-05-06T10:30:00Z"
       };
     }
+    if (step === "evm-payment-intent") {
+      const buyerEvmAddress = evmEscrowAddress(order, "buyer_evm_address");
+      const sellerEvmAddress = evmEscrowAddress(order, "seller_evm_address");
+      const arbiterEvmAddress = evmEscrowAddress(order, "arbiter_evm_address");
+      if (!buyerEvmAddress || !sellerEvmAddress || !arbiterEvmAddress) {
+        throw new Error("EVM escrow addresses are required before requesting payment.");
+      }
+      return {
+        actor_id: actorId,
+        payment_id: paymentId,
+        buyer_evm_address: buyerEvmAddress,
+        seller_evm_address: sellerEvmAddress,
+        arbiter_evm_address: arbiterEvmAddress
+      };
+    }
     if (step === "payment-capture") {
       return {
         actor_id: actorId,
@@ -530,6 +563,95 @@
       };
     }
     return { actor_id: actorId };
+  }
+
+  function evmEscrowAddress(order, name) {
+    return pick(order, ["body", name], "")
+      || pick(order, ["payment", "body", "confirmation", name], "")
+      || configuredEvmAddress(name);
+  }
+
+  function isEvmEscrowOrder(order) {
+    return pick(order, ["body", "payment_adapter"], "") === "evm_escrow"
+      || pick(order, ["payment", "body", "adapter"], "") === "evm_escrow";
+  }
+
+  function evmEscrowConfirmation(order) {
+    return pick(order, ["payment", "body", "confirmation"], null)
+      || pick(order, ["payment", "confirmation"], null)
+      || pick(order, ["body", "payment_confirmation"], null)
+      || pick(order, ["body", "confirmation"], null)
+      || null;
+  }
+
+  function formatDurationHint(seconds) {
+    if (!Number.isFinite(Number(seconds)) || Number(seconds) <= 0) return "";
+    const value = Number(seconds);
+    if (value % 3600 === 0) return `${value / 3600} h`;
+    if (value % 60 === 0) return `${value / 60} min`;
+    return `${value} sec`;
+  }
+
+  function feeHintTextValue(value, maxLength = 96) {
+    const valueType = typeof value;
+    if (valueType !== "string" && valueType !== "number" && valueType !== "bigint") return "";
+    if (valueType === "number" && !Number.isFinite(value)) return "";
+    const text = String(value).trim();
+    if (!text) return "";
+    return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+  }
+
+  function escrowPolicyHint(confirmation) {
+    const policy = confirmation?.policy || {};
+    const fee = confirmation?.fee_hint || {};
+    const parts = [];
+    const deposit = formatDurationHint(policy.deposit_timeout_secs);
+    const review = formatDurationHint(policy.buyer_review_timeout_secs);
+    if (deposit) parts.push(`Deposit window: ${deposit}`);
+    if (review) parts.push(`Buyer review: ${review}`);
+    const estimatedFeeUnits = feeHintTextValue(fee.estimated_fee_units);
+    const feeTokenSymbol = feeHintTextValue(fee.fee_token_symbol, 24);
+    if (estimatedFeeUnits && feeTokenSymbol) {
+      parts.push(`Estimated network fee: ${estimatedFeeUnits} ${feeTokenSymbol} units`);
+    }
+    return parts.join(" | ");
+  }
+
+  function evmEscrowWalletTxPlan(confirmation, account) {
+    return {
+      account,
+      approve: {
+        to: confirmation.token,
+        spender: confirmation.escrow_contract,
+        amount: confirmation.amount_units
+      },
+      deposit: {
+        to: confirmation.escrow_contract,
+        order_hash: confirmation.order_hash,
+        token: confirmation.token,
+        amount: confirmation.amount_units,
+        seller: confirmation.seller_evm_address,
+        buyer: confirmation.buyer_evm_address || account,
+        arbiter: confirmation.arbiter_evm_address
+      }
+    };
+  }
+
+  async function requestEvmEscrowDeposit(order) {
+    const confirmation = evmEscrowConfirmation(order);
+    if (!confirmation || !window.ethereum) {
+      throw new Error("EVM wallet is not available for this order");
+    }
+    const chainId = Number(confirmation.chain_id);
+    if (!Number.isFinite(chainId) || chainId <= 0) {
+      throw new Error("EVM chain id is not available for this order");
+    }
+    const [account] = await window.ethereum.request({ method: "eth_requestAccounts" });
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: `0x${chainId.toString(16)}` }]
+    });
+    return evmEscrowWalletTxPlan(confirmation, account);
   }
 
   function selectedOffer(formEl) {
@@ -1144,10 +1266,13 @@
 
   function orderTimeline(order) {
     const status = String(order.status || "created");
+    const paymentDetail = isEvmEscrowOrder(order)
+      ? "EVM escrow waits for wallet approval and deposit."
+      : "Mock adapter records intent and capture evidence.";
     const steps = [
       ["Created", "Order terms were submitted by the buyer.", true],
       ["Accepted", "Seller confirms the offer revision and terms.", /accepted|authorized|captured|grant|complete/.test(status)],
-      ["Payment", "Mock adapter records intent and capture evidence.", /payment|captured|grant|complete/.test(status)],
+      ["Payment", paymentDetail, /payment|captured|grant|complete/.test(status)],
       ["Entitlement", "Access evidence is granted before completion.", /entitlement|grant|complete/.test(status)],
       ["Complete", "The order lifecycle is projected as complete.", /complete/.test(status)]
     ];
@@ -1276,6 +1401,17 @@
     return actionsByStatus[normalized] || [];
   }
 
+  function evmEscrowWalletAction(order) {
+    if (!isEvmEscrowOrder(order)) return "";
+    const confirmation = evmEscrowConfirmation(order);
+    if (!confirmation) {
+      return `<div class="wallet-action-row"><span class="muted-text">Waiting for escrow payment intent.</span></div>`;
+    }
+    const hint = escrowPolicyHint(confirmation);
+    const hintMarkup = hint ? `<span class="muted-text">${esc(hint)}</span>` : "";
+    return `<div class="wallet-action-row"><button class="btn btn-small btn-primary" type="button" data-evm-escrow-deposit data-order-id="${esc(order.order_id || "")}">Approve and deposit</button><span class="mono">${esc(confirmation.order_hash || "order hash pending")}</span>${hintMarkup}</div>`;
+  }
+
   function sellerOrderActionRow(order) {
     const status = String((order && order.status) || "").toLowerCase();
     const actions = sellerOrderActions(status);
@@ -1319,7 +1455,8 @@
         const offer = displayId(order.offer_id, "Offer not attached");
         const actor = columns === 5 ? displayId(order.customer_id, "Customer not attached") : sellerName(order.seller_id);
         const sellerActions = columns === 5 ? sellerOrderActionRow(order) : "";
-        return `<article class="order-card"><div class="section-head compact-head"><div><p class="eyebrow">${esc(actor)}</p><h3>${esc(title)}</h3><p class="mono">${esc(offer)}</p></div>${statusBadge(order.status)}</div>${orderTimeline(order)}${sellerActions}</article>`;
+        const walletAction = columns === 5 ? "" : evmEscrowWalletAction(order);
+        return `<article class="order-card"><div class="section-head compact-head"><div><p class="eyebrow">${esc(actor)}</p><h3>${esc(title)}</h3><p class="mono">${esc(offer)}</p></div>${statusBadge(order.status)}</div>${orderTimeline(order)}${walletAction}${sellerActions}</article>`;
       });
       cards.innerHTML = pendingOrders.map(pendingOrderCard).concat(projectedCards).join("");
     }
@@ -1638,9 +1775,25 @@
       if (orderAction) {
         const orderId = orderAction.dataset.orderId || DEMO.orderId;
         const step = orderAction.dataset.sellerOrderStep || "accept";
+        const order = state.orders.find((item) => item.order_id === orderId) || {};
         const pathId = encodeURIComponent(orderId);
-        const path = step === "complete" ? `/api/v1/seller/orders/${pathId}/complete` : `/api/v1/seller/orders/${pathId}/${step}`;
-        api(path, { method: "POST", tokenRole: "seller", body: sellerOrder(step, orderId), action: `POST ${path}` })
+        const evmPaymentIntent = step === "payment-intent" && isEvmEscrowOrder(order);
+        const requestStep = evmPaymentIntent ? "evm-payment-intent" : step;
+        const path = step === "complete"
+          ? `/api/v1/seller/orders/${pathId}/complete`
+          : evmPaymentIntent
+            ? `/api/v1/seller/orders/${pathId}/evm-escrow/payment-intent`
+            : `/api/v1/seller/orders/${pathId}/${step}`;
+        let body;
+        try {
+          body = sellerOrder(requestStep, orderId);
+        } catch (error) {
+          showResult("EVM escrow payment intent", "not-submitted", { error: error.message });
+          toast("EVM escrow address missing", "error", error.message);
+          setSellerSettingsOpen(true);
+          return;
+        }
+        api(path, { method: "POST", tokenRole: "seller", body, action: `POST ${path}` })
           .then((result) => result.ok && pollOrders("seller"));
         return;
       }
@@ -1716,6 +1869,20 @@
     document.addEventListener("click", (event) => {
       if (event.target.closest("[data-checkout-close]") || event.target.closest("[data-checkout-overlay]")) {
         setCheckoutOpen(false);
+        return;
+      }
+      const evmDeposit = event.target.closest("[data-evm-escrow-deposit]");
+      if (evmDeposit) {
+        const order = state.orders.find((item) => item.order_id === evmDeposit.dataset.orderId);
+        requestEvmEscrowDeposit(order)
+          .then((plan) => {
+            showResult("EVM escrow deposit", "wallet_plan_ready", plan);
+            toast("Wallet plan ready", "success", "Approve token spend, then submit the escrow deposit.");
+          })
+          .catch((error) => {
+            showResult("EVM escrow deposit", "wallet_unavailable", { error: error.message });
+            toast("Wallet unavailable", "error", error.message);
+          });
         return;
       }
       const offerButton = event.target.closest("[data-select-offer]");

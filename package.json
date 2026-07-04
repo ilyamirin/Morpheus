@@ -1,8 +1,16 @@
 {
+  "private": true,
+  "type": "module",
   "scripts": {
+    "build:ui": "vite build --config vite.config.mjs",
+    "test:ui-wallet": "node crates/morpheus-server/ui/src/evmWallet.test.mjs",
     "build:ui-css": "tailwindcss -c tailwind.config.js -i crates/morpheus-server/ui/src/input.css -o crates/morpheus-server/ui/assets/app.css --minify"
   },
+  "dependencies": {
+    "viem": "^2.33.0"
+  },
   "devDependencies": {
-    "tailwindcss": "^3.4.17"
+    "tailwindcss": "^3.4.17",
+    "vite": "^7.0.0"
   }
 }

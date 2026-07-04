@@ -1,0 +1,76 @@
+[instance]
+instance_id = "shop.example"
+matrix_server_name = "shop.example"
+application_service_id = "io.marketplace.shop"
+catalog_room_id = "!catalog:shop.example"
+catalog_room_alias = "#marketplace-catalog:shop.example"
+protocol_versions = ["0.1"]
+payment_adapters = ["mock", "evm_escrow"]
+entitlement_types = ["booking_slot", "license_key", "external_entitlement"]
+
+[appservice]
+homeserver_url = "http://127.0.0.1:18108"
+url = "http://127.0.0.1:18180"
+sender_localpart = "market"
+namespace_prefix = "market_"
+homeserver_token = "dev-homeserver-token"
+appservice_token = "dev-appservice-token"
+bootstrap_rooms = false
+
+[database]
+url = "postgres://morpheus:morpheus@localhost:5432/morpheus"
+
+[admin]
+bind = "127.0.0.1:18180"
+bearer_token_env = "MORPHEUS_ADMIN_TOKEN"
+
+[auth]
+seller_token_env = "MORPHEUS_SELLER_TOKEN"
+buyer_token_env = "MORPHEUS_BUYER_TOKEN"
+
+[[allowlist.instances]]
+instance_id = "shop.example"
+capabilities = ["catalog", "orders", "indexing"]
+status = "active"
+catalog_room_alias = "#marketplace-catalog:shop.example"
+homeserver_url = "http://127.0.0.1:18108"
+morpheus_url = "http://127.0.0.1:18180"
+
+[[allowlist.instances]]
+instance_id = "arbiter.example"
+capabilities = ["arbitration"]
+status = "active"
+catalog_room_alias = "#marketplace-catalog:arbiter.example"
+homeserver_url = "http://127.0.0.1:18009"
+morpheus_url = "http://127.0.0.1:18081"
+
+[payments.evm_escrow]
+enabled = true
+chain_id = 31337
+rpc_url_env = "MORPHEUS_EVM_RPC_URL"
+escrow_contract = "0x0000000000000000000000000000000000000001"
+default_token = "0x0000000000000000000000000000000000000002"
+confirmations = 1
+poll_interval_secs = 1
+start_block = 0
+max_scan_blocks = 100
+rescan_depth = 3
+deployments_path = "contracts/deployments/local.json"
+
+[[payments.evm_escrow.tokens]]
+symbol = "USDC"
+contract = "0x0000000000000000000000000000000000000002"
+decimals = 6
+currency = "USDC"
+
+[payments.evm_escrow.policy]
+min_order_amount = "1.00"
+max_order_amount = "100.00"
+high_value_amount = "50.00"
+deposit_timeout_secs = 900
+fulfillment_timeout_secs = 86400
+buyer_review_timeout_secs = 3600
+dispute_timeout_secs = 172800
+estimated_fee_units = "1000000000000000"
+fee_token_symbol = "ETH"
+risk_categories = ["electronics", "preorder"]

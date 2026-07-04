@@ -1251,7 +1251,10 @@ fn is_money_amount(value: &str) -> bool {
 }
 
 fn is_currency(value: &str) -> bool {
-    value.len() == 3 && value.chars().all(|ch| ch.is_ascii_uppercase())
+    (3..=8).contains(&value.len())
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit())
 }
 
 fn is_sha256_hash(value: &str) -> bool {

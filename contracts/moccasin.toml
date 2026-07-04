@@ -1,0 +1,7 @@
+[project]
+src = "src"
+out = "abi"
+
+[networks.local]
+url = "http://127.0.0.1:8545"
+chain_id = 31337

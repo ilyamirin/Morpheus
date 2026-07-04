@@ -7,25 +7,33 @@ use axum::{
 };
 use chrono::Utc;
 use morpheus_api::{
-    BuyerOrderCreateRequest, EntitlementGrantRequest, OfferUpsertRequest, OfferWithdrawRequest,
-    OrderAcceptRequest, OrderActionRequest, PaymentCaptureRequest, PaymentIntentRequest,
-    ProductUpsertRequest, SellerAnnounceRequest,
+    BuyerOrderCreateRequest, EntitlementGrantRequest, EvmEscrowPaymentIntentRequest,
+    OfferUpsertRequest, OfferWithdrawRequest, OrderAcceptRequest, OrderActionRequest,
+    PaymentCaptureRequest, PaymentIntentRequest, ProductUpsertRequest, SellerAnnounceRequest,
 };
+use morpheus_config::EvmEscrowConfig;
 use morpheus_matrix::{AppServiceTransaction, validate_transaction_event_ids};
 use morpheus_protocol::{
     ValidationCode, ValidationError, parse_actor_id, parse_object_instance, validate_event_envelope,
 };
 use morpheus_store::{
     AppServiceTransactionRecord, CatalogOfferProjectionRecord, CatalogProductRecord,
-    CatalogSellerRecord, EventStore, OrderEventRecord, ProjectionErrorRecord, RawMatrixEventRecord,
+    CatalogSellerRecord, EventStore, OrderEventRecord, OrderProjectionRecord,
+    PaymentProjectionRecord, ProjectionErrorRecord, RawMatrixEventRecord,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeSet, HashSet};
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    env,
+};
 use ulid::Ulid;
 
 mod auth;
 mod context_validation;
+pub mod evm_escrow;
+pub mod evm_rpc;
+pub mod evm_watcher;
 mod projection;
 
 pub use auth::{
@@ -43,6 +51,7 @@ pub struct ServerConfig {
     pub appservice_sender_localpart: String,
     pub homeserver_token: String,
     pub auth: AuthServerConfig,
+    pub evm_escrow: Option<EvmEscrowConfig>,
 }
 
 #[derive(Clone)]
@@ -50,6 +59,7 @@ struct AppState<S, P> {
     config: ServerConfig,
     store: S,
     publisher: P,
+    evm_watcher_status: Option<evm_watcher::SharedEvmWatcherStatus>,
 }
 
 #[async_trait::async_trait]
@@ -721,10 +731,24 @@ where
     S: EventStore,
     P: MatrixPublisher,
 {
+    build_router_with_publisher_and_watcher_status(config, store, publisher, None)
+}
+
+pub fn build_router_with_publisher_and_watcher_status<S, P>(
+    config: ServerConfig,
+    store: S,
+    publisher: P,
+    evm_watcher_status: Option<evm_watcher::SharedEvmWatcherStatus>,
+) -> Router
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
     let state = AppState {
         config,
         store,
         publisher,
+        evm_watcher_status,
     };
     Router::new()
         .route("/healthz", get(healthz))
@@ -736,6 +760,7 @@ where
         .route("/ui/assets/favicon.svg", get(ui_favicon_svg))
         .route("/ui/assets/app.css", get(ui_app_css))
         .route("/ui/assets/app.js", get(ui_app_js))
+        .route("/ui/assets/app.bundle.js", get(ui_app_bundle_js))
         .route("/ui/assets/products/books.png", get(ui_product_books_png))
         .route("/ui/assets/products/cases.png", get(ui_product_cases_png))
         .route(
@@ -768,6 +793,14 @@ where
             post(admin_catalog_rebuild::<S, P>),
         )
         .route(
+            "/admin/evm-escrow/replay",
+            post(admin_evm_escrow_replay::<S, P>),
+        )
+        .route(
+            "/admin/evm-escrow/status",
+            get(admin_evm_escrow_status::<S, P>),
+        )
+        .route(
             "/admin/rooms/bootstrap",
             post(admin_rooms_bootstrap::<S, P>),
         )
@@ -775,6 +808,7 @@ where
             "/admin/orders/{order_id}/replay",
             post(admin_order_replay::<S, P>),
         )
+        .route("/admin/orders/{order_id}", get(admin_order_show::<S, P>))
         .route("/api/v1/seller/announce", post(seller_announce::<S, P>))
         .route(
             "/api/v1/seller/products",
@@ -797,6 +831,10 @@ where
         .route(
             "/api/v1/seller/orders/{order_id}/payment-intent",
             post(seller_payment_intent::<S, P>),
+        )
+        .route(
+            "/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent",
+            post(seller_evm_escrow_payment_intent::<S, P>),
         )
         .route(
             "/api/v1/seller/orders/{order_id}/payment-capture",
@@ -909,6 +947,13 @@ async fn ui_app_js() -> impl IntoResponse {
     (
         [("content-type", "application/javascript")],
         include_str!("../ui/assets/app.js"),
+    )
+}
+
+async fn ui_app_bundle_js() -> impl IntoResponse {
+    (
+        [("content-type", "text/javascript; charset=utf-8")],
+        include_str!("../ui/assets/app.bundle.js"),
     )
 }
 
@@ -1492,6 +1537,157 @@ where
         .into_response()
 }
 
+async fn admin_evm_escrow_replay<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if !admin_authorized(&headers, &state.config.auth) {
+        return admin_unauthorized();
+    }
+
+    let evm = match state.config.evm_escrow.as_ref().filter(|evm| evm.enabled) {
+        Some(evm) => evm,
+        None => {
+            return validation_error_response(
+                "EVM_ESCROW_NOT_CONFIGURED",
+                "evm escrow payment config is absent or disabled",
+            );
+        }
+    };
+    let rpc_url = match env::var(&evm.rpc_url_env) {
+        Ok(rpc_url) => rpc_url,
+        Err(_) => {
+            return validation_error_response(
+                "EVM_ESCROW_RPC_URL_MISSING",
+                format!("missing EVM RPC URL env {}", evm.rpc_url_env),
+            );
+        }
+    };
+    let source = evm_rpc::EvmRpcClient::new(rpc_url);
+    let watcher_publisher =
+        evm_watcher::MatrixWatcherPublisher::new(state.config.clone(), state.publisher.clone());
+    let result = match evm_watcher::scan_once(
+        &state.store,
+        &source,
+        &watcher_publisher,
+        evm_watcher::WatcherScanConfig {
+            evm: evm.clone(),
+            instance_id: state.config.instance_id.clone(),
+        },
+    )
+    .await
+    {
+        Ok(result) => {
+            if let Some(status) = &state.evm_watcher_status {
+                status.record_success(&result).await;
+            }
+            result
+        }
+        Err(err) => {
+            if let Some(status) = &state.evm_watcher_status {
+                status.record_error(&err).await;
+            }
+            return store_error_response(err.message, err.code);
+        }
+    };
+    let chain_id = evm.chain_id as i64;
+    let escrow_contract = evm.escrow_contract.to_lowercase();
+    let checkpoint = match state
+        .store
+        .evm_escrow_checkpoint(chain_id, &escrow_contract)
+        .await
+    {
+        Ok(checkpoint) => checkpoint,
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+
+    Json(json!({
+        "status": "ok",
+        "scanned": result.scanned,
+        "accepted": result.accepted,
+        "duplicates": result.duplicates,
+        "rejected": result.rejected,
+        "from_block": result.from_block,
+        "to_block": result.to_block,
+        "checkpoint": {
+            "chain_id": chain_id,
+            "escrow_contract": evm.escrow_contract,
+            "latest_scanned_block": checkpoint,
+        },
+        "rpc_scan": { "enabled": true },
+    }))
+    .into_response()
+}
+
+async fn admin_evm_escrow_status<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+) -> impl IntoResponse
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if !admin_authorized(&headers, &state.config.auth) {
+        return admin_unauthorized();
+    }
+    let Some(evm) = state.config.evm_escrow.as_ref().filter(|evm| evm.enabled) else {
+        return Json(json!({"enabled": false})).into_response();
+    };
+    let chain_id = evm.chain_id as i64;
+    let escrow_contract = evm.escrow_contract.to_lowercase();
+    let checkpoint = match state
+        .store
+        .evm_escrow_checkpoint(chain_id, &escrow_contract)
+        .await
+    {
+        Ok(checkpoint) => checkpoint,
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    let runtime = match &state.evm_watcher_status {
+        Some(status) => status.snapshot().await,
+        None => evm_watcher::EvmWatcherRuntimeStatus::default(),
+    };
+
+    Json(json!({
+        "enabled": true,
+        "chain_id": evm.chain_id,
+        "escrow_contract": evm.escrow_contract,
+        "confirmations": evm.confirmations,
+        "poll_interval_secs": evm.poll_interval_secs,
+        "start_block": evm.start_block,
+        "max_scan_blocks": evm.max_scan_blocks,
+        "rescan_depth": evm.rescan_depth,
+        "checkpoint": {
+            "chain_id": chain_id,
+            "escrow_contract": evm.escrow_contract,
+            "latest_scanned_block": checkpoint,
+        },
+        "policy": {
+            "min_order_amount": evm.policy.min_order_amount.clone(),
+            "max_order_amount": evm.policy.max_order_amount.clone(),
+            "high_value_amount": evm.policy.high_value_amount.clone(),
+            "deposit_timeout_secs": evm.policy.deposit_timeout_secs,
+            "fulfillment_timeout_secs": evm.policy.fulfillment_timeout_secs,
+            "buyer_review_timeout_secs": evm.policy.buyer_review_timeout_secs,
+            "dispute_timeout_secs": evm.policy.dispute_timeout_secs,
+            "estimated_fee_units": evm.policy.estimated_fee_units.clone(),
+            "fee_token_symbol": evm.policy.fee_token_symbol.clone(),
+            "risk_categories": evm.policy.risk_categories.clone(),
+        },
+        "watcher": {
+            "mode": "embedded",
+            "rpc_url_env": evm.rpc_url_env,
+            "last_scan": runtime.last_scan,
+            "last_error": runtime.last_error,
+        },
+    }))
+    .into_response()
+}
+
 async fn admin_rooms_bootstrap<S, P>(
     State(state): State<AppState<S, P>>,
     headers: HeaderMap,
@@ -1558,6 +1754,29 @@ where
         })),
     )
         .into_response()
+}
+
+async fn admin_order_show<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+) -> axum::response::Response
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if !admin_authorized(&headers, &state.config.auth) {
+        return admin_unauthorized();
+    }
+    match enriched_order(&state.store, &order_id).await {
+        Ok(Some(order)) => Json(json!({ "order": order })).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code": "ORDER_NOT_FOUND", "error": "order not found"})),
+        )
+            .into_response(),
+        Err(err) => store_error_response(err.message, err.code),
+    }
 }
 
 async fn seller_announce<S, P>(
@@ -1920,6 +2139,27 @@ where
     ) {
         return response;
     }
+    let order = match state.store.order(&order_id).await {
+        Ok(Some(order)) => order,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"code": "ORDER_NOT_FOUND", "error": "order not found"})),
+            )
+                .into_response();
+        }
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    if order.seller_id != request.actor_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "code": "ACTOR_FORBIDDEN",
+                "error": "seller actor does not own this order",
+            })),
+        )
+            .into_response();
+    }
     match order_has_event(
         &state.store,
         &order_id,
@@ -1953,6 +2193,283 @@ where
     .await
 }
 
+async fn seller_evm_escrow_payment_intent<S, P>(
+    State(state): State<AppState<S, P>>,
+    headers: HeaderMap,
+    Path(order_id): Path<String>,
+    Json(request): Json<EvmEscrowPaymentIntentRequest>,
+) -> axum::response::Response
+where
+    S: EventStore,
+    P: MatrixPublisher,
+{
+    if let Some(response) = authorize_actor(
+        &headers,
+        &state.config.auth,
+        AuthRole::Seller,
+        "seller",
+        &state.config.instance_id,
+        &request.actor_id,
+    ) {
+        return response;
+    }
+
+    let evm = match state.config.evm_escrow.as_ref().filter(|evm| evm.enabled) {
+        Some(evm) => evm,
+        None => {
+            return validation_error_response(
+                "EVM_ESCROW_NOT_CONFIGURED",
+                "evm escrow payment config is absent or disabled",
+            );
+        }
+    };
+    let order = match state.store.order(&order_id).await {
+        Ok(Some(order)) => order,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"code": "ORDER_NOT_FOUND", "error": "order not found"})),
+            )
+                .into_response();
+        }
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    if order.seller_id != request.actor_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "code": "ACTOR_FORBIDDEN",
+                "error": "seller actor does not own this order",
+            })),
+        )
+            .into_response();
+    }
+    if order.body.get("payment_adapter").and_then(Value::as_str) != Some("evm_escrow") {
+        return validation_error_response(
+            "ORDER_PAYMENT_ADAPTER_MISMATCH",
+            "order payment_adapter is not evm_escrow",
+        );
+    }
+
+    let price = match order.body.get("price") {
+        Some(price) => price.clone(),
+        None => return validation_error_response("ORDER_PRICE_MISSING", "order price is missing"),
+    };
+    let amount = match price.get("amount").and_then(Value::as_str) {
+        Some(amount) => amount,
+        None => {
+            return validation_error_response(
+                "ORDER_AMOUNT_MISSING",
+                "order price.amount is missing",
+            );
+        }
+    };
+    let currency = match price.get("currency").and_then(Value::as_str) {
+        Some(currency) => currency,
+        None => {
+            return validation_error_response(
+                "ORDER_CURRENCY_MISSING",
+                "order price.currency is missing",
+            );
+        }
+    };
+    let token = match evm
+        .tokens
+        .iter()
+        .find(|token| token.currency.eq_ignore_ascii_case(currency))
+    {
+        Some(token) => token,
+        None => {
+            return validation_error_response(
+                "EVM_ESCROW_TOKEN_UNSUPPORTED",
+                "order currency is not configured for evm escrow",
+            );
+        }
+    };
+    let amount_units = match decimal_amount_units(amount, token.decimals) {
+        Ok(amount_units) => amount_units,
+        Err(message) => return validation_error_response("ORDER_AMOUNT_INVALID", message),
+    };
+    if let Some(max_amount) = evm.policy.max_order_amount.as_deref() {
+        if decimal_amount_exceeds(amount, max_amount).unwrap_or(true) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({
+                    "code": "EVM_ESCROW_POLICY_LIMIT",
+                    "error": "order amount exceeds configured evm escrow policy limit",
+                    "max_order_amount": max_amount
+                })),
+            )
+                .into_response();
+        }
+    }
+    if let Some(min_amount) = evm.policy.min_order_amount.as_deref() {
+        if decimal_amount_exceeds(min_amount, amount).unwrap_or(true) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({
+                    "code": "EVM_ESCROW_POLICY_LIMIT",
+                    "error": "order amount is below configured evm escrow policy minimum",
+                    "min_order_amount": min_amount
+                })),
+            )
+                .into_response();
+        }
+    }
+    let offer_revision = order
+        .body
+        .get("offer_revision")
+        .and_then(Value::as_i64)
+        .unwrap_or(1);
+    let payment_capture_policy = match order
+        .body
+        .get("payment_capture_policy")
+        .and_then(Value::as_str)
+    {
+        Some(policy) => policy,
+        None => {
+            return validation_error_response(
+                "ORDER_CAPTURE_POLICY_MISSING",
+                "order payment_capture_policy is missing",
+            );
+        }
+    };
+    let arbiter_actor = match order.body.get("arbiter_actor").and_then(Value::as_str) {
+        Some(arbiter_actor) => arbiter_actor,
+        None => {
+            return validation_error_response(
+                "ORDER_ARBITER_MISSING",
+                "order arbiter_actor is missing",
+            );
+        }
+    };
+    if let Some(response) = validate_evm_address("buyer_evm_address", &request.buyer_evm_address) {
+        return response;
+    }
+    if let Some(response) = validate_evm_address("seller_evm_address", &request.seller_evm_address)
+    {
+        return response;
+    }
+    if let Some(response) =
+        validate_evm_address("arbiter_evm_address", &request.arbiter_evm_address)
+    {
+        return response;
+    }
+    let input = evm_escrow::EvmEscrowIntentInput {
+        protocol: "io.marketplace".into(),
+        protocol_version: "0.1".into(),
+        instance_id: state.config.instance_id.clone(),
+        order_id: order.order_id.clone(),
+        customer_id: order.customer_id.clone(),
+        seller_id: order.seller_id.clone(),
+        offer_id: order.offer_id.clone(),
+        offer_revision,
+        price: price.clone(),
+        payment_adapter: "evm_escrow".into(),
+        payment_capture_policy: payment_capture_policy.into(),
+        chain_id: evm.chain_id,
+        token_contract: token.contract.clone(),
+        amount_units: amount_units.clone(),
+        escrow_contract: evm.escrow_contract.clone(),
+        seller_evm_address: request.seller_evm_address.clone(),
+        buyer_evm_address: request.buyer_evm_address.clone(),
+        arbiter_actor: arbiter_actor.into(),
+        arbiter_evm_address: request.arbiter_evm_address.clone(),
+    };
+    let order_hash = match evm_escrow::compute_order_hash(&input) {
+        Ok(order_hash) => order_hash,
+        Err(err) => return store_error_response(err.message, err.code),
+    };
+    let provider_ref = format!("evm_escrow:{order_hash}");
+    let idempotency_key = format!("evm_escrow:{}", request.payment_id);
+    let expires_at = (Utc::now() + chrono::Duration::minutes(30))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let body = json!({
+        "order_id": order_id,
+        "payment_id": request.payment_id,
+        "adapter": "evm_escrow",
+        "amount": amount,
+        "currency": currency,
+        "capture_policy": payment_capture_policy,
+        "idempotency_key": idempotency_key,
+        "provider_ref": provider_ref,
+        "confirmation": {
+            "method": "evm_escrow_deposit",
+            "uri": format!("https://{}/evm-escrow/{}", state.config.matrix_server_name, order_hash),
+            "adapter": "evm_escrow",
+            "chain_id": evm.chain_id,
+            "token": token.contract.clone(),
+            "token_currency": token.currency.clone(),
+            "token_decimals": token.decimals,
+            "amount_units": amount_units,
+            "escrow_contract": evm.escrow_contract.clone(),
+            "order_hash": order_hash,
+            "buyer_evm_address": request.buyer_evm_address,
+            "seller_evm_address": request.seller_evm_address,
+            "arbiter_actor": arbiter_actor,
+            "arbiter_evm_address": request.arbiter_evm_address,
+            "policy": {
+                "min_order_amount": evm.policy.min_order_amount.clone(),
+                "max_order_amount": evm.policy.max_order_amount.clone(),
+                "high_value_amount": evm.policy.high_value_amount.clone(),
+                "deposit_timeout_secs": evm.policy.deposit_timeout_secs,
+                "fulfillment_timeout_secs": evm.policy.fulfillment_timeout_secs,
+                "buyer_review_timeout_secs": evm.policy.buyer_review_timeout_secs,
+                "dispute_timeout_secs": evm.policy.dispute_timeout_secs,
+                "risk_categories": evm.policy.risk_categories.clone(),
+            },
+            "fee_hint": {
+                "estimated_fee_units": evm.policy.estimated_fee_units.clone(),
+                "fee_token_symbol": evm.policy.fee_token_symbol.clone(),
+                "chain_id": evm.chain_id,
+                "confirmations": evm.confirmations,
+            },
+            "arbitration": {
+                "arbiter_actor": arbiter_actor,
+                "arbiter_evm_address": request.arbiter_evm_address.clone(),
+                "outcomes": ["release", "refund", "partial_refund"],
+            },
+        },
+        "expires_at": expires_at,
+    });
+    match existing_order_event(
+        &state.store,
+        &order_id,
+        "io.marketplace.payment.intent.created",
+        Some((
+            "payment_id",
+            body["payment_id"].as_str().unwrap_or_default(),
+        )),
+    )
+    .await
+    {
+        Ok(Some(existing)) if evm_payment_intent_matches(&existing.body, &body) => {
+            return accepted_noop_order_response(&state, &order_id).await;
+        }
+        Ok(Some(_)) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "code": "IDEMPOTENCY_CONFLICT",
+                    "error": "payment_id already exists with different evm escrow intent terms",
+                })),
+            )
+                .into_response();
+        }
+        Ok(None) => {}
+        Err(err) => return store_error_response(err.message, err.code),
+    }
+
+    order_event_response(
+        &state,
+        "io.marketplace.payment.intent.created",
+        &order_id,
+        &request.actor_id,
+        body,
+    )
+    .await
+}
+
 async fn seller_payment_capture<S, P>(
     State(state): State<AppState<S, P>>,
     headers: HeaderMap,
@@ -1973,8 +2490,8 @@ where
     ) {
         return response;
     }
-    let room_id = match state.store.order(&order_id).await {
-        Ok(Some(order)) => order.room_id,
+    let order = match state.store.order(&order_id).await {
+        Ok(Some(order)) => order,
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
@@ -1984,6 +2501,17 @@ where
         }
         Err(err) => return store_error_response(err.message, err.code),
     };
+    if order.seller_id != request.actor_id {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "code": "ACTOR_FORBIDDEN",
+                "error": "seller actor does not own this order",
+            })),
+        )
+            .into_response();
+    }
+    let room_id = order.room_id;
     let existing_events = match state.store.order_events(&order_id).await {
         Ok(events) => events,
         Err(err) => return store_error_response(err.message, err.code),
@@ -2061,6 +2589,22 @@ where
         .any(|event| order_event_matches(event, event_type, body_field)))
 }
 
+async fn existing_order_event<S>(
+    store: &S,
+    order_id: &str,
+    event_type: &str,
+    body_field: Option<(&str, &str)>,
+) -> Result<Option<OrderEventRecord>, ValidationError>
+where
+    S: EventStore,
+{
+    Ok(store
+        .order_events(order_id)
+        .await?
+        .into_iter()
+        .find(|event| order_event_matches(event, event_type, body_field)))
+}
+
 fn order_event_matches(
     event: &OrderEventRecord,
     event_type: &str,
@@ -2097,6 +2641,138 @@ fn accepted_noop_response(room_id: &str) -> axum::response::Response {
         Json(json!({ "status": "accepted", "room_id": room_id, "event_ids": [] })),
     )
         .into_response()
+}
+
+fn validation_error_response(code: &str, error: impl Into<String>) -> axum::response::Response {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        Json(json!({ "code": code, "error": error.into() })),
+    )
+        .into_response()
+}
+
+fn normalized_decimal_parts(value: &str) -> Option<(String, String)> {
+    let mut parts = value.split('.');
+    let whole = parts.next()?;
+    let fraction = parts.next().unwrap_or("");
+    if parts.next().is_some() || whole.is_empty() || !whole.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    if !fraction.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+
+    let whole = whole.trim_start_matches('0');
+    let whole = if whole.is_empty() { "0" } else { whole }.to_string();
+    let fraction = fraction.trim_end_matches('0').to_string();
+    Some((whole, fraction))
+}
+
+fn decimal_amount_exceeds(value: &str, limit: &str) -> Option<bool> {
+    let (value_whole, value_fraction) = normalized_decimal_parts(value)?;
+    let (limit_whole, limit_fraction) = normalized_decimal_parts(limit)?;
+    if value_whole.len() != limit_whole.len() {
+        return Some(value_whole.len() > limit_whole.len());
+    }
+    if value_whole != limit_whole {
+        return Some(value_whole > limit_whole);
+    }
+
+    let max_fraction_len = value_fraction.len().max(limit_fraction.len());
+    for index in 0..max_fraction_len {
+        let value_digit = value_fraction
+            .as_bytes()
+            .get(index)
+            .copied()
+            .unwrap_or(b'0');
+        let limit_digit = limit_fraction
+            .as_bytes()
+            .get(index)
+            .copied()
+            .unwrap_or(b'0');
+        if value_digit != limit_digit {
+            return Some(value_digit > limit_digit);
+        }
+    }
+    Some(false)
+}
+
+fn decimal_amount_units(amount: &str, decimals: u8) -> Result<String, &'static str> {
+    let (whole, fraction) = amount
+        .split_once('.')
+        .map_or((amount, ""), |(whole, fraction)| (whole, fraction));
+    if whole.is_empty()
+        || !whole.chars().all(|ch| ch.is_ascii_digit())
+        || !fraction.chars().all(|ch| ch.is_ascii_digit())
+        || fraction.len() > decimals as usize
+    {
+        return Err("order amount cannot be represented by configured token decimals");
+    }
+
+    let mut digits = String::with_capacity(whole.len() + decimals as usize);
+    let trimmed_whole = whole.trim_start_matches('0');
+    digits.push_str(if trimmed_whole.is_empty() {
+        "0"
+    } else {
+        trimmed_whole
+    });
+    digits.push_str(fraction);
+    for _ in fraction.len()..decimals as usize {
+        digits.push('0');
+    }
+    let trimmed = digits.trim_start_matches('0');
+    Ok(if trimmed.is_empty() {
+        "0".into()
+    } else {
+        trimmed.into()
+    })
+}
+
+fn validate_evm_address(field: &str, address: &str) -> Option<axum::response::Response> {
+    if let Some(hex) = address.strip_prefix("0x") {
+        if hex.len() == 40
+            && hex.chars().all(|ch| ch.is_ascii_hexdigit())
+            && hex.chars().any(|ch| ch != '0')
+        {
+            return None;
+        }
+    }
+    Some(validation_error_response(
+        "INVALID_EVM_ADDRESS",
+        format!("{field} must be a nonzero 20-byte EVM address"),
+    ))
+}
+
+fn evm_payment_intent_matches(existing: &Value, expected: &Value) -> bool {
+    existing.get("adapter") == expected.get("adapter")
+        && existing.get("amount") == expected.get("amount")
+        && existing.get("currency") == expected.get("currency")
+        && existing.get("capture_policy") == expected.get("capture_policy")
+        && existing.get("provider_ref") == expected.get("provider_ref")
+        && existing
+            .get("confirmation")
+            .and_then(|value| value.get("order_hash"))
+            == expected
+                .get("confirmation")
+                .and_then(|value| value.get("order_hash"))
+        && existing
+            .get("confirmation")
+            .and_then(|value| value.get("buyer_evm_address"))
+            == expected
+                .get("confirmation")
+                .and_then(|value| value.get("buyer_evm_address"))
+        && existing
+            .get("confirmation")
+            .and_then(|value| value.get("seller_evm_address"))
+            == expected
+                .get("confirmation")
+                .and_then(|value| value.get("seller_evm_address"))
+        && existing
+            .get("confirmation")
+            .and_then(|value| value.get("arbiter_evm_address"))
+            == expected
+                .get("confirmation")
+                .and_then(|value| value.get("arbiter_evm_address"))
 }
 
 async fn seller_entitlement_grant<S, P>(
@@ -2182,7 +2858,7 @@ where
             "display_name": request.customer_display_name,
             "instance_id": state.config.instance_id,
             "authorized_representatives": [format!("@{}:{}", state.config.appservice_sender_localpart, state.config.matrix_server_name)],
-            "accepted_payment_adapters": ["mock"],
+            "accepted_payment_adapters": [request.payment_adapter.clone()],
             "accepted_arbitration_policies": [request.arbitration_policy_id.clone()],
         }),
     );
@@ -2640,6 +3316,21 @@ fn marketplace_event(
     })
 }
 
+pub fn watcher_payment_event(
+    config: &ServerConfig,
+    room_id: &str,
+    event_type: &str,
+    body: Value,
+) -> Value {
+    marketplace_event(
+        config,
+        event_type,
+        room_id,
+        &format!("arbiter:{}:EVMWATCHER", config.instance_id),
+        body,
+    )
+}
+
 fn authorize_actor(
     headers: &HeaderMap,
     auth: &AuthServerConfig,
@@ -2783,10 +3474,52 @@ async fn list_orders<S>(store: &S) -> axum::response::Response
 where
     S: EventStore,
 {
-    match store.orders().await {
-        Ok(orders) => Json(json!({ "orders": orders })).into_response(),
-        Err(err) => store_error_response(err.message, err.code),
+    match (store.orders().await, store.payments().await) {
+        (Ok(orders), Ok(payments)) => {
+            let orders = enrich_orders_with_payments(orders, payments);
+            Json(json!({ "orders": orders })).into_response()
+        }
+        (Err(err), _) => store_error_response(err.message, err.code),
+        (_, Err(err)) => store_error_response(err.message, err.code),
     }
+}
+
+async fn enriched_order<S: EventStore>(
+    store: &S,
+    order_id: &str,
+) -> Result<Option<Value>, ValidationError> {
+    let Some(order) = store.order(order_id).await? else {
+        return Ok(None);
+    };
+    let payments = store.payments().await?;
+    Ok(enrich_orders_with_payments(vec![order], payments)
+        .into_iter()
+        .next())
+}
+
+fn enrich_orders_with_payments(
+    orders: Vec<OrderProjectionRecord>,
+    payments: Vec<PaymentProjectionRecord>,
+) -> Vec<Value> {
+    let mut payments_by_order = HashMap::new();
+    for payment in payments {
+        payments_by_order.insert(payment.order_id.clone(), payment);
+    }
+    orders
+        .into_iter()
+        .map(|order| {
+            let mut value = json!(order);
+            if let Some(payment) = payments_by_order.get(
+                value
+                    .get("order_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            ) {
+                value["payment"] = json!(payment);
+            }
+            value
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

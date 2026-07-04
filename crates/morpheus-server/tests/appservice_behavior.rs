@@ -240,6 +240,7 @@ async fn send_transaction_to_store(
             appservice_sender_localpart: "market".into(),
             homeserver_token: "hs-token".into(),
             auth: AuthServerConfig::static_tokens("admin-token", "seller-token", "buyer-token"),
+            evm_escrow: None,
         },
         store,
     );

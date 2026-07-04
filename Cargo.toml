@@ -19,6 +19,7 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+alloy-primitives = { version = "1", default-features = false }
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"

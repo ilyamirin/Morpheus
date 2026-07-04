@@ -191,6 +191,13 @@ fn rejects_invalid_money_amounts_and_quantity_above_one() {
 }
 
 #[test]
+fn accepts_uppercase_asset_currency_codes() {
+    let mut event = valid_event();
+    event["content"]["body"]["price"]["currency"] = json!("USDC");
+    validate_event_envelope(&event).unwrap();
+}
+
+#[test]
 fn rejects_room_profile_violations() {
     assert_event_allowed_in_room(RoomProfile::Catalog, "io.marketplace.offer.upserted").unwrap();
     assert_code(
