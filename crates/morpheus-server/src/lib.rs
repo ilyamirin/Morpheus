@@ -1543,6 +1543,18 @@ where
             "escrow_contract": evm.escrow_contract,
             "latest_scanned_block": checkpoint,
         },
+        "policy": {
+            "min_order_amount": evm.policy.min_order_amount.clone(),
+            "max_order_amount": evm.policy.max_order_amount.clone(),
+            "high_value_amount": evm.policy.high_value_amount.clone(),
+            "deposit_timeout_secs": evm.policy.deposit_timeout_secs,
+            "fulfillment_timeout_secs": evm.policy.fulfillment_timeout_secs,
+            "buyer_review_timeout_secs": evm.policy.buyer_review_timeout_secs,
+            "dispute_timeout_secs": evm.policy.dispute_timeout_secs,
+            "estimated_fee_units": evm.policy.estimated_fee_units.clone(),
+            "fee_token_symbol": evm.policy.fee_token_symbol.clone(),
+            "risk_categories": evm.policy.risk_categories.clone(),
+        },
         "watcher": {
             "mode": "embedded",
             "rpc_url_env": evm.rpc_url_env,

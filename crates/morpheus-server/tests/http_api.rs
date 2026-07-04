@@ -1072,6 +1072,19 @@ async fn admin_evm_escrow_status_reports_checkpoint_and_config() {
     assert_eq!(body["chain_id"], 31337);
     assert_eq!(body["rescan_depth"], 3);
     assert_eq!(body["checkpoint"]["latest_scanned_block"], 12);
+    assert_eq!(body["policy"]["min_order_amount"], "1.00");
+    assert_eq!(body["policy"]["max_order_amount"], "100.00");
+    assert_eq!(body["policy"]["high_value_amount"], "50.00");
+    assert_eq!(body["policy"]["deposit_timeout_secs"], 900);
+    assert_eq!(body["policy"]["fulfillment_timeout_secs"], 86400);
+    assert_eq!(body["policy"]["buyer_review_timeout_secs"], 3600);
+    assert_eq!(body["policy"]["dispute_timeout_secs"], 172800);
+    assert_eq!(body["policy"]["estimated_fee_units"], "1000000000000000");
+    assert_eq!(body["policy"]["fee_token_symbol"], "ETH");
+    assert_eq!(
+        body["policy"]["risk_categories"],
+        json!(["electronics", "preorder"])
+    );
     assert_eq!(body["watcher"]["mode"], "embedded");
     let watcher = body["watcher"].as_object().unwrap();
     assert!(watcher.contains_key("last_scan"));
