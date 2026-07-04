@@ -1503,6 +1503,8 @@ globalThis.MorpheusEvmWallet = {
         last_scan: result.body.watcher?.last_scan || result.body.runtime?.last_scan || result.body.last_scan || null,
         last_error: result.body.watcher?.last_error || result.body.runtime?.last_error || result.body.last_error || null
       };
+    } else {
+      state.evm.watcher = null;
     }
     return result;
   }
