@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "build:ui": "vite build --config vite.config.mjs",
-    "test:ui-wallet": "node crates/morpheus-server/ui/src/evmWallet.test.mjs",
+    "test:ui-wallet": "node crates/morpheus-server/ui/src/evmWallet.test.mjs && node crates/morpheus-server/ui/src/evmPaymentLifecycle.test.mjs",
     "test:ui-wallet-flow": "node scripts/e2e/ui-wallet-flow.mjs",
     "build:ui-css": "tailwindcss -c tailwind.config.js -i crates/morpheus-server/ui/src/input.css -o crates/morpheus-server/ui/assets/app.css --minify"
   },
