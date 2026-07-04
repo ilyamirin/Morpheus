@@ -240,7 +240,6 @@ async function main() {
     assert.equal(await page.locator("[data-evm-escrow-deposit]").count(), 1);
     assert.match(await page.locator("#buyer-order-cards").innerText(), /Deposit window: 15 min/);
     assert.match(await page.locator("#result-panel").innerText(), /EVM escrow deposit/);
-    await page.locator('[data-action="buyer-orders"]').dispatchEvent("click", { bubbles: true });
     await page.waitForSelector("[data-evm-lifecycle-state='deposit_submitted']", { state: "attached" });
     assert.match(await page.locator("#buyer-order-cards").innerText(), /Deposit submitted/);
     assert.match(await page.locator("#buyer-order-cards").innerText(), /Waiting for Morpheus watcher confirmation/);
@@ -260,7 +259,6 @@ async function main() {
     assert.equal(await page.locator("[data-evm-escrow-release]").count(), 1);
     await page.locator("[data-evm-escrow-release]").dispatchEvent("click", { bubbles: true });
     assert.match(await waitForResult(page, "submitted_waiting_for_watcher"), /submitted_waiting_for_watcher/);
-    await page.locator('[data-action="seller-orders"]').dispatchEvent("click", { bubbles: true });
     await page.waitForSelector("[data-evm-lifecycle-state='release_submitted']", { state: "attached" });
     assert.match(await page.locator("#seller-orders-rows-cards").innerText(), /Release submitted/);
     assert.equal(await walletWriteCount(page), 1);
@@ -302,15 +300,19 @@ async function main() {
       chainReject: true,
       reject: false
     });
+    const writesBeforeChainMismatch = await walletWriteCount(page);
     await page.locator("[data-evm-escrow-deposit]").dispatchEvent("click", { bubbles: true });
     assert.match(await waitForResult(page, "chain_mismatch"), /chain_mismatch/);
+    assert.equal(await walletWriteCount(page), writesBeforeChainMismatch);
 
     await setWalletState(page, {
       chainReject: false,
       reject: true
     });
+    const writesBeforeWalletRejection = await walletWriteCount(page);
     await page.locator("[data-evm-escrow-deposit]").dispatchEvent("click", { bubbles: true });
     assert.match(await waitForResult(page, "wallet_rejected"), /wallet_rejected/);
+    assert.equal(await walletWriteCount(page), writesBeforeWalletRejection);
   } finally {
     await browser.close();
     await server.close();

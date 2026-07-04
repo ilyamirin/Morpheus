@@ -76,7 +76,7 @@ export function requireEthereum(ethereum) {
 
 export function walletChainFromConfirmation(confirmation) {
   const chainId = Number(confirmation?.chain_id);
-  if (!Number.isFinite(chainId) || chainId <= 0) {
+  if (!Number.isFinite(chainId) || !Number.isInteger(chainId) || chainId <= 0) {
     throw new Error("EVM chain id is not available for this order");
   }
   return {

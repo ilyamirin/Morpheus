@@ -49,6 +49,10 @@ assert.throws(
   () => walletChainFromConfirmation({ chain_id: 0 }),
   /EVM chain id is not available for this order/
 );
+assert.throws(
+  () => walletChainFromConfirmation({ chain_id: 31337.5 }),
+  /EVM chain id is not available for this order/
+);
 
 const calls = buildDepositCalls(order, "0x0000000000000000000000000000000000000004");
 assert.equal(calls.approve.address, order.payment.body.confirmation.token);
