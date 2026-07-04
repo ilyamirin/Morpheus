@@ -20,5 +20,7 @@ skills/
 .playwright-cli/
 output/
 *.srl
+__pycache__/
 contracts/deployments/*.json
 !contracts/deployments/.gitkeep
+contracts/.deployments.db
