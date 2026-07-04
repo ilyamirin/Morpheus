@@ -175,10 +175,18 @@ Do not use production funds until all gates pass:
 
 - Vyper unit tests pass with Moccasin/Titanoboa.
 - Rust workspace tests pass.
+- Payment backend coverage passes:
+  `make coverage-payment`.
 - UI wallet tests and UI build pass.
+- Browser-level wallet UI smoke passes:
+  `make ui-wallet-flow`.
 - Local `make e2e-evm-escrow` passes.
-- Testnet escrow deposit, release, refund, and replay drill pass.
+- Testnet escrow drill passes against the selected public testnet:
+  `make testnet-evm-escrow`.
 - External smart-contract review is complete for the deployed bytecode.
+- External audit artifacts pass:
+  `make audit-evm-escrow` with `MORPHEUS_EVM_AUDIT_REPORT` pointing to the
+  report.
 - Market-specific `max_order_amount`, `high_value_amount`, timeout windows,
   estimated fee metadata, and `risk_categories` are configured and visible in
   `/admin/evm-escrow/status`.
@@ -189,3 +197,40 @@ Do not use production funds until all gates pass:
   the order.
 - Deposit limits, order-intake shutdown authority, arbiter authority, and
   incident contacts are documented for the selected network.
+
+### Testnet Drill
+
+The testnet drill validates the configured RPC before any optional deployment.
+It checks chain id, block height versus confirmation policy, and local Vyper
+contract tests. Set `MORPHEUS_EVM_TESTNET_DEPLOY=1` only when the operator
+intentionally wants to deploy contracts with `MORPHEUS_EVM_DEPLOYER`.
+
+Required environment:
+
+```bash
+export MORPHEUS_TESTNET_RPC_URL="https://..."
+export MORPHEUS_TESTNET_CHAIN_ID="84532"
+export MORPHEUS_TESTNET_CONFIRMATIONS="5"
+make testnet-evm-escrow
+```
+
+Optional deployment:
+
+```bash
+export MORPHEUS_EVM_TESTNET_DEPLOY=1
+export MORPHEUS_EVM_DEPLOYER="0x..."
+export MORPHEUS_EVM_TESTNET_DEPLOYMENT_OUT=".local/e2e/testnet-evm-escrow.json"
+make testnet-evm-escrow
+```
+
+### Audit Gate
+
+The audit checker validates that an external report exists and includes minimum
+production fields: auditor identity, scope, reviewed artifact identity,
+findings, and remediation status. See
+[`docs/evm-escrow-audit-checklist.md`](evm-escrow-audit-checklist.md).
+
+```bash
+export MORPHEUS_EVM_AUDIT_REPORT="docs/audits/evm-escrow-external-audit.md"
+make audit-evm-escrow
+```

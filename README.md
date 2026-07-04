@@ -207,6 +207,19 @@ launches `morpheus-server` with EVM escrow enabled, submits the Morpheus order a
 payment intent flow, sends token/escrow transactions with Cast, and waits for the
 embedded watcher to project authorized and captured payment states.
 
+Payment production-readiness checks:
+
+```bash
+make coverage-payment
+npm run test:ui-wallet-flow
+make testnet-evm-escrow
+make audit-evm-escrow
+```
+
+`testnet-evm-escrow` requires `MORPHEUS_TESTNET_RPC_URL` and
+`MORPHEUS_TESTNET_CHAIN_ID`. `audit-evm-escrow` intentionally fails until
+`MORPHEUS_EVM_AUDIT_REPORT` points to a real external audit report.
+
 ## Main Crates
 
 - `morpheus-protocol`: wire constants, IDs, envelope validation, canonical JSON, room profile checks, versioning, and policy helpers.

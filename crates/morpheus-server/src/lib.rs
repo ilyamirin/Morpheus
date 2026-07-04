@@ -2290,31 +2290,31 @@ where
         Ok(amount_units) => amount_units,
         Err(message) => return validation_error_response("ORDER_AMOUNT_INVALID", message),
     };
-    if let Some(max_amount) = evm.policy.max_order_amount.as_deref() {
-        if decimal_amount_exceeds(amount, max_amount).unwrap_or(true) {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({
-                    "code": "EVM_ESCROW_POLICY_LIMIT",
-                    "error": "order amount exceeds configured evm escrow policy limit",
-                    "max_order_amount": max_amount
-                })),
-            )
-                .into_response();
-        }
+    if let Some(max_amount) = evm.policy.max_order_amount.as_deref()
+        && decimal_amount_exceeds(amount, max_amount).unwrap_or(true)
+    {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({
+                "code": "EVM_ESCROW_POLICY_LIMIT",
+                "error": "order amount exceeds configured evm escrow policy limit",
+                "max_order_amount": max_amount
+            })),
+        )
+            .into_response();
     }
-    if let Some(min_amount) = evm.policy.min_order_amount.as_deref() {
-        if decimal_amount_exceeds(min_amount, amount).unwrap_or(true) {
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(json!({
-                    "code": "EVM_ESCROW_POLICY_LIMIT",
-                    "error": "order amount is below configured evm escrow policy minimum",
-                    "min_order_amount": min_amount
-                })),
-            )
-                .into_response();
-        }
+    if let Some(min_amount) = evm.policy.min_order_amount.as_deref()
+        && decimal_amount_exceeds(min_amount, amount).unwrap_or(true)
+    {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({
+                "code": "EVM_ESCROW_POLICY_LIMIT",
+                "error": "order amount is below configured evm escrow policy minimum",
+                "min_order_amount": min_amount
+            })),
+        )
+            .into_response();
     }
     let offer_revision = order
         .body
@@ -2729,13 +2729,12 @@ fn decimal_amount_units(amount: &str, decimals: u8) -> Result<String, &'static s
 }
 
 fn validate_evm_address(field: &str, address: &str) -> Option<axum::response::Response> {
-    if let Some(hex) = address.strip_prefix("0x") {
-        if hex.len() == 40
-            && hex.chars().all(|ch| ch.is_ascii_hexdigit())
-            && hex.chars().any(|ch| ch != '0')
-        {
-            return None;
-        }
+    if let Some(hex) = address.strip_prefix("0x")
+        && hex.len() == 40
+        && hex.chars().all(|ch| ch.is_ascii_hexdigit())
+        && hex.chars().any(|ch| ch != '0')
+    {
+        return None;
     }
     Some(validation_error_response(
         "INVALID_EVM_ADDRESS",

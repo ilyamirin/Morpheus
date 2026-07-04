@@ -92,17 +92,17 @@ def deposit(order_hash: bytes32, token: address, amount: uint256, seller: addres
     assert msg.sender == buyer, "NOT_BUYER"
     assert self.escrows[order_hash].status == 0, "DUPLICATE"
 
-    self.escrows[order_hash] = Escrow({
-        status: 1,
-        token: token,
-        amount: amount,
-        seller: seller,
-        buyer: buyer,
-        arbiter: arbiter,
-        deposited_at: block.timestamp,
-    })
+    self.escrows[order_hash] = Escrow(
+        status=1,
+        token=token,
+        amount=amount,
+        seller=seller,
+        buyer=buyer,
+        arbiter=arbiter,
+        deposited_at=block.timestamp,
+    )
     assert extcall ERC20(token).transferFrom(buyer, self, amount), "TRANSFER_FROM"
-    log EscrowDeposited(order_hash, buyer, seller, token, amount)
+    log EscrowDeposited(order_hash=order_hash, buyer=buyer, seller=seller, token=token, amount=amount)
 
 @external
 @nonreentrant
@@ -114,7 +114,7 @@ def release(order_hash: bytes32):
 
     self.escrows[order_hash].status = 2
     assert extcall ERC20(escrow.token).transfer(escrow.seller, escrow.amount), "TRANSFER"
-    log EscrowReleased(order_hash, escrow.seller, escrow.token, escrow.amount)
+    log EscrowReleased(order_hash=order_hash, seller=escrow.seller, token=escrow.token, amount=escrow.amount)
 
 @external
 @nonreentrant
@@ -126,7 +126,7 @@ def refund(order_hash: bytes32):
 
     self.escrows[order_hash].status = 3
     assert extcall ERC20(escrow.token).transfer(escrow.buyer, escrow.amount), "TRANSFER"
-    log EscrowRefunded(order_hash, escrow.buyer, escrow.token, escrow.amount)
+    log EscrowRefunded(order_hash=order_hash, buyer=escrow.buyer, token=escrow.token, amount=escrow.amount)
 
 @external
 @nonreentrant
@@ -142,4 +142,11 @@ def partial_refund(order_hash: bytes32, buyer_amount: uint256):
     self.escrows[order_hash].status = 4
     assert extcall ERC20(escrow.token).transfer(escrow.buyer, buyer_amount), "BUYER_TRANSFER"
     assert extcall ERC20(escrow.token).transfer(escrow.seller, seller_amount), "SELLER_TRANSFER"
-    log EscrowPartiallyRefunded(order_hash, escrow.buyer, escrow.seller, escrow.token, buyer_amount, seller_amount)
+    log EscrowPartiallyRefunded(
+        order_hash=order_hash,
+        buyer=escrow.buyer,
+        seller=escrow.seller,
+        token=escrow.token,
+        buyer_amount=buyer_amount,
+        seller_amount=seller_amount,
+    )

@@ -146,6 +146,28 @@ async fn watcher_rejects_failed_receipt() {
 }
 
 #[tokio::test]
+async fn watcher_rejects_reorged_receipt_block_hash() {
+    let store = InMemoryEventStore::default();
+    seed_evm_order_and_payment(&store).await;
+    let source = FakeLogSource::new(
+        20,
+        vec![deposit_rpc_log()],
+        vec![success_receipt_with_block_hash(
+            "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        )],
+    );
+    let publisher = FakeWatcherPublisher::default();
+
+    let result = scan_once(&store, &source, &publisher, watcher_config())
+        .await
+        .unwrap();
+
+    assert_eq!(result.accepted, 0);
+    assert_eq!(result.rejected, 1);
+    assert!(publisher.events.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn watcher_rejects_amount_mismatch_without_publish() {
     let store = InMemoryEventStore::default();
     seed_evm_order_and_payment_with_amount(&store, "26000000").await;
@@ -223,6 +245,27 @@ async fn watcher_rescans_overlap_without_republishing_duplicates() {
     assert_eq!(second.duplicates, 1);
     assert_eq!(publisher.events.lock().unwrap().len(), 1);
     assert_eq!(source.queries(), vec![(1, 19), (17, 19)]);
+}
+
+#[tokio::test]
+async fn watcher_soak_deduplicates_replayed_log_batch() {
+    let store = InMemoryEventStore::default();
+    seed_evm_order_and_payment(&store).await;
+    let logs = std::iter::repeat_with(|| deposit_rpc_log_at_block(18))
+        .take(1_000)
+        .collect::<Vec<_>>();
+    let source = FakeLogSource::new(20, logs, vec![success_receipt_at_block(18)]);
+    let publisher = FakeWatcherPublisher::default();
+
+    let result = scan_once(&store, &source, &publisher, watcher_config())
+        .await
+        .unwrap();
+
+    assert_eq!(result.scanned, 1_000);
+    assert_eq!(result.accepted, 1);
+    assert_eq!(result.duplicates, 999);
+    assert_eq!(result.rejected, 0);
+    assert_eq!(publisher.events.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -362,6 +405,13 @@ fn success_receipt_at_block(block_number: i64) -> RpcReceipt {
 fn failed_receipt() -> RpcReceipt {
     RpcReceipt {
         success: false,
+        ..success_receipt()
+    }
+}
+
+fn success_receipt_with_block_hash(block_hash: &str) -> RpcReceipt {
+    RpcReceipt {
+        block_hash: block_hash.into(),
         ..success_receipt()
     }
 }

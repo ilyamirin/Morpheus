@@ -28,13 +28,13 @@ def mint(to: address, amount: uint256):
     assert to != empty(address), "ZERO_TO"
     self.balanceOf[to] += amount
     self.totalSupply += amount
-    log Transfer(empty(address), to, amount)
+    log Transfer(sender=empty(address), receiver=to, value=amount)
 
 @external
 def approve(spender: address, amount: uint256) -> bool:
     assert spender != empty(address), "ZERO_SPENDER"
     self.allowance[msg.sender][spender] = amount
-    log Approval(msg.sender, spender, amount)
+    log Approval(owner=msg.sender, spender=spender, value=amount)
     return True
 
 @external
@@ -43,7 +43,7 @@ def transfer(to: address, amount: uint256) -> bool:
     assert self.balanceOf[msg.sender] >= amount, "BALANCE"
     self.balanceOf[msg.sender] -= amount
     self.balanceOf[to] += amount
-    log Transfer(msg.sender, to, amount)
+    log Transfer(sender=msg.sender, receiver=to, value=amount)
     return True
 
 @external
@@ -55,5 +55,5 @@ def transferFrom(owner: address, to: address, amount: uint256) -> bool:
     self.allowance[owner][msg.sender] -= amount
     self.balanceOf[owner] -= amount
     self.balanceOf[to] += amount
-    log Transfer(owner, to, amount)
+    log Transfer(sender=owner, receiver=to, value=amount)
     return True
