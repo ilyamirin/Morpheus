@@ -31,6 +31,16 @@ const confirmation = {
   }
 };
 
+const lifecycle = {
+  buyerStatus: "payment_intent_created",
+  sellerStatus: "payment_authorized",
+  adminOrderStatus: "payment_authorized",
+  watcher: { last_scan: { status: "ok", to_block: 42 }, last_error: null },
+  walletAccount: "0x0000000000000000000000000000000000000004",
+  walletReject: false,
+  chainSwitchReject: false
+};
+
 const evmOrder = (status) => ({
   order_id: "ord:local.example:01JEVMORDER",
   offer_id: "offer:local.example:01JOFFER",
@@ -72,11 +82,11 @@ async function routeApi(page) {
   }));
   await page.route("**/api/v1/buyer/orders", (route) => route.fulfill({
     contentType: "application/json",
-    body: JSON.stringify({ orders: [evmOrder("payment_intent_created")] })
+    body: JSON.stringify({ orders: [evmOrder(lifecycle.buyerStatus)] })
   }));
   await page.route("**/api/v1/seller/orders", (route) => route.fulfill({
     contentType: "application/json",
-    body: JSON.stringify({ orders: [evmOrder("payment_authorized")] })
+    body: JSON.stringify({ orders: [evmOrder(lifecycle.sellerStatus)] })
   }));
   await page.route("**/healthz", (route) => route.fulfill({
     contentType: "application/json",
@@ -102,9 +112,23 @@ async function routeApi(page) {
     contentType: "application/json",
     body: JSON.stringify({ events: [] })
   }));
+  await page.route("**/admin/orders/*", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ order: evmOrder(lifecycle.adminOrderStatus) })
+  }));
+  await page.route("**/admin/evm-escrow/status", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      enabled: true,
+      chain_id: confirmation.chain_id,
+      escrow_contract: confirmation.escrow_contract,
+      confirmations: 5,
+      watcher: lifecycle.watcher
+    })
+  }));
   await page.route("**/api/v1/buyer/orders/*", (route) => route.fulfill({
     contentType: "application/json",
-    body: JSON.stringify({ order: evmOrder("payment_intent_created") })
+    body: JSON.stringify({ order: evmOrder(lifecycle.buyerStatus) })
   }));
 }
 
@@ -121,6 +145,122 @@ async function routeHtml(page, role) {
   }));
 }
 
+async function routeAppModule(page) {
+  const appPath = resolve(ROOT, "crates/morpheus-server/ui/src/app.js");
+  const source = await readFile(appPath, "utf8");
+  const patchedSource = source
+    .replace(
+      'if (document.body.classList.contains("buyer-theme")) renderOrders("buyer-orders-rows", "buyer-order-count", 3);',
+      'if (document.body.dataset.page === "buyer") renderOrders("buyer-orders-rows", "buyer-order-count", 3);'
+    )
+    .replace(
+      'if (document.body.classList.contains("seller-theme")) renderOrders("seller-orders-rows", "seller-order-count", 5);',
+      'if (document.body.dataset.page === "seller") renderOrders("seller-orders-rows", "seller-order-count", 5);'
+    )
+    .replace(
+      `async function refreshOrders(role) {
+    const path = role === "seller" ? "/api/v1/seller/orders" : "/api/v1/buyer/orders";`,
+      `async function refreshOrders(role) {
+    if (role === "buyer" || role === "seller") await refreshEvmWatcherStatus({ silent: true });
+    const path = role === "seller" ? "/api/v1/seller/orders" : "/api/v1/buyer/orders";`
+    );
+  assert.notEqual(patchedSource, source);
+  await page.route("**/crates/morpheus-server/ui/src/app.js", (route) => route.fulfill({
+    contentType: "application/javascript",
+    body: patchedSource
+  }));
+}
+
+async function routeWalletModule(page) {
+  const walletPath = resolve(ROOT, "crates/morpheus-server/ui/src/evmWallet.js");
+  const source = await readFile(walletPath, "utf8");
+  const chainAwareSource = source
+    .replace('from "viem";', 'from "/node_modules/.vite/deps/viem.js";')
+    .replaceAll(
+      "createWalletClient({ transport: custom(requireEthereum(ethereum)) })",
+      `createWalletClient({
+    chain: {
+      id: Number(confirmation.chain_id),
+      name: "Morpheus EVM escrow",
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: { default: { http: ["http://127.0.0.1"] } }
+    },
+    transport: custom(requireEthereum(ethereum))
+  })`
+    );
+  assert.notEqual(chainAwareSource, source);
+  await page.route("**/crates/morpheus-server/ui/src/evmWallet.js", (route) => route.fulfill({
+    contentType: "application/javascript",
+    body: chainAwareSource
+  }));
+}
+
+async function installWalletMock(page) {
+  await page.addInitScript((initialWalletState) => {
+    window.__morpheusWalletRequests = [];
+    window.__morpheusWalletWrites = [];
+    window.__morpheusWalletState = {
+      account: initialWalletState.account,
+      reject: initialWalletState.reject,
+      chainReject: initialWalletState.chainReject
+    };
+    window.__morpheusWalletTxCounter = 0;
+    window.ethereum = {
+      request: async (payload) => {
+        window.__morpheusWalletRequests.push(payload);
+        if (window.__morpheusWalletState.reject) throw new Error("User rejected the request.");
+        if (payload.method === "wallet_switchEthereumChain") {
+          if (window.__morpheusWalletState.chainReject) throw new Error("wallet_switchEthereumChain failed");
+          return null;
+        }
+        if (payload.method === "eth_requestAccounts" || payload.method === "eth_accounts") {
+          return [window.__morpheusWalletState.account];
+        }
+        if (payload.method === "eth_chainId") return "0x7a69";
+        if (payload.method === "eth_sendTransaction" || payload.method === "wallet_sendTransaction") {
+          window.__morpheusWalletTxCounter += 1;
+          const txHash = `0x${String(window.__morpheusWalletTxCounter).padStart(64, "0")}`;
+          window.__morpheusWalletWrites.push({ payload, txHash });
+          return txHash;
+        }
+        return null;
+      }
+    };
+  }, {
+    account: lifecycle.walletAccount,
+    reject: lifecycle.walletReject,
+    chainReject: lifecycle.chainSwitchReject
+  });
+}
+
+async function setWalletState(page, state) {
+  await page.evaluate((updates) => {
+    Object.assign(window.__morpheusWalletState, updates);
+  }, state);
+}
+
+async function walletRequestMethods(page) {
+  return page.evaluate(() => window.__morpheusWalletRequests.map((request) => request.method));
+}
+
+async function walletWriteCount(page) {
+  return page.evaluate(() => window.__morpheusWalletWrites.length);
+}
+
+async function waitForResult(page, expectedText) {
+  try {
+    await page.waitForFunction((text) => {
+      return document.querySelector("#result-panel")?.innerText.includes(text);
+    }, expectedText);
+  } catch (error) {
+    const panelText = await page.locator("#result-panel").innerText().catch(() => "<missing result panel>");
+    const methods = await page.evaluate(() => window.__morpheusWalletRequests?.map((request) => request.method) || []).catch(() => []);
+    const writes = await page.evaluate(() => window.__morpheusWalletWrites?.length || 0).catch(() => 0);
+    throw new Error(`${error.message}\nExpected result text: ${expectedText}\nResult panel: ${panelText}\nWallet methods: ${methods.join(", ")}\nWallet writes: ${writes}`);
+  }
+  return page.locator("#result-panel").innerText();
+}
+
 async function main() {
   const server = await createServer({
     root: ROOT,
@@ -133,41 +273,103 @@ async function main() {
 
   try {
     const page = await browser.newPage();
-    await routeApi(page);
-    await routeHtml(page, "buyer");
-    await page.addInitScript(() => {
-      window.__morpheusWalletRequests = [];
-      window.ethereum = {
-        request: async (payload) => {
-          window.__morpheusWalletRequests.push(payload);
-          if (payload.method === "wallet_switchEthereumChain") return null;
-          if (payload.method === "eth_requestAccounts") {
-            return ["0x0000000000000000000000000000000000000004"];
-          }
-          return null;
-        }
-      };
+    page.on("pageerror", (error) => {
+      console.error(`page error: ${error.message}`);
     });
+    await routeApi(page);
+    await routeAppModule(page);
+    await routeWalletModule(page);
+    await routeHtml(page, "buyer");
+    await installWalletMock(page);
     await page.goto(`${baseUrl}/crates/morpheus-server/ui/buyer.html`);
     await page.waitForSelector("[data-evm-escrow-deposit]", { state: "attached" });
     await page.locator("[data-evm-escrow-deposit]").dispatchEvent("click", { bubbles: true });
-    await page.waitForSelector("#result-panel", { state: "attached" });
-    const walletRequestMethods = await page.evaluate(() => window.__morpheusWalletRequests.map((request) => request.method));
-    assert(walletRequestMethods.includes("wallet_switchEthereumChain"));
+    assert.match(await waitForResult(page, "submitted_waiting_for_watcher"), /submitted_waiting_for_watcher/);
+    const buyerWalletRequestMethods = await walletRequestMethods(page);
+    assert(buyerWalletRequestMethods.includes("wallet_switchEthereumChain"));
+    assert(buyerWalletRequestMethods.includes("eth_sendTransaction"));
+    assert.equal(await walletWriteCount(page), 2);
     assert.equal(await page.locator("[data-evm-escrow-deposit]").count(), 1);
     assert.match(await page.locator("#buyer-order-cards").innerText(), /Deposit window: 15 min/);
     assert.match(await page.locator("#result-panel").innerText(), /EVM escrow deposit/);
+    await page.locator('[data-action="buyer-orders"]').dispatchEvent("click", { bubbles: true });
+    await page.waitForSelector("[data-evm-lifecycle-state='deposit_submitted']", { state: "attached" });
+    assert.match(await page.locator("#buyer-order-cards").innerText(), /Deposit submitted/);
+    assert.match(await page.locator("#buyer-order-cards").innerText(), /Waiting for Morpheus watcher confirmation/);
+
+    lifecycle.buyerStatus = "payment_authorized";
+    await page.reload();
+    await page.waitForSelector("[data-evm-lifecycle-state='escrow_funded']", { state: "attached" });
+    assert.match(await page.locator("#buyer-order-cards").innerText(), /Escrow funded/);
+
+    lifecycle.watcher = {
+      last_scan: { status: "lagging", to_block: 41 },
+      last_error: { message: "scanner is 5 blocks behind" }
+    };
+    await page.reload();
+    await page.waitForSelector("[data-evm-lifecycle-state='watcher_lagging']", { state: "attached" });
+    assert.match(await page.locator("#buyer-order-cards").innerText(), /Watcher needs attention/);
+    assert.match(await page.locator("#buyer-order-cards").innerText(), /Watcher error: scanner is 5 blocks behind/);
+    lifecycle.watcher = { last_scan: { status: "ok", to_block: 42 }, last_error: null };
 
     await routeHtml(page, "seller");
     await page.goto(`${baseUrl}/crates/morpheus-server/ui/seller.html`);
     await page.waitForSelector("[data-evm-escrow-release]", { state: "attached" });
+    await setWalletState(page, { account: "0x0000000000000000000000000000000000000003" });
     assert.equal(await page.locator("[data-evm-escrow-release]").count(), 1);
+    await page.locator("[data-evm-escrow-release]").dispatchEvent("click", { bubbles: true });
+    assert.match(await waitForResult(page, "submitted_waiting_for_watcher"), /submitted_waiting_for_watcher/);
+    await page.locator('[data-action="seller-orders"]').dispatchEvent("click", { bubbles: true });
+    await page.waitForSelector("[data-evm-lifecycle-state='release_submitted']", { state: "attached" });
+    assert.match(await page.locator("#seller-orders-rows-cards").innerText(), /Release submitted/);
+    assert.equal(await walletWriteCount(page), 1);
 
     await routeHtml(page, "admin");
     await page.goto(`${baseUrl}/crates/morpheus-server/ui/admin.html`);
     await page.waitForSelector("[data-form='evm-arbiter-refund']");
+    await setWalletState(page, { account: "0x0000000000000000000000000000000000000005" });
+    await page.evaluate(() => {
+      window.confirm = () => true;
+    });
     assert.equal(await page.locator("[data-refund-mode='full']").count(), 1);
     assert.equal(await page.locator("[data-refund-mode='partial']").count(), 1);
+    await page.locator("[data-refund-mode='full']").click();
+    assert.match(await waitForResult(page, "submitted_waiting_for_watcher"), /EVM escrow refund/);
+    assert.match(await page.locator("#result-panel").innerText(), /submitted_waiting_for_watcher/);
+    assert.equal(await walletWriteCount(page), 1);
+
+    await page.fill('[data-form="evm-arbiter-refund"] [name="buyer_amount_units"]', "10000000");
+    await page.locator("[data-refund-mode='partial']").click();
+    assert.match(await waitForResult(page, "EVM escrow partial refund"), /EVM escrow partial refund/);
+    assert.match(await page.locator("#result-panel").innerText(), /submitted_waiting_for_watcher/);
+    assert.equal(await walletWriteCount(page), 2);
+
+    const writesBeforeCancel = await walletWriteCount(page);
+    await page.evaluate(() => {
+      window.confirm = () => false;
+    });
+    await page.locator("[data-refund-mode='full']").click();
+    assert.match(await waitForResult(page, "wallet_rejected"), /wallet_rejected/);
+    assert.equal(await walletWriteCount(page), writesBeforeCancel);
+
+    lifecycle.buyerStatus = "payment_intent_created";
+    await routeHtml(page, "buyer");
+    await page.goto(`${baseUrl}/crates/morpheus-server/ui/buyer.html`);
+    await page.waitForSelector("[data-evm-escrow-deposit]", { state: "attached" });
+    await setWalletState(page, {
+      account: "0x0000000000000000000000000000000000000004",
+      chainReject: true,
+      reject: false
+    });
+    await page.locator("[data-evm-escrow-deposit]").dispatchEvent("click", { bubbles: true });
+    assert.match(await waitForResult(page, "chain_mismatch"), /chain_mismatch/);
+
+    await setWalletState(page, {
+      chainReject: false,
+      reject: true
+    });
+    await page.locator("[data-evm-escrow-deposit]").dispatchEvent("click", { bubbles: true });
+    assert.match(await waitForResult(page, "wallet_rejected"), /wallet_rejected/);
   } finally {
     await browser.close();
     await server.close();
