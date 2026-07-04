@@ -5,6 +5,7 @@ import {
 import {
   evmEscrowConfirmation,
   escrowPolicyHint,
+  classifyWalletError,
   requestEvmEscrowDeposit,
   requestEvmEscrowRelease,
   requestEvmEscrowRefund,
@@ -626,6 +627,27 @@ globalThis.MorpheusEvmWallet = {
       ...result,
       updated_at_unix_ms: Date.now()
     };
+  }
+
+  function showWalletSubmitted(actionLabel, order, kind, result) {
+    rememberPendingEvmAction(order, kind, result);
+    showResult(actionLabel, "submitted_waiting_for_watcher", result);
+    toast("Transaction submitted", "success", "Waiting for Morpheus watcher confirmation.");
+    if (document.body.classList.contains("buyer-theme")) renderOrders("buyer-orders-rows", "buyer-order-count", 3);
+    if (document.body.classList.contains("seller-theme")) renderOrders("seller-orders-rows", "seller-order-count", 5);
+  }
+
+  function showWalletFailure(actionLabel, error) {
+    const classified = classifyWalletError(error);
+    showResult(actionLabel, classified.code, { error: classified.message });
+    toast(classified.code === "wallet_rejected" ? "Wallet request rejected" : "Wallet action failed", "error", classified.message);
+  }
+
+  function confirmRefundSigning(mode, buyerAmountUnits) {
+    if (mode === "partial") {
+      return window.confirm(`Submit partial refund for buyer amount units ${buyerAmountUnits}? Morpheus will wait for watcher evidence before marking it final.`);
+    }
+    return window.confirm("Submit full escrow refund? Morpheus will wait for watcher evidence before marking it final.");
   }
 
   function clearPendingEvmAction(order) {
@@ -1787,14 +1809,16 @@ globalThis.MorpheusEvmWallet = {
           throw new Error("Buyer amount units is required for partial refund");
         }
         const order = await fetchAdminOrder(data.order_id || DEMO.orderId);
+        if (!confirmRefundSigning(mode, data.buyer_amount_units)) {
+          showResult(action, "wallet_rejected", { error: "Refund signing was cancelled before wallet submission." });
+          return;
+        }
         const result = mode === "partial"
           ? await requestEvmEscrowPartialRefund(order, data.buyer_amount_units)
           : await requestEvmEscrowRefund(order);
-        showResult(action, "submitted_waiting_for_watcher", result);
-        toast("Transaction submitted", "success", "Waiting for Morpheus watcher confirmation.");
+        showWalletSubmitted(action, order, mode === "partial" ? "partial_refund" : "refund", result);
       } catch (error) {
-        showResult(action, "wallet_unavailable", { error: error.message });
-        toast("Wallet unavailable", "error", error.message);
+        showWalletFailure(action, error);
       }
     });
     refreshAdmin();
@@ -1836,14 +1860,8 @@ globalThis.MorpheusEvmWallet = {
       if (evmRelease) {
         const order = state.orders.find((item) => item.order_id === evmRelease.dataset.orderId);
         requestEvmEscrowRelease(order)
-          .then((result) => {
-            showResult("EVM escrow release", "submitted_waiting_for_watcher", result);
-            toast("Transaction submitted", "success", "Waiting for Morpheus watcher confirmation.");
-          })
-          .catch((error) => {
-            showResult("EVM escrow release", "wallet_unavailable", { error: error.message });
-            toast("Wallet unavailable", "error", error.message);
-          });
+          .then((result) => showWalletSubmitted("EVM escrow release", order, "release", result))
+          .catch((error) => showWalletFailure("EVM escrow release", error));
         return;
       }
       const orderAction = event.target.closest("[data-seller-order-step]");
@@ -1950,14 +1968,8 @@ globalThis.MorpheusEvmWallet = {
       if (evmDeposit) {
         const order = state.orders.find((item) => item.order_id === evmDeposit.dataset.orderId);
         requestEvmEscrowDeposit(order)
-          .then((result) => {
-            showResult("EVM escrow deposit", "submitted_waiting_for_watcher", result);
-            toast("Transaction submitted", "success", "Waiting for Morpheus watcher confirmation.");
-          })
-          .catch((error) => {
-            showResult("EVM escrow deposit", "wallet_unavailable", { error: error.message });
-            toast("Wallet unavailable", "error", error.message);
-          });
+          .then((result) => showWalletSubmitted("EVM escrow deposit", order, "deposit", result))
+          .catch((error) => showWalletFailure("EVM escrow deposit", error));
         return;
       }
       const offerButton = event.target.closest("[data-select-offer]");
