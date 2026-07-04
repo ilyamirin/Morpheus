@@ -590,6 +590,39 @@ globalThis.MorpheusEvmWallet = {
       || pick(order, ["payment", "body", "adapter"], "") === "evm_escrow";
   }
 
+  function formatDurationHint(seconds) {
+    if (!Number.isFinite(Number(seconds)) || Number(seconds) <= 0) return "";
+    const value = Number(seconds);
+    if (value % 3600 === 0) return `${value / 3600} h`;
+    if (value % 60 === 0) return `${value / 60} min`;
+    return `${value} sec`;
+  }
+
+  function feeHintTextValue(value, maxLength = 96) {
+    const valueType = typeof value;
+    if (valueType !== "string" && valueType !== "number" && valueType !== "bigint") return "";
+    if (valueType === "number" && !Number.isFinite(value)) return "";
+    const text = String(value).trim();
+    if (!text) return "";
+    return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+  }
+
+  function escrowPolicyHint(confirmation) {
+    const policy = confirmation?.policy || {};
+    const fee = confirmation?.fee_hint || {};
+    const parts = [];
+    const deposit = formatDurationHint(policy.deposit_timeout_secs);
+    const review = formatDurationHint(policy.buyer_review_timeout_secs);
+    if (deposit) parts.push(`Deposit window: ${deposit}`);
+    if (review) parts.push(`Buyer review: ${review}`);
+    const estimatedFeeUnits = feeHintTextValue(fee.estimated_fee_units);
+    const feeTokenSymbol = feeHintTextValue(fee.fee_token_symbol, 24);
+    if (estimatedFeeUnits && feeTokenSymbol) {
+      parts.push(`Estimated network fee: ${estimatedFeeUnits} ${feeTokenSymbol} units`);
+    }
+    return parts.join(" | ");
+  }
+
   function selectedOffer(formEl) {
     const id = (formEl.elements.offer_id && formEl.elements.offer_id.value.trim()) || DEMO.offerId;
     if (state.selectedOffer && state.selectedOffer.offer_id === id) return state.selectedOffer;
@@ -1343,7 +1376,9 @@ globalThis.MorpheusEvmWallet = {
     if (!confirmation) {
       return `<div class="wallet-action-row"><span class="muted-text">Waiting for escrow payment intent.</span></div>`;
     }
-    return `<div class="wallet-action-row"><button class="btn btn-small btn-primary" type="button" data-evm-escrow-deposit data-order-id="${esc(order.order_id || "")}">Approve and deposit</button><span class="mono">${esc(confirmation.order_hash || "order hash pending")}</span></div>`;
+    const hint = escrowPolicyHint(confirmation);
+    const hintMarkup = hint ? `<span class="muted-text">${esc(hint)}</span>` : "";
+    return `<div class="wallet-action-row"><button class="btn btn-small btn-primary" type="button" data-evm-escrow-deposit data-order-id="${esc(order.order_id || "")}">Approve and deposit</button><span class="mono">${esc(confirmation.order_hash || "order hash pending")}</span>${hintMarkup}</div>`;
   }
 
   function evmEscrowSellerReleaseAction(order) {

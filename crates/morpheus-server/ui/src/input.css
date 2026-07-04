@@ -325,6 +325,10 @@ pre {
   line-height: 1.45;
 }
 
+.wallet-action-row .muted-text {
+  overflow-wrap: anywhere;
+}
+
 .admin-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
