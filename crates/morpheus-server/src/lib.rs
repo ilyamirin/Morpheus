@@ -2147,6 +2147,32 @@ where
         Ok(amount_units) => amount_units,
         Err(message) => return validation_error_response("ORDER_AMOUNT_INVALID", message),
     };
+    if let Some(max_amount) = evm.policy.max_order_amount.as_deref() {
+        if decimal_amount_exceeds(amount, max_amount).unwrap_or(true) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({
+                    "code": "EVM_ESCROW_POLICY_LIMIT",
+                    "error": "order amount exceeds configured evm escrow policy limit",
+                    "max_order_amount": max_amount
+                })),
+            )
+                .into_response();
+        }
+    }
+    if let Some(min_amount) = evm.policy.min_order_amount.as_deref() {
+        if decimal_amount_exceeds(min_amount, amount).unwrap_or(true) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({
+                    "code": "EVM_ESCROW_POLICY_LIMIT",
+                    "error": "order amount is below configured evm escrow policy minimum",
+                    "min_order_amount": min_amount
+                })),
+            )
+                .into_response();
+        }
+    }
     let offer_revision = order
         .body
         .get("offer_revision")
@@ -2458,6 +2484,52 @@ fn validation_error_response(code: &str, error: impl Into<String>) -> axum::resp
         Json(json!({ "code": code, "error": error.into() })),
     )
         .into_response()
+}
+
+fn normalized_decimal_parts(value: &str) -> Option<(String, String)> {
+    let mut parts = value.split('.');
+    let whole = parts.next()?;
+    let fraction = parts.next().unwrap_or("");
+    if parts.next().is_some() || whole.is_empty() || !whole.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    if !fraction.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+
+    let whole = whole.trim_start_matches('0');
+    let whole = if whole.is_empty() { "0" } else { whole }.to_string();
+    let fraction = fraction.trim_end_matches('0').to_string();
+    Some((whole, fraction))
+}
+
+fn decimal_amount_exceeds(value: &str, limit: &str) -> Option<bool> {
+    let (value_whole, value_fraction) = normalized_decimal_parts(value)?;
+    let (limit_whole, limit_fraction) = normalized_decimal_parts(limit)?;
+    if value_whole.len() != limit_whole.len() {
+        return Some(value_whole.len() > limit_whole.len());
+    }
+    if value_whole != limit_whole {
+        return Some(value_whole > limit_whole);
+    }
+
+    let max_fraction_len = value_fraction.len().max(limit_fraction.len());
+    for index in 0..max_fraction_len {
+        let value_digit = value_fraction
+            .as_bytes()
+            .get(index)
+            .copied()
+            .unwrap_or(b'0');
+        let limit_digit = limit_fraction
+            .as_bytes()
+            .get(index)
+            .copied()
+            .unwrap_or(b'0');
+        if value_digit != limit_digit {
+            return Some(value_digit > limit_digit);
+        }
+    }
+    Some(false)
 }
 
 fn decimal_amount_units(amount: &str, decimals: u8) -> Result<String, &'static str> {

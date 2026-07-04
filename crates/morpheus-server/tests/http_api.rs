@@ -1921,6 +1921,15 @@ async fn seller_order_complete_withdraws_purchased_offer() {
 }
 
 async fn insert_evm_order(store: &InMemoryEventStore, order_id: &str, seller_id: &str) {
+    insert_evm_order_with_amount(store, order_id, seller_id, "25.00").await;
+}
+
+async fn insert_evm_order_with_amount(
+    store: &InMemoryEventStore,
+    order_id: &str,
+    seller_id: &str,
+    amount: &str,
+) {
     store
         .upsert_order(OrderProjectionRecord {
             order_id: order_id.into(),
@@ -1935,7 +1944,7 @@ async fn insert_evm_order(store: &InMemoryEventStore, order_id: &str, seller_id:
                 "seller_id": seller_id,
                 "offer_id": "offer:shop.example:01JOFFER",
                 "offer_revision": 1,
-                "price": {"amount": "25.00", "currency": "USDC"},
+                "price": {"amount": amount, "currency": "USDC"},
                 "payment_adapter": "evm_escrow",
                 "payment_capture_policy": "before_entitlement",
                 "arbiter_actor": "arbiter:shop.example:01JARBITER"
@@ -2030,6 +2039,318 @@ async fn seller_evm_payment_intent_returns_confirmation_metadata() {
             .as_str()
             .is_some_and(|hash| hash.starts_with("0x") && hash.len() == 66)
     );
+}
+
+#[tokio::test]
+async fn seller_evm_payment_intent_rejects_order_above_policy_limit() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JEVMLIMIT";
+    store
+        .upsert_order(OrderProjectionRecord {
+            order_id: order_id.into(),
+            room_id: "!order:shop.example".into(),
+            customer_id: "customer:shop.example:01JCUST".into(),
+            seller_id: "seller:shop.example:01JSELLER".into(),
+            offer_id: "offer:shop.example:01JOFFER".into(),
+            status: "accepted".into(),
+            body: json!({
+                "order_id": order_id,
+                "customer_id": "customer:shop.example:01JCUST",
+                "seller_id": "seller:shop.example:01JSELLER",
+                "offer_id": "offer:shop.example:01JOFFER",
+                "offer_revision": 1,
+                "price": {"amount": "101.00", "currency": "USDC"},
+                "payment_adapter": "evm_escrow",
+                "payment_capture_policy": "before_entitlement",
+                "arbiter_actor": "arbiter:shop.example:01JARBITER"
+            }),
+        })
+        .await
+        .unwrap();
+    let mut config = server_config();
+    config.evm_escrow.as_mut().unwrap().policy.max_order_amount = Some("100.00".into());
+    let app = build_router_with_publisher(config, store, RecordingPublisher::default());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent"
+                ))
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    evm_intent_request(
+                        "seller:shop.example:01JSELLER",
+                        "pay:shop.example:01JPAYLIMIT",
+                        "0x0000000000000000000000000000000000000004",
+                    )
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "EVM_ESCROW_POLICY_LIMIT");
+}
+
+#[tokio::test]
+async fn seller_evm_payment_intent_rejects_order_below_policy_minimum() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JEVMMIN";
+    store
+        .upsert_order(OrderProjectionRecord {
+            order_id: order_id.into(),
+            room_id: "!order:shop.example".into(),
+            customer_id: "customer:shop.example:01JCUST".into(),
+            seller_id: "seller:shop.example:01JSELLER".into(),
+            offer_id: "offer:shop.example:01JOFFER".into(),
+            status: "accepted".into(),
+            body: json!({
+                "order_id": order_id,
+                "customer_id": "customer:shop.example:01JCUST",
+                "seller_id": "seller:shop.example:01JSELLER",
+                "offer_id": "offer:shop.example:01JOFFER",
+                "offer_revision": 1,
+                "price": {"amount": "0.50", "currency": "USDC"},
+                "payment_adapter": "evm_escrow",
+                "payment_capture_policy": "before_entitlement",
+                "arbiter_actor": "arbiter:shop.example:01JARBITER"
+            }),
+        })
+        .await
+        .unwrap();
+    let mut config = server_config();
+    config.evm_escrow.as_mut().unwrap().policy.min_order_amount = Some("1.00".into());
+    let app = build_router_with_publisher(config, store, RecordingPublisher::default());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent"
+                ))
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    evm_intent_request(
+                        "seller:shop.example:01JSELLER",
+                        "pay:shop.example:01JPAYMIN",
+                        "0x0000000000000000000000000000000000000004",
+                    )
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "EVM_ESCROW_POLICY_LIMIT");
+}
+
+#[tokio::test]
+async fn seller_evm_payment_intent_allows_order_equal_to_policy_limit() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JEVMMAXEQ";
+    insert_evm_order(&store, order_id, "seller:shop.example:01JSELLER").await;
+    let mut config = server_config();
+    config.evm_escrow.as_mut().unwrap().policy.max_order_amount = Some("25.00".into());
+    let app = build_router_with_publisher(config, store, RecordingPublisher::default());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent"
+                ))
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    evm_intent_request(
+                        "seller:shop.example:01JSELLER",
+                        "pay:shop.example:01JPAYMAXEQ",
+                        "0x0000000000000000000000000000000000000004",
+                    )
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn seller_evm_payment_intent_allows_order_equal_to_policy_minimum() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JEVMMINEQ";
+    insert_evm_order(&store, order_id, "seller:shop.example:01JSELLER").await;
+    let mut config = server_config();
+    config.evm_escrow.as_mut().unwrap().policy.min_order_amount = Some("25.00".into());
+    let app = build_router_with_publisher(config, store, RecordingPublisher::default());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent"
+                ))
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    evm_intent_request(
+                        "seller:shop.example:01JSELLER",
+                        "pay:shop.example:01JPAYMINEQ",
+                        "0x0000000000000000000000000000000000000004",
+                    )
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn seller_evm_payment_intent_rejects_malformed_order_amount_before_policy_limit() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JEVMBADAMT";
+    insert_evm_order_with_amount(&store, order_id, "seller:shop.example:01JSELLER", "abc").await;
+    let mut config = server_config();
+    config.evm_escrow.as_mut().unwrap().policy.max_order_amount = Some("100.00".into());
+    let app = build_router_with_publisher(config, store, RecordingPublisher::default());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent"
+                ))
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    evm_intent_request(
+                        "seller:shop.example:01JSELLER",
+                        "pay:shop.example:01JPAYBADAMT",
+                        "0x0000000000000000000000000000000000000004",
+                    )
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "ORDER_AMOUNT_INVALID");
+}
+
+#[tokio::test]
+async fn seller_evm_payment_intent_rejects_excess_precision_before_policy_minimum() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JEVMPREC";
+    insert_evm_order_with_amount(
+        &store,
+        order_id,
+        "seller:shop.example:01JSELLER",
+        "1.0000001",
+    )
+    .await;
+    let mut config = server_config();
+    config.evm_escrow.as_mut().unwrap().policy.min_order_amount = Some("2.00".into());
+    let app = build_router_with_publisher(config, store, RecordingPublisher::default());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent"
+                ))
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    evm_intent_request(
+                        "seller:shop.example:01JSELLER",
+                        "pay:shop.example:01JPAYPREC",
+                        "0x0000000000000000000000000000000000000004",
+                    )
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "ORDER_AMOUNT_INVALID");
+}
+
+#[tokio::test]
+async fn seller_evm_payment_intent_rejects_large_order_above_policy_limit() {
+    let store = InMemoryEventStore::default();
+    let order_id = "ord:shop.example:01JEVMBIG";
+    insert_evm_order_with_amount(
+        &store,
+        order_id,
+        "seller:shop.example:01JSELLER",
+        "340282366920938463463374607431768211456.00",
+    )
+    .await;
+    let mut config = server_config();
+    config.evm_escrow.as_mut().unwrap().policy.max_order_amount = Some("100.00".into());
+    let app = build_router_with_publisher(config, store, RecordingPublisher::default());
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent"
+                ))
+                .header("authorization", "Bearer seller-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    evm_intent_request(
+                        "seller:shop.example:01JSELLER",
+                        "pay:shop.example:01JPAYBIG",
+                        "0x0000000000000000000000000000000000000004",
+                    )
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["code"], "EVM_ESCROW_POLICY_LIMIT");
 }
 
 #[tokio::test]
