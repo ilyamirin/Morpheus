@@ -787,3 +787,61 @@ pre {
     flex-direction: column;
   }
 }
+
+.evm-status-panel {
+  display: grid;
+  gap: 10px;
+  margin: 12px 16px;
+  padding: 12px;
+  border: 1px solid #d9e1ec;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.admin-theme .evm-status-panel {
+  border-color: #27364b;
+  background: rgba(9, 19, 33, 0.72);
+}
+
+.evm-status-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.evm-status-head p {
+  margin: 4px 0 0;
+  color: #6f7f92;
+  font-size: 12px;
+}
+
+.admin-theme .evm-status-head p {
+  color: #8ea0b7;
+}
+
+.evm-status-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.evm-status-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 150px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.evm-status-row > span:first-child {
+  color: #6f7f92;
+  font-weight: 760;
+}
+
+.admin-theme .evm-status-row > span:first-child {
+  color: #8ea0b7;
+}
+
+.evm-status-row .mono {
+  overflow-wrap: anywhere;
+}

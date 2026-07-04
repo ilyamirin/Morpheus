@@ -1,4 +1,8 @@
 import {
+  evmLifecycleState,
+  evmPaymentStatusRows
+} from "./evmPaymentLifecycle.js";
+import {
   evmEscrowConfirmation,
   escrowPolicyHint,
   requestEvmEscrowDeposit,
@@ -77,6 +81,10 @@ globalThis.MorpheusEvmWallet = {
     selectedOffer: null,
     pendingOrders: [],
     pendingListings: [],
+    evm: {
+      watcher: null,
+      pendingActions: {}
+    },
     admin: { healthOk: false, readyOk: false, incidents: [], pendingMaintenance: null }
   };
   let resultPanel = null;
@@ -589,6 +597,40 @@ globalThis.MorpheusEvmWallet = {
   function isEvmEscrowOrder(order) {
     return pick(order, ["body", "payment_adapter"], "") === "evm_escrow"
       || pick(order, ["payment", "body", "adapter"], "") === "evm_escrow";
+  }
+
+  function evmNetworkConfig(confirmation = {}) {
+    const configured = UI_CONFIG.evm_escrow || UI_CONFIG.evm || {};
+    return {
+      explorer_base_url: configured.explorer_base_url || confirmation.explorer_base_url || ""
+    };
+  }
+
+  function pendingEvmAction(orderId) {
+    return state.evm.pendingActions[orderId] || null;
+  }
+
+  function pendingEvmTxHash(action) {
+    return action?.deposit_tx_hash
+      || action?.release_tx_hash
+      || action?.refund_tx_hash
+      || action?.partial_refund_tx_hash
+      || "";
+  }
+
+  function rememberPendingEvmAction(order, kind, result) {
+    const orderId = order?.order_id || "";
+    if (!orderId) return;
+    state.evm.pendingActions[orderId] = {
+      kind,
+      ...result,
+      updated_at_unix_ms: Date.now()
+    };
+  }
+
+  function clearPendingEvmAction(order) {
+    const orderId = order?.order_id || "";
+    if (orderId) delete state.evm.pendingActions[orderId];
   }
 
   function selectedOffer(formEl) {
@@ -1359,6 +1401,37 @@ globalThis.MorpheusEvmWallet = {
     return `<div class="wallet-action-row"><button class="btn btn-small btn-primary" type="button" data-evm-escrow-release data-order-id="${esc(order.order_id || "")}">Release escrow</button><span class="mono">${esc(confirmation.order_hash || "order hash pending")}</span></div>`;
   }
 
+  function evmEscrowStatusPanel(order, role) {
+    if (!isEvmEscrowOrder(order)) return "";
+    const confirmation = evmEscrowConfirmation(order);
+    if (!confirmation) {
+      return `<div class="evm-status-panel"><strong>Escrow intent pending</strong><span class="muted-text">Seller must create the EVM payment intent before wallet actions are available.</span></div>`;
+    }
+    const pending = pendingEvmAction(order.order_id);
+    const lifecycle = evmLifecycleState({ order, pendingAction: pending, watcher: state.evm.watcher });
+    const txHash = pendingEvmTxHash(pending);
+    const rows = evmPaymentStatusRows({
+      confirmation,
+      watcher: state.evm.watcher,
+      network: evmNetworkConfig(confirmation),
+      txHash
+    });
+    const rowMarkup = rows.map((row) => {
+      const value = row.href
+        ? `<a class="mono" href="${esc(row.href)}" target="_blank" rel="noreferrer">${esc(row.value)}</a>`
+        : `<span class="mono">${esc(row.value)}</span>`;
+      return `<div class="evm-status-row"><span>${esc(row.label)}</span>${value}</div>`;
+    }).join("");
+    const roleLabel = role ? `<span class="badge muted-badge">${esc(role)}</span>` : "";
+    return `<section class="evm-status-panel" data-evm-lifecycle-state="${esc(lifecycle.state)}">
+    <div class="evm-status-head">
+      <div><strong>${esc(lifecycle.label)}</strong><p>${esc(lifecycle.detail)}</p></div>
+      ${roleLabel}
+    </div>
+    <div class="evm-status-grid">${rowMarkup}</div>
+  </section>`;
+  }
+
   function sellerOrderActionRow(order) {
     const status = String((order && order.status) || "").toLowerCase();
     const actions = sellerOrderActions(status);
@@ -1403,7 +1476,8 @@ globalThis.MorpheusEvmWallet = {
         const actor = columns === 5 ? displayId(order.customer_id, "Customer not attached") : sellerName(order.seller_id);
         const sellerActions = columns === 5 ? `${sellerOrderActionRow(order)}${evmEscrowSellerReleaseAction(order)}` : "";
         const walletAction = columns === 5 ? "" : evmEscrowWalletAction(order);
-        return `<article class="order-card"><div class="section-head compact-head"><div><p class="eyebrow">${esc(actor)}</p><h3>${esc(title)}</h3><p class="mono">${esc(offer)}</p></div>${statusBadge(order.status)}</div>${orderTimeline(order)}${walletAction}${sellerActions}</article>`;
+        const lifecyclePanel = evmEscrowStatusPanel(order, columns === 5 ? "seller" : "buyer");
+        return `<article class="order-card"><div class="section-head compact-head"><div><p class="eyebrow">${esc(actor)}</p><h3>${esc(title)}</h3><p class="mono">${esc(offer)}</p></div>${statusBadge(order.status)}</div>${orderTimeline(order)}${lifecyclePanel}${walletAction}${sellerActions}</article>`;
       });
       cards.innerHTML = pendingOrders.map(pendingOrderCard).concat(projectedCards).join("");
     }
@@ -1417,6 +1491,22 @@ globalThis.MorpheusEvmWallet = {
     if (isSeller) updateSellerMetrics();
   }
 
+  async function refreshEvmWatcherStatus({ silent = true } = {}) {
+    const result = await api("/admin/evm-escrow/status", {
+      tokenRole: "admin",
+      action: "GET /admin/evm-escrow/status",
+      silent,
+      result: false
+    });
+    if (result.ok && result.body && result.body.enabled) {
+      state.evm.watcher = {
+        last_scan: result.body.runtime?.last_scan || result.body.last_scan || null,
+        last_error: result.body.runtime?.last_error || result.body.last_error || null
+      };
+    }
+    return result;
+  }
+
   async function refreshAdmin({ silent = true } = {}) {
     const requestOptions = { silent, result: !silent };
     const health = await api("/healthz", { action: "GET /healthz", ...requestOptions });
@@ -1428,6 +1518,7 @@ globalThis.MorpheusEvmWallet = {
     await api("/admin/config", { tokenRole: "admin", action: "GET /admin/config", ...requestOptions });
     const allowlist = await api("/admin/allowlist", { tokenRole: "admin", action: "GET /admin/allowlist", ...requestOptions });
     if (allowlist.ok) renderAdminAllowlist(allowlist.body);
+    await refreshEvmWatcherStatus({ silent: true });
     const summary = await api("/admin/projections/summary", { tokenRole: "admin", action: "GET /admin/projections/summary", ...requestOptions });
     if (summary.ok) renderAdminSummary(summary.body);
     const events = await api("/admin/events", { tokenRole: "admin", action: "GET /admin/events", ...requestOptions });
