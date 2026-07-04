@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import {
   buildExplorerLink,
+  confirmationFromOrder,
   evmLifecycleState,
   evmPaymentStatusRows,
   normalizeAddress,
+  roleAddress,
   roleAddressMismatch,
   watcherStatusLabel
 } from "./evmPaymentLifecycle.js";
@@ -25,6 +27,15 @@ const confirmation = {
 assert.equal(normalizeAddress(" 0xABCDEF "), "0xabcdef");
 assert.equal(normalizeAddress(""), "");
 
+assert.equal(confirmationFromOrder({ payment: { body: { confirmation } } }), confirmation);
+assert.equal(confirmationFromOrder({ payment: { confirmation } }), confirmation);
+assert.equal(confirmationFromOrder({ body: { payment_confirmation: confirmation } }), confirmation);
+assert.equal(confirmationFromOrder({ body: { confirmation } }), confirmation);
+assert.equal(confirmationFromOrder({}), null);
+
+assert.equal(roleAddress("seller", confirmation), "0x0000000000000000000000000000000000000003");
+assert.equal(roleAddress("buyer", { buyer_evm_address: " 0xABCDEF " }), "0xabcdef");
+
 assert.equal(
   roleAddressMismatch("buyer", "0x0000000000000000000000000000000000000004", confirmation),
   ""
@@ -39,6 +50,13 @@ assert.equal(
   "https://sepolia.basescan.org/tx/0xabc"
 );
 assert.equal(buildExplorerLink({}, "tx", "0xabc"), "");
+assert.equal(buildExplorerLink({ explorer_base_url: "not a url" }, "tx", "0xabc"), "");
+assert.equal(buildExplorerLink({ explorer_base_url: "javascript:alert(1)" }, "tx", "0xabc"), "");
+assert.equal(buildExplorerLink({ explorer_base_url: "data:text/html,boom" }, "tx", "0xabc"), "");
+assert.equal(
+  buildExplorerLink({ explorer_base_url: "https://sepolia.basescan.org/" }, "tx", "0xabc / def"),
+  "https://sepolia.basescan.org/tx/0xabc%20%2F%20def"
+);
 
 assert.deepEqual(
   evmLifecycleState({
@@ -106,3 +124,12 @@ const rows = evmPaymentStatusRows({
 });
 assert(rows.some((row) => row.label === "Escrow contract" && row.href.endsWith("/address/0x0000000000000000000000000000000000000001")));
 assert(rows.some((row) => row.label === "Order hash" && row.value === confirmation.order_hash));
+
+const zeroRows = evmPaymentStatusRows({
+  confirmation: { ...confirmation, chain_id: 0, amount_units: 0, fee_hint: { confirmations: 0 } },
+  watcher: null,
+  network: null
+});
+assert(zeroRows.some((row) => row.label === "Chain" && row.value === "0"));
+assert(zeroRows.some((row) => row.label === "Amount units" && row.value === "0"));
+assert(zeroRows.some((row) => row.label === "Confirmations" && row.value === "0"));

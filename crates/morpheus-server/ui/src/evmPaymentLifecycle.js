@@ -23,13 +23,33 @@ export function roleAddressMismatch(role, account, confirmation) {
 }
 
 export function buildExplorerLink(network, kind, value) {
-  const base = String(network?.explorer_base_url || "").replace(/\/+$/, "");
-  const id = String(value || "").trim();
+  const base = String(network?.explorer_base_url || "").trim();
+  const id = value === undefined || value === null ? "" : String(value).trim();
   if (!base || !id) return "";
-  if (kind === "tx") return `${base}/tx/${id}`;
-  if (kind === "address") return `${base}/address/${id}`;
-  if (kind === "token") return `${base}/token/${id}`;
-  return "";
+  let url;
+  try {
+    url = new URL(base);
+  } catch {
+    return "";
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+  const encodedId = encodeURIComponent(id);
+  const pathBase = url.pathname.replace(/\/+$/, "");
+  if (kind === "tx") url.pathname = `${pathBase}/tx/${encodedId}`;
+  else if (kind === "address") url.pathname = `${pathBase}/address/${encodedId}`;
+  else if (kind === "token") url.pathname = `${pathBase}/token/${encodedId}`;
+  else return "";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+function rowValue(value) {
+  return value === undefined || value === null ? "" : String(value);
+}
+
+function hasRowValue(row) {
+  return row.value !== "";
 }
 
 export function watcherStatusLabel(watcher) {
@@ -100,22 +120,22 @@ export function evmLifecycleState({ order, pendingAction, watcher }) {
 export function evmPaymentStatusRows({ confirmation, watcher, network, txHash }) {
   if (!confirmation) return [];
   const rows = [
-    { label: "Chain", value: String(confirmation.chain_id || "") },
+    { label: "Chain", value: rowValue(confirmation.chain_id) },
     {
       label: "Escrow contract",
-      value: confirmation.escrow_contract || "",
+      value: rowValue(confirmation.escrow_contract),
       href: buildExplorerLink(network, "address", confirmation.escrow_contract)
     },
     {
       label: "Token",
-      value: confirmation.token || "",
+      value: rowValue(confirmation.token),
       href: buildExplorerLink(network, "token", confirmation.token)
     },
-    { label: "Amount units", value: String(confirmation.amount_units || "") },
-    { label: "Order hash", value: confirmation.order_hash || "" },
-    { label: "Confirmations", value: String(confirmation?.fee_hint?.confirmations || "") },
+    { label: "Amount units", value: rowValue(confirmation.amount_units) },
+    { label: "Order hash", value: rowValue(confirmation.order_hash) },
+    { label: "Confirmations", value: rowValue(confirmation?.fee_hint?.confirmations) },
     { label: "Watcher", value: watcherStatusLabel(watcher) }
   ];
   if (txHash) rows.push({ label: "Pending tx", value: txHash, href: buildExplorerLink(network, "tx", txHash) });
-  return rows.filter((row) => row.value);
+  return rows.filter(hasRowValue);
 }
