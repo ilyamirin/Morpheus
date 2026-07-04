@@ -7,7 +7,9 @@ import {
   buildDepositCalls,
   buildReleaseCall,
   buildRefundCall,
-  buildPartialRefundCall
+  buildPartialRefundCall,
+  classifyWalletError,
+  requireRoleWallet
 } from "./evmWallet.js";
 
 const order = {
@@ -53,6 +55,28 @@ const partialRefund = buildPartialRefundCall(order, "10000000");
 assert.equal(partialRefund.address, order.payment.body.confirmation.escrow_contract);
 assert.equal(partialRefund.functionName, "partial_refund");
 assert.deepEqual(partialRefund.args, [order.payment.body.confirmation.order_hash, 10000000n]);
+
+assert.equal(
+  requireRoleWallet("buyer", "0x0000000000000000000000000000000000000004", order.payment.body.confirmation),
+  "0x0000000000000000000000000000000000000004"
+);
+assert.throws(
+  () => requireRoleWallet("seller", "0x0000000000000000000000000000000000000004", order.payment.body.confirmation),
+  /Expected seller wallet 0x0000000000000000000000000000000000000003/
+);
+
+assert.deepEqual(classifyWalletError(new Error("User rejected the request.")), {
+  code: "wallet_rejected",
+  message: "User rejected the request."
+});
+assert.deepEqual(classifyWalletError(new Error("wallet_switchEthereumChain failed")), {
+  code: "chain_mismatch",
+  message: "wallet_switchEthereumChain failed"
+});
+assert.deepEqual(classifyWalletError(new Error("RPC timeout")), {
+  code: "wallet_error",
+  message: "RPC timeout"
+});
 
 const longFee = "9".repeat(120);
 const maliciousSymbol = "<img src=x onerror=alert(1)>";

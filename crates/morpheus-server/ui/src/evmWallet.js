@@ -1,4 +1,5 @@
 import { createWalletClient, custom } from "viem";
+import { roleAddressMismatch } from "./evmPaymentLifecycle.js";
 
 export const erc20Abi = [
   {
@@ -71,6 +72,19 @@ export function requireConfirmation(order) {
 export function requireEthereum(ethereum) {
   if (!ethereum) throw new Error("EVM wallet is not available");
   return ethereum;
+}
+
+export function requireRoleWallet(role, account, confirmation) {
+  const mismatch = roleAddressMismatch(role, account, confirmation);
+  if (mismatch) throw new Error(mismatch);
+  return account;
+}
+
+export function classifyWalletError(error) {
+  const message = String(error?.message || error || "Wallet request failed");
+  if (/reject|denied|cancel/i.test(message)) return { code: "wallet_rejected", message };
+  if (/switchEthereumChain|wrong chain|chain/i.test(message)) return { code: "chain_mismatch", message };
+  return { code: "wallet_error", message };
 }
 
 export function formatDurationHint(seconds) {
@@ -147,6 +161,7 @@ export async function requestEvmEscrowDeposit(order, ethereum = window.ethereum)
   const confirmation = requireConfirmation(order);
   const wallet = createWalletClient({ transport: custom(requireEthereum(ethereum)) });
   const [account] = await wallet.requestAddresses();
+  requireRoleWallet("buyer", account, confirmation);
   await switchWalletChain(ethereum, confirmation.chain_id);
   const calls = buildDepositCalls(order, account);
   const approveTxHash = await wallet.writeContract({ ...calls.approve, account });
@@ -173,6 +188,7 @@ export async function requestEvmEscrowRelease(order, ethereum = window.ethereum)
   const confirmation = requireConfirmation(order);
   const wallet = createWalletClient({ transport: custom(requireEthereum(ethereum)) });
   const [account] = await wallet.requestAddresses();
+  requireRoleWallet("seller", account, confirmation);
   await switchWalletChain(ethereum, confirmation.chain_id);
   const release = buildReleaseCall(order);
   const releaseTxHash = await wallet.writeContract({ ...release, account });
@@ -197,6 +213,7 @@ export async function requestEvmEscrowRefund(order, ethereum = window.ethereum) 
   const confirmation = requireConfirmation(order);
   const wallet = createWalletClient({ transport: custom(requireEthereum(ethereum)) });
   const [account] = await wallet.requestAddresses();
+  requireRoleWallet("arbiter", account, confirmation);
   await switchWalletChain(ethereum, confirmation.chain_id);
   const refund = buildRefundCall(order);
   const refundTxHash = await wallet.writeContract({ ...refund, account });
@@ -221,6 +238,7 @@ export async function requestEvmEscrowPartialRefund(order, buyerAmount, ethereum
   const confirmation = requireConfirmation(order);
   const wallet = createWalletClient({ transport: custom(requireEthereum(ethereum)) });
   const [account] = await wallet.requestAddresses();
+  requireRoleWallet("arbiter", account, confirmation);
   await switchWalletChain(ethereum, confirmation.chain_id);
   const partialRefund = buildPartialRefundCall(order, buyerAmount);
   const partialRefundTxHash = await wallet.writeContract({ ...partialRefund, account });
