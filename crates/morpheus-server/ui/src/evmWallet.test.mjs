@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   evmEscrowConfirmation,
+  escrowPolicyHint,
   buildDepositCalls,
   buildReleaseCall,
   buildRefundCall,
@@ -50,3 +53,30 @@ const partialRefund = buildPartialRefundCall(order, "10000000");
 assert.equal(partialRefund.address, order.payment.body.confirmation.escrow_contract);
 assert.equal(partialRefund.functionName, "partial_refund");
 assert.deepEqual(partialRefund.args, [order.payment.body.confirmation.order_hash, 10000000n]);
+
+const longFee = "9".repeat(120);
+const maliciousSymbol = "<img src=x onerror=alert(1)>";
+assert.equal(
+  escrowPolicyHint({
+    policy: {
+      deposit_timeout_secs: 900,
+      buyer_review_timeout_secs: 3600
+    },
+    fee_hint: {
+      estimated_fee_units: longFee,
+      fee_token_symbol: maliciousSymbol
+    }
+  }),
+  `Deposit window: 15 min | Buyer review: 1 h | Estimated network fee: ${"9".repeat(93)}... <img src=x onerror=al... units`
+);
+
+assert.equal(
+  escrowPolicyHint({
+    policy: { deposit_timeout_secs: 0 },
+    fee_hint: { estimated_fee_units: Number.POSITIVE_INFINITY, fee_token_symbol: "ETH" }
+  }),
+  ""
+);
+
+const appSource = readFileSync(fileURLToPath(new URL("./app.js", import.meta.url)), "utf8");
+assert.match(appSource, /<span class="muted-text">\$\{esc\(hint\)\}<\/span>/);

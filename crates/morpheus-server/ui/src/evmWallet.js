@@ -73,6 +73,39 @@ export function requireEthereum(ethereum) {
   return ethereum;
 }
 
+export function formatDurationHint(seconds) {
+  if (!Number.isFinite(Number(seconds)) || Number(seconds) <= 0) return "";
+  const value = Number(seconds);
+  if (value % 3600 === 0) return `${value / 3600} h`;
+  if (value % 60 === 0) return `${value / 60} min`;
+  return `${value} sec`;
+}
+
+export function feeHintTextValue(value, maxLength = 96) {
+  const valueType = typeof value;
+  if (valueType !== "string" && valueType !== "number" && valueType !== "bigint") return "";
+  if (valueType === "number" && !Number.isFinite(value)) return "";
+  const text = String(value).trim();
+  if (!text) return "";
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+export function escrowPolicyHint(confirmation) {
+  const policy = confirmation?.policy || {};
+  const fee = confirmation?.fee_hint || {};
+  const parts = [];
+  const deposit = formatDurationHint(policy.deposit_timeout_secs);
+  const review = formatDurationHint(policy.buyer_review_timeout_secs);
+  if (deposit) parts.push(`Deposit window: ${deposit}`);
+  if (review) parts.push(`Buyer review: ${review}`);
+  const estimatedFeeUnits = feeHintTextValue(fee.estimated_fee_units);
+  const feeTokenSymbol = feeHintTextValue(fee.fee_token_symbol, 24);
+  if (estimatedFeeUnits && feeTokenSymbol) {
+    parts.push(`Estimated network fee: ${estimatedFeeUnits} ${feeTokenSymbol} units`);
+  }
+  return parts.join(" | ");
+}
+
 export async function switchWalletChain(ethereum, chainId) {
   const numeric = Number(chainId);
   if (!Number.isFinite(numeric) || numeric <= 0) {
