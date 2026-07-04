@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use http::{Request, StatusCode};
-use morpheus_config::{EvmEscrowConfig, EvmEscrowTokenConfig};
+use morpheus_config::{EvmEscrowConfig, EvmEscrowPolicyConfig, EvmEscrowTokenConfig};
 use morpheus_protocol::ValidationError;
 use morpheus_server::{
     MatrixPublisher, RemoteCatalogSource, ServerConfig, SynapseMatrixPublisher, build_router,
@@ -81,6 +81,7 @@ fn server_config() -> ServerConfig {
                 decimals: 6,
                 currency: "USDC".into(),
             }],
+            policy: EvmEscrowPolicyConfig::default(),
         }),
     }
 }

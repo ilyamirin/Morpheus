@@ -62,3 +62,15 @@ symbol = "USDC"
 contract = "0x0000000000000000000000000000000000000002"
 decimals = 6
 currency = "USDC"
+
+[payments.evm_escrow.policy]
+min_order_amount = "1.00"
+max_order_amount = "100.00"
+high_value_amount = "50.00"
+deposit_timeout_secs = 900
+fulfillment_timeout_secs = 86400
+buyer_review_timeout_secs = 3600
+dispute_timeout_secs = 172800
+estimated_fee_units = "1000000000000000"
+fee_token_symbol = "ETH"
+risk_categories = ["electronics", "preorder"]

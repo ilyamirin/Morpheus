@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use morpheus_config::{EvmEscrowConfig, EvmEscrowTokenConfig};
+use morpheus_config::{EvmEscrowConfig, EvmEscrowPolicyConfig, EvmEscrowTokenConfig};
 use morpheus_protocol::{ValidationCode, ValidationError};
 use morpheus_server::evm_rpc::{RpcLog, RpcReceipt};
 use morpheus_server::evm_watcher::{
@@ -391,6 +391,7 @@ fn watcher_config_with_confirmations(confirmations: u64) -> WatcherScanConfig {
                 decimals: 6,
                 currency: "USDC".into(),
             }],
+            policy: EvmEscrowPolicyConfig::default(),
         },
     }
 }
