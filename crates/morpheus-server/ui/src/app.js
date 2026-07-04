@@ -633,8 +633,8 @@ globalThis.MorpheusEvmWallet = {
     rememberPendingEvmAction(order, kind, result);
     showResult(actionLabel, "submitted_waiting_for_watcher", result);
     toast("Transaction submitted", "success", "Waiting for Morpheus watcher confirmation.");
-    if (document.body.classList.contains("buyer-theme")) renderOrders("buyer-orders-rows", "buyer-order-count", 3);
-    if (document.body.classList.contains("seller-theme")) renderOrders("seller-orders-rows", "seller-order-count", 5);
+    if (document.body.dataset.page === "buyer") renderOrders("buyer-orders-rows", "buyer-order-count", 3);
+    if (document.body.dataset.page === "seller") renderOrders("seller-orders-rows", "seller-order-count", 5);
   }
 
   function showWalletFailure(actionLabel, error) {
