@@ -1500,8 +1500,8 @@ globalThis.MorpheusEvmWallet = {
     });
     if (result.ok && result.body && result.body.enabled) {
       state.evm.watcher = {
-        last_scan: result.body.runtime?.last_scan || result.body.last_scan || null,
-        last_error: result.body.runtime?.last_error || result.body.last_error || null
+        last_scan: result.body.watcher?.last_scan || result.body.runtime?.last_scan || result.body.last_scan || null,
+        last_error: result.body.watcher?.last_error || result.body.runtime?.last_error || result.body.last_error || null
       };
     }
     return result;
