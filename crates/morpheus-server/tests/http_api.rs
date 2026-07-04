@@ -81,7 +81,18 @@ fn server_config() -> ServerConfig {
                 decimals: 6,
                 currency: "USDC".into(),
             }],
-            policy: EvmEscrowPolicyConfig::default(),
+            policy: EvmEscrowPolicyConfig {
+                min_order_amount: Some("1.00".into()),
+                max_order_amount: Some("100.00".into()),
+                high_value_amount: Some("50.00".into()),
+                deposit_timeout_secs: Some(900),
+                fulfillment_timeout_secs: Some(86400),
+                buyer_review_timeout_secs: Some(3600),
+                dispute_timeout_secs: Some(172800),
+                estimated_fee_units: Some("1000000000000000".into()),
+                fee_token_symbol: Some("ETH".into()),
+                risk_categories: vec!["electronics".into(), "preorder".into()],
+            },
         }),
     }
 }
@@ -2033,6 +2044,33 @@ async fn seller_evm_payment_intent_returns_confirmation_metadata() {
     assert_eq!(
         body["confirmation"]["arbiter_evm_address"],
         "0x0000000000000000000000000000000000000005"
+    );
+    assert_eq!(body["confirmation"]["policy"]["deposit_timeout_secs"], 900);
+    assert_eq!(
+        body["confirmation"]["policy"]["fulfillment_timeout_secs"],
+        86400
+    );
+    assert_eq!(
+        body["confirmation"]["policy"]["buyer_review_timeout_secs"],
+        3600
+    );
+    assert_eq!(
+        body["confirmation"]["policy"]["dispute_timeout_secs"],
+        172800
+    );
+    assert_eq!(body["confirmation"]["policy"]["high_value_amount"], "50.00");
+    assert_eq!(
+        body["confirmation"]["fee_hint"]["estimated_fee_units"],
+        "1000000000000000"
+    );
+    assert_eq!(body["confirmation"]["fee_hint"]["fee_token_symbol"], "ETH");
+    assert_eq!(
+        body["confirmation"]["arbitration"]["arbiter_actor"],
+        "arbiter:shop.example:01JARBITER"
+    );
+    assert_eq!(
+        body["confirmation"]["arbitration"]["outcomes"],
+        json!(["release", "refund", "partial_refund"])
     );
     assert!(
         body["confirmation"]["order_hash"]
