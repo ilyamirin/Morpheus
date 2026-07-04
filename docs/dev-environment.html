@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,7 +7,7 @@
     <title>Morpheus Developer Setup | Local Federation Runbook</title>
     <meta
       name="description"
-      content="Подробная документация Morpheus mini dev окружения: Docker E2E, UI, CLI, API, product journey и expected state."
+      content="Detailed documentation for the Morpheus mini dev environment: Docker E2E, UI, CLI, API, product journey, and expected state."
     >
     <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
     <link rel="stylesheet" href="assets/docs.css">
@@ -23,14 +23,14 @@
           </span>
         </a>
         <nav class="topnav" aria-label="Dev environment navigation">
-          <a href="#roles">Роли</a>
-          <a href="#overview">Окружение</a>
-          <a href="#containers">Контейнеры</a>
+          <a href="#roles">Roles</a>
+          <a href="#overview">Environment</a>
+          <a href="#containers">Containers</a>
           <a href="#ui">UI</a>
-          <a href="#product-ui">Путь товара</a>
+          <a href="#product-ui">Product path</a>
           <a href="#cli">CLI</a>
           <a href="#api">API</a>
-          <a href="#troubleshooting">Диагностика</a>
+          <a href="#troubleshooting">Diagnostics</a>
         </nav>
       </header>
 
@@ -38,17 +38,17 @@
         <section class="hero-section compact-hero">
           <div class="hero-copy">
             <p class="eyebrow">Developer setup</p>
-            <h1>Локальная сеть из трёх Morpheus marketplace-серверов.</h1>
+            <h1>A local network of three Morpheus marketplace servers.</h1>
             <p class="lead">
-              Это окружение поднимает books, cases и fashion instances с отдельными Synapse,
-              Postgres и Morpheus runtime. Оно нужно, чтобы разработчик видел весь путь:
-              публикация товара, federation catalog visibility, покупка, order room, seller lifecycle,
-              admin projections и диагностика ошибок.
+              This environment starts books, cases, and fashion instances with separate Synapse,
+              Postgres, and Morpheus runtimes. It lets a developer observe the full path:
+              product publication, federated catalog visibility, purchase, order room, seller lifecycle,
+              admin projections, and error diagnostics.
             </p>
             <div class="hero-actions">
-              <a class="btn primary" href="#start">Запуск</a>
-              <a class="btn ghost" href="#roles">Открыть по роли</a>
-              <a class="btn ghost" href="index.html">К общей документации</a>
+              <a class="btn primary" href="#start">Start</a>
+              <a class="btn ghost" href="#roles">Open by role</a>
+              <a class="btn ghost" href="index.html">General documentation</a>
             </div>
           </div>
           <div class="hero-panel mini-map" aria-label="Three instance federation map">
@@ -73,17 +73,17 @@
         <div class="content-grid">
           <aside class="sidebar" aria-label="Dev documentation outline">
             <nav>
-              <a href="#roles">1. Открыть по роли</a>
-              <a href="#overview">2. Что это за окружение</a>
-              <a href="#start">3. Запуск и остановка</a>
-              <a href="#containers">4. Контейнеры</a>
-              <a href="#expected">5. Что должен увидеть разработчик</a>
-              <a href="#ui">6. UI кабинеты</a>
-              <a href="#product-ui">7. Путь товара в UI</a>
-              <a href="#cli">8. CLI путь</a>
-              <a href="#api">9. API путь</a>
-              <a href="#internals">10. Как это работает внутри</a>
-              <a href="#troubleshooting">11. Диагностика</a>
+              <a href="#roles">1. Open by role</a>
+              <a href="#overview">2. Environment purpose</a>
+              <a href="#start">3. Start and stop</a>
+              <a href="#containers">4. Containers</a>
+              <a href="#expected">5. Expected state</a>
+              <a href="#ui">6. UI workspaces</a>
+              <a href="#product-ui">7. Product path in UI</a>
+              <a href="#cli">8. CLI path</a>
+              <a href="#api">9. API path</a>
+              <a href="#internals">10. Runtime internals</a>
+              <a href="#troubleshooting">11. Diagnostics</a>
             </nav>
           </aside>
 
@@ -91,15 +91,15 @@
             <section id="roles" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Open by role</p>
-                <h2>1. Куда идти разработчику, админу, seller и buyer</h2>
+                <h2>1. Where developers, admins, sellers, and buyers should go</h2>
               </div>
               <div class="role-grid">
                 <article class="role-card admin-role">
                   <span class="role-kicker">Admin</span>
-                  <h3>Операционный кабинет</h3>
+                  <h3>Operations workspace</h3>
                   <p>
-                    Проверить health/readiness, tokens, allowlist, projection counters,
-                    validation stream, catalog rebuild и order replay.
+                    Check health/readiness, tokens, allowlist, projection counters,
+                    validation stream, catalog rebuild, order replay, and EVM escrow watcher state.
                   </p>
                   <div class="role-links">
                     <a class="inline-link" href="http://127.0.0.1:18081/ui/admin">books admin</a>
@@ -109,10 +109,10 @@
                 </article>
                 <article class="role-card seller-role">
                   <span class="role-kicker">Seller</span>
-                  <h3>Рабочее место продавца</h3>
+                  <h3>Seller workspace</h3>
                   <p>
-                    Announce seller, publish product/offer, увидеть order queue,
-                    принять order, провести payment/entitlement lifecycle и снять offer.
+                    Announce a seller, publish products/offers, review the order queue,
+                    accept orders, run payment/entitlement lifecycle actions, and withdraw offers.
                   </p>
                   <div class="role-links">
                     <a class="inline-link" href="http://127.0.0.1:18081/ui/seller">books seller</a>
@@ -122,10 +122,10 @@
                 </article>
                 <article class="role-card buyer-role">
                   <span class="role-kicker">Buyer</span>
-                  <h3>Marketplace покупателя</h3>
+                  <h3>Buyer marketplace</h3>
                   <p>
-                    Обновить catalog, выбрать offer, создать order, увидеть настоящий
-                    backend-owned Matrix room id и отследить/cancel order.
+                    Refresh the catalog, choose an offer, create an order, see the real
+                    backend-owned Matrix room id, and track or cancel the order.
                   </p>
                   <div class="role-links">
                     <a class="inline-link" href="http://127.0.0.1:18081/ui/buyer">books buyer</a>
@@ -135,13 +135,13 @@
                 </article>
                 <article class="role-card developer-role">
                   <span class="role-kicker">Developer</span>
-                  <h3>Runbook и интеграция</h3>
+                  <h3>Runbook and integration</h3>
                   <p>
-                    Понять контейнеры, команды запуска, expected state, CLI/API сценарии,
-                    federation smoke и диагностику проблем.
+                    Understand containers, startup commands, expected state, CLI/API scenarios,
+                    federation smoke tests, and troubleshooting.
                   </p>
                   <div class="role-links">
-                    <a class="inline-link" href="#start">Запуск</a>
+                    <a class="inline-link" href="#start">Start</a>
                     <a class="inline-link" href="#cli">CLI</a>
                     <a class="inline-link" href="#api">API</a>
                   </div>
@@ -152,31 +152,31 @@
             <section id="overview" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Purpose</p>
-                <h2>2. Что это за developer setup</h2>
+                <h2>2. What this developer setup is</h2>
               </div>
               <p>
-                `make e2e-three-synapse` поднимает локальную federation-сеть, которая не является чистым mock-ом:
-                seller writes проходят через Morpheus API, Matrix publisher, Synapse, Application Service ingest,
-                protocol validation и Postgres projections. При этом payment adapter в dev runtime остаётся `mock`,
-                а remote catalog visibility сейчас строится trusted Morpheus peer indexer-ом по API.
-                Order flow использует настоящие backend-owned Matrix order rooms.
+                `make e2e-three-synapse` starts a local federation network that is not a pure mock:
+                seller writes go through the Morpheus API, Matrix publisher, Synapse, Application Service ingest,
+                protocol validation, and Postgres projections. The dev runtime still uses the `mock`
+                payment adapter by default, while remote catalog visibility is currently built by a trusted
+                Morpheus peer API indexer. Order flow uses real backend-owned Matrix order rooms.
               </p>
               <div class="principle-grid compact-grid">
                 <article class="info-card">
-                  <h3>Три независимых instance</h3>
-                  <p>`books.example`, `cases.example`, `fashion.example` имеют разные configs, DB, Synapse homeserver и Morpheus server.</p>
+                  <h3>Three independent instances</h3>
+                  <p>`books.example`, `cases.example`, and `fashion.example` have separate configs, DBs, Synapse homeservers, and Morpheus servers.</p>
                 </article>
                 <article class="info-card">
-                  <h3>Один Docker network</h3>
-                  <p>Контейнеры общаются по service DNS. Federation domains резолвятся не в Synapse, а в nginx TLS proxy.</p>
+                  <h3>One Docker network</h3>
+                  <p>Containers communicate through service DNS. Federation domains resolve to nginx TLS proxies, not directly to Synapse.</p>
                 </article>
                 <article class="info-card">
-                  <h3>Проверяемый seed</h3>
-                  <p>Скрипт seed-ит 14 sellers, 28 products, 28 offers и один cross-instance completed order.</p>
+                  <h3>Verifiable seed</h3>
+                  <p>The script seeds 14 sellers, 28 products, 28 offers, and one cross-instance completed order.</p>
                 </article>
                 <article class="info-card">
-                  <h3>Реальные UI/API/CLI</h3>
-                  <p>Один и тот же backend доступен через `/ui/*`, HTTP endpoints и `morpheus` CLI.</p>
+                  <h3>Real UI/API/CLI</h3>
+                  <p>The same backend is available through `/ui/*`, HTTP endpoints, and the `morpheus` CLI.</p>
                 </article>
               </div>
             </section>
@@ -184,71 +184,71 @@
             <section id="start" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Runbook</p>
-                <h2>3. Запуск, проверка и остановка</h2>
+                <h2>3. Start, check, and stop</h2>
               </div>
               <div class="steps">
                 <article>
-                  <h3>Запустить всю federation-сеть</h3>
+                  <h3>Start the full federation network</h3>
                   <pre><code>make e2e-three-synapse</code></pre>
                   <p>
-                    Команда генерирует Synapse configs и local CA, собирает Morpheus image, поднимает контейнеры,
-                    ждёт readiness, проверяет federation smoke, запускает demo seed и сверяет projection counts.
+                    The command generates Synapse configs and a local CA, builds the Morpheus image, starts containers,
+                    waits for readiness, checks federation smoke, runs the demo seed, and verifies projection counts.
                   </p>
                 </article>
                 <article>
-                  <h3>Быстро проверить, что сервисы живы</h3>
+                  <h3>Quickly check that services are alive</h3>
                   <pre><code>curl -fsS http://127.0.0.1:18081/readyz
 curl -fsS http://127.0.0.1:18082/readyz
 curl -fsS http://127.0.0.1:18083/readyz</code></pre>
-                  <p>Каждый endpoint должен вернуть `{"status":"ready"}`.</p>
+                  <p>Each endpoint should return `{"status":"ready"}`.</p>
                 </article>
                 <article>
-                  <h3>Остановить и очистить данные E2E</h3>
+                  <h3>Stop and remove E2E data</h3>
                   <pre><code>make e2e-three-synapse-down</code></pre>
                   <p>
-                    Это делает `docker compose -f docker-compose.e2e.yml down -v` и удаляет Synapse sqlite
-                    файлы из `.local/e2e/synapse-*`. Docker build cache при этом не должен удаляться.
+                    This runs `docker compose -f docker-compose.e2e.yml down -v` and removes Synapse sqlite
+                    files from `.local/e2e/synapse-*`. Docker build cache is intentionally left intact.
                   </p>
                 </article>
               </div>
               <div class="callout success">
-                Последняя строка успешного запуска: `three-synapse e2e ok`. Перед ней должны быть
-                `federation smoke ok (...)` и `demo seed ok`.
+                The final line of a successful run is `three-synapse e2e ok`. Before it, you should see
+                `federation smoke ok (...)` and `demo seed ok`.
               </div>
             </section>
 
             <section id="containers" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Docker topology</p>
-                <h2>4. Какие контейнеры создаются и зачем</h2>
+                <h2>4. Which containers are created and why</h2>
               </div>
               <div class="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>Группа</th>
-                      <th>Контейнеры</th>
-                      <th>Назначение</th>
-                      <th>Порты / DNS</th>
+                      <th>Group</th>
+                      <th>Containers</th>
+                      <th>Purpose</th>
+                      <th>Ports / DNS</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
                       <td>Postgres</td>
                       <td><code>postgres-books</code>, <code>postgres-cases</code>, <code>postgres-fashion</code></td>
-                      <td>Отдельная база Morpheus для raw events, idempotency keys и projections каждого instance.</td>
-                      <td>Внутри сети: service DNS. DB/user/password: <code>morpheus</code>.</td>
+                      <td>Separate Morpheus database for raw events, idempotency keys, and projections for each instance.</td>
+                      <td>Inside the network: service DNS. DB/user/password: <code>morpheus</code>.</td>
                     </tr>
                     <tr>
                       <td>Synapse</td>
                       <td><code>synapse-books</code>, <code>synapse-cases</code>, <code>synapse-fashion</code></td>
-                      <td>Matrix homeserver для local AS user, catalog rooms, order rooms и federation traffic.</td>
+                      <td>Matrix homeserver for local AS users, catalog rooms, order rooms, and federation traffic.</td>
                       <td>Host: <code>18008</code>, <code>18009</code>, <code>18010</code> -> container <code>8008</code>.</td>
                     </tr>
                     <tr>
                       <td>Federation proxy</td>
                       <td><code>federation-books</code>, <code>federation-cases</code>, <code>federation-fashion</code></td>
-                      <td>nginx TLS endpoint на <code>8448</code> для Matrix federation, с сертификатами от local CA.</td>
+                      <td>nginx TLS endpoint on <code>8448</code> for Matrix federation, using certificates from the local CA.</td>
                       <td>Network aliases: <code>books.example</code>, <code>cases.example</code>, <code>fashion.example</code>.</td>
                     </tr>
                     <tr>
@@ -285,35 +285,35 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
             <section id="expected" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Expected state</p>
-                <h2>5. Что разработчик должен увидеть после запуска</h2>
+                <h2>5. What a developer should see after startup</h2>
               </div>
               <div class="journey-sequence">
                 <article>
                   <span>01</span>
                   <div>
                     <h3>Terminal output</h3>
-                    <p>Команда заканчивается строками `federation smoke ok (...)`, `demo seed ok`, `three-synapse e2e ok`.</p>
+                    <p>The command ends with `federation smoke ok (...)`, `demo seed ok`, and `three-synapse e2e ok`.</p>
                   </div>
                 </article>
                 <article>
                   <span>02</span>
                   <div>
                     <h3>Catalog projections</h3>
-                    <p>В каждом Postgres ожидается 14 sellers, 28 products, 28 offers. Это сумма local seed и trusted remote catalog index.</p>
+                    <p>Each Postgres should contain 14 sellers, 28 products, and 28 offers. This is the sum of local seed data and the trusted remote catalog index.</p>
                   </div>
                 </article>
                 <article>
                   <span>03</span>
                   <div>
                     <h3>Cross-instance order</h3>
-                    <p>`fashion.example` содержит seeded order/payment/entitlement для покупки fashion offer buyer-ом с `books.example`.</p>
+                    <p>`fashion.example` contains a seeded order/payment/entitlement for a fashion offer bought by a `books.example` buyer.</p>
                   </div>
                 </article>
                 <article>
                   <span>04</span>
                   <div>
-                    <h3>UI кабинеты</h3>
-                    <p>Admin показывает health/allowlist/counters/events, seller показывает storefront/orders, buyer показывает catalog grid и orders.</p>
+                    <h3>UI workspaces</h3>
+                    <p>Admin shows health/allowlist/counters/events, seller shows storefront/orders, and buyer shows the catalog grid and orders.</p>
                   </div>
                 </article>
               </div>
@@ -322,12 +322,12 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
             <section id="ui" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Browser surfaces</p>
-                <h2>6. UI кабинеты: куда ходить и что проверять</h2>
+                <h2>6. UI workspaces: where to go and what to check</h2>
               </div>
               <p>
-                В локальном/E2E режиме UI использует bearer token из input-а и хранит его только в `localStorage`.
-                Production UI может работать через OIDC SSO и HttpOnly `morpheus_session` cookie без browser bearer tokens.
-                Для E2E placeholders: `admin-token`, `seller-token`, `buyer-token`. UI не выдаёт secrets с backend-а.
+                In local/E2E mode, the UI uses a bearer token entered in the input and stores it only in `localStorage`.
+                Production UI can use OIDC SSO and an HttpOnly `morpheus_session` cookie without browser bearer tokens.
+                E2E placeholders are `admin-token`, `seller-token`, and `buyer-token`. The UI does not issue backend secrets.
               </p>
               <div class="screenshot-grid">
                 <figure class="screenshot-card">
@@ -336,7 +336,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                   </div>
                   <figcaption>
                     <strong>Admin Command Center</strong>
-                    <span>Проверить health/ready, config, allowlist, projection counters, events, catalog rebuild, order replay.</span>
+                    <span>Check health/ready, config, allowlist, projection counters, events, catalog rebuild, order replay, and EVM escrow watcher state.</span>
                   </figcaption>
                 </figure>
                 <figure class="screenshot-card">
@@ -345,7 +345,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                   </div>
                   <figcaption>
                     <strong>Seller Store</strong>
-                    <span>Загрузить cover, заполнить Quick Add, опубликовать listing, смотреть orders и выполнять lifecycle на карточке заказа.</span>
+                    <span>Upload a cover, fill Quick Add, publish a listing, inspect orders, and run lifecycle actions from each order card.</span>
                   </figcaption>
                 </figure>
                 <figure class="screenshot-card">
@@ -354,7 +354,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                   </div>
                   <figcaption>
                     <strong>Buyer Marketplace</strong>
-                    <span>Обновить catalog, выбрать offer, создать order, увидеть реальный room_id, отслеживать или отменить order.</span>
+                    <span>Refresh the catalog, choose an offer, create an order, see the real room_id, and track or cancel the order.</span>
                   </figcaption>
                 </figure>
               </div>
@@ -362,10 +362,10 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                 <table>
                   <thead>
                     <tr>
-                      <th>Роль</th>
+                      <th>Role</th>
                       <th>URL</th>
                       <th>Token</th>
-                      <th>Что проверить</th>
+                      <th>What to check</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -395,82 +395,93 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
             <section id="product-ui" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">UI customer journey</p>
-                <h2>7. Путь товара в UI: публикация, покупка, lifecycle, снятие</h2>
+                <h2>7. Product path in the UI: publish, buy, lifecycle, withdraw</h2>
               </div>
               <div class="journey-grid">
                 <article class="journey-card">
                   <span class="journey-index">S</span>
-                  <h3>Seller публикует товар</h3>
+                  <h3>Seller publishes a product</h3>
                   <ol>
-                    <li>Открыть <a class="inline-link" href="http://127.0.0.1:18081/ui/seller"><code>http://127.0.0.1:18081/ui/seller</code></a>.</li>
-                    <li>Проверить token `seller-token` или ввести свой seller bearer.</li>
-                    <li>При необходимости загрузить cover image. UI сожмёт картинку в браузере и добавит её в product media metadata.</li>
-                    <li>Заполнить title/category и price/currency.</li>
-                    <li>Нажать `Publish listing`: UI одним действием активирует seller, сохраняет product и публикует offer.</li>
-                    <li>После projection refresh карточка появляется в storefront и в buyer catalog.</li>
+                    <li>Open <a class="inline-link" href="http://127.0.0.1:18081/ui/seller"><code>http://127.0.0.1:18081/ui/seller</code></a>.</li>
+                    <li>Confirm the `seller-token` token or enter your own seller bearer token.</li>
+                    <li>Optionally upload a cover image. The UI compresses it in the browser and adds it to product media metadata.</li>
+                    <li>Fill title/category and price/currency.</li>
+                    <li>Click `Publish listing`: the UI activates the seller, saves the product, and publishes the offer in one action.</li>
+                    <li>After projection refresh, the card appears in the storefront and buyer catalog.</li>
                   </ol>
                 </article>
                 <article class="journey-card">
                   <span class="journey-index">B</span>
-                  <h3>Buyer покупает</h3>
+                  <h3>Buyer purchases</h3>
                   <ol>
-                    <li>Открыть <a class="inline-link" href="http://127.0.0.1:18081/ui/buyer"><code>http://127.0.0.1:18081/ui/buyer</code></a>.</li>
-                    <li>Нажать `Refresh catalog`; UI читает sellers/products/offers projections.</li>
-                    <li>Нажать `Buy` на offer. Checkout получает offer id, amount и currency из projection.</li>
-                    <li>Нажать `Create order`: `POST /api/v1/buyer/orders` без editable `room_id`.</li>
-                    <li>Backend создаёт private Matrix order room, приглашает seller/arbiter AS users и возвращает реальный `room_id`.</li>
-                    <li>До прихода AS projection UI показывает submitted/pending state и автоматически обновляет orders.</li>
-                    <li>Buyer orders panel показывает created/accepted/payment/entitlement/completed timeline.</li>
+                    <li>Open <a class="inline-link" href="http://127.0.0.1:18081/ui/buyer"><code>http://127.0.0.1:18081/ui/buyer</code></a>.</li>
+                    <li>Click `Refresh catalog`; the UI reads seller/product/offer projections.</li>
+                    <li>Click `Buy` on an offer. Checkout receives offer id, amount, and currency from the projection.</li>
+                    <li>Click `Create order`: `POST /api/v1/buyer/orders` has no editable `room_id`.</li>
+                    <li>The backend creates a private Matrix order room, invites seller/arbiter AS users, and returns the real `room_id`.</li>
+                    <li>Until AS projection arrives, the UI shows submitted/pending state and refreshes orders automatically.</li>
+                    <li>The buyer orders panel shows the created/accepted/payment/entitlement/completed timeline.</li>
                   </ol>
                 </article>
                 <article class="journey-card">
                   <span class="journey-index">L</span>
-                  <h3>Seller закрывает lifecycle</h3>
+                  <h3>Seller closes the lifecycle</h3>
                   <ol>
-                    <li>Открыть seller UI того instance, которому принадлежит seller id.</li>
-                    <li>Открыть вкладку `Orders`. Верхней ручной формы order id больше нет: управлять нужно кнопкой внутри конкретной карточки заказа.</li>
-                    <li>Нажать `Accept` на нужной карточке: seller backend lazily join-ится в order room перед publish.</li>
-                    <li>На той же карточке нажать следующий доступный шаг: `Intent`, затем `Capture`.</li>
-                    <li>Затем нажать `Grant`: entitlement grant event фиксирует внешний доступ или license ref.</li>
-                    <li>Нажать `Complete`: order становится completed, купленный offer автоматически снимается с будущей продажи, admin counters обновляются.</li>
+                    <li>Open the seller UI for the instance that owns the seller id.</li>
+                    <li>Open the `Orders` tab. There is no top-level manual order id form; use buttons inside the specific order card.</li>
+                    <li>Click `Accept` on the target card: the seller backend lazily joins the order room before publishing.</li>
+                    <li>On the same card, click the next available step: `Intent`, then `Capture`.</li>
+                    <li>Then click `Grant`: the entitlement grant event records external access or a license reference.</li>
+                    <li>Click `Complete`: the order becomes completed, the purchased offer is automatically withdrawn from future sales, and admin counters update.</li>
                   </ol>
                 </article>
                 <article class="journey-card">
                   <span class="journey-index">W</span>
-                  <h3>Seller снимает offer с продажи</h3>
+                  <h3>Seller withdraws an offer</h3>
                   <ol>
-                    <li>В seller storefront нажать `Withdraw` на карточке offer или выполнить `seller offer withdraw` через CLI/API.</li>
-                    <li>Вернуться в <a class="inline-link" href="http://127.0.0.1:18081/ui/buyer"><code>/ui/buyer</code></a>; catalog обновляется автоматически, при необходимости нажать `Refresh catalog`.</li>
-                    <li>Offer должен исчезнуть из discovery для новых покупателей.</li>
-                    <li>Если buyer успел открыть stale карточку и нажал `Create order`, backend возвращает `409 OFFER_WITHDRAWN`.</li>
-                    <li>Открыть <a class="inline-link" href="http://127.0.0.1:18081/ui/admin"><code>/ui/admin</code></a> и проверить auto-refresh counters/events; `rebuild catalog` нужен только для ручной переиндексации.</li>
-                    <li>Уже созданные orders не переписываются: они продолжают lifecycle по зафиксированным terms/hash.</li>
-                    <li>Это важное разделение: withdrawal влияет на будущий catalog discovery, а не отменяет прошлые сделки.</li>
+                    <li>In the seller storefront, click `Withdraw` on the offer card or run `seller offer withdraw` through CLI/API.</li>
+                    <li>Return to <a class="inline-link" href="http://127.0.0.1:18081/ui/buyer"><code>/ui/buyer</code></a>; the catalog refreshes automatically, or click `Refresh catalog` if needed.</li>
+                    <li>The offer should disappear from discovery for new buyers.</li>
+                    <li>If a buyer opened a stale card and clicks `Create order`, the backend returns `409 OFFER_WITHDRAWN`.</li>
+                    <li>Open <a class="inline-link" href="http://127.0.0.1:18081/ui/admin"><code>/ui/admin</code></a> and check auto-refresh counters/events; `rebuild catalog` is only needed for manual reindexing.</li>
+                    <li>Already-created orders are not rewritten: they continue their lifecycle under the fixed terms/hash.</li>
+                    <li>This distinction matters: withdrawal affects future catalog discovery, not past trades.</li>
+                  </ol>
+                </article>
+                <article class="journey-card">
+                  <span class="journey-index">E</span>
+                  <h3>EVM escrow wallet path</h3>
+                  <ol>
+                    <li>Run `make e2e-evm-escrow` to start Anvil, deploy the Vyper escrow, launch Morpheus with EVM escrow enabled, and exercise the local flow.</li>
+                    <li>For an EVM escrow order, the seller card uses `/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent` to create deposit instructions.</li>
+                    <li>The buyer wallet action calls approve and deposit through viem; the embedded watcher projects authorized payment state from finalized logs.</li>
+                    <li>The seller can release escrow, or the admin/arbiter wallet can refund or partially refund from the admin UI.</li>
+                    <li>Use `GET /admin/evm-escrow/status` and `POST /admin/evm-escrow/replay` to inspect or replay watcher indexing.</li>
                   </ol>
                 </article>
               </div>
               <div class="callout">
-                Cancellation и withdrawal имеют разные смыслы. Buyer cancel валиден только до payment/entitlement/completion.
-                Seller offer withdraw снимает offer из будущего catalog discovery, но уже созданные orders продолжают жить
-                по зафиксированным terms/hash. В UI это проверяется как наблюдаемый результат: после withdraw
-                buyer catalog больше не показывает снятый offer, а direct stale order create получает `409 OFFER_WITHDRAWN`.
+                Cancellation and withdrawal mean different things. Buyer cancel is valid only before
+                payment/entitlement/completion. Seller offer withdraw removes the offer from future catalog discovery,
+                but already-created orders continue under their fixed terms/hash. In the UI this is observable:
+                after withdrawal, buyer catalog no longer shows the offer, while direct stale order create receives `409 OFFER_WITHDRAWN`.
               </div>
               <div class="callout">
-                Remote catalog indexer работает устойчиво к временной недоступности trusted peer. Если peer API не отвечает,
-                sync report помечается как `cached` с кодом `REMOTE_CATALOG_UNAVAILABLE`, а buyer discovery продолжает
-                показывать последние успешно принятые projections вместо пустого каталога.
+                The remote catalog indexer is resilient to temporary trusted-peer unavailability. If a peer API does not respond,
+                the sync report is marked `cached` with `REMOTE_CATALOG_UNAVAILABLE`, and buyer discovery continues to show
+                the last successfully accepted projections instead of an empty catalog.
               </div>
             </section>
 
             <section id="cli" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">CLI journey</p>
-                <h2>8. То же через CLI</h2>
+                <h2>8. The same path through CLI</h2>
               </div>
               <p>
-                CLI JSON-first. Глобальные флаги: `--server-url`, `--token`, `--pretty`. Если `--token`
-                не задан, CLI берёт `MORPHEUS_ADMIN_TOKEN`, `MORPHEUS_SELLER_TOKEN`, `MORPHEUS_BUYER_TOKEN`
-                в зависимости от команды.
+                The CLI is JSON-first. Global flags are `--server-url`, `--token`, and `--pretty`.
+                If `--token` is omitted, the CLI reads `MORPHEUS_ADMIN_TOKEN`, `MORPHEUS_SELLER_TOKEN`,
+                or `MORPHEUS_BUYER_TOKEN` depending on the command.
               </p>
               <div class="api-doc-grid">
                 <article>
@@ -511,7 +522,7 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                   <code>morpheus conformance run</code>
                 </article>
               </div>
-              <h3 class="subheading">Минимальный CLI happy path</h3>
+              <h3 class="subheading">Minimal CLI happy path</h3>
               <pre><code>export MORPHEUS_ADMIN_TOKEN=admin-token
 export MORPHEUS_SELLER_TOKEN=seller-token
 export MORPHEUS_BUYER_TOKEN=buyer-token
@@ -552,22 +563,22 @@ cargo run -p morpheus-cli -- --server-url "$SERVER" seller offer upsert --json '
   "availability_mode":"unlimited"
 }'</code></pre>
               <p>
-                Дальше buyer создаёт order через `morpheus buyer order create --json '{...}'`.
-                Если `order_room_alias_prefix` настроен, `room_id` в body не нужен: backend создаёт Matrix room
-                и возвращает фактический `room_id`. Seller затем вызывает `seller order accept`, `seller payment intent`,
-                `seller payment capture`, `seller entitlement grant`, `seller order complete`.
+                Next, the buyer creates an order through `morpheus buyer order create --json '{...}'`.
+                If `order_room_alias_prefix` is configured, the body does not need a `room_id`: the backend creates
+                the Matrix room and returns the actual `room_id`. The seller then calls `seller order accept`,
+                `seller payment intent`, `seller payment capture`, `seller entitlement grant`, and `seller order complete`.
               </p>
             </section>
 
             <section id="api" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">HTTP API journey</p>
-                <h2>9. То же через HTTP API</h2>
+                <h2>9. The same path through HTTP API</h2>
               </div>
               <p>
-                HTTP API принимает role bearer tokens для CLI/dev automation или `morpheus_session` cookie после OIDC SSO.
-                Seller endpoints требуют seller role и local seller actor. Buyer order endpoints требуют buyer role
-                и local customer actor. Admin endpoints требуют admin role.
+                The HTTP API accepts role bearer tokens for CLI/dev automation or a `morpheus_session` cookie after OIDC SSO.
+                Seller endpoints require the seller role and a local seller actor. Buyer order endpoints require the buyer role
+                and a local customer actor. Admin endpoints require the admin role.
               </p>
               <div class="api-doc-grid">
                 <article>
@@ -582,6 +593,7 @@ cargo run -p morpheus-cli -- --server-url "$SERVER" seller offer upsert --json '
                   <code>GET /api/v1/catalog/sellers</code>
                   <code>GET /api/v1/catalog/products</code>
                   <code>GET /api/v1/catalog/offers</code>
+                  <code>GET /api/v1/catalog/offers/{offer_id}</code>
                   <code>POST /api/v1/buyer/orders</code>
                   <code>GET /api/v1/buyer/orders</code>
                   <code>POST /api/v1/buyer/orders/{order_id}/cancel</code>
@@ -592,12 +604,13 @@ cargo run -p morpheus-cli -- --server-url "$SERVER" seller offer upsert --json '
                   <code>POST /api/v1/seller/orders/{order_id}/accept</code>
                   <code>POST /api/v1/seller/orders/{order_id}/reject</code>
                   <code>POST /api/v1/seller/orders/{order_id}/payment-intent</code>
+                  <code>POST /api/v1/seller/orders/{order_id}/evm-escrow/payment-intent</code>
                   <code>POST /api/v1/seller/orders/{order_id}/payment-capture</code>
                   <code>POST /api/v1/seller/orders/{order_id}/entitlement-grant</code>
                   <code>POST /api/v1/seller/orders/{order_id}/complete</code>
                 </article>
               </div>
-              <h3 class="subheading">Пример order create</h3>
+              <h3 class="subheading">Order create example</h3>
               <pre><code>curl -fsS -X POST "$SERVER/api/v1/buyer/orders" \
   -H "authorization: Bearer buyer-token" \
   -H "content-type: application/json" \
@@ -623,66 +636,82 @@ cargo run -p morpheus-cli -- --server-url "$SERVER" seller offer upsert --json '
     "expires_at":"2026-05-06T10:30:00Z"
   }'</code></pre>
               <div class="callout success">
-                Успешный ответ `202 Accepted` содержит real `room_id`. Если Synapse не смог создать federated room
-                и пригласить remote AS users, create order должен честно вернуть `502`, а не silently degrade.
+                A successful `202 Accepted` response contains the real `room_id`. If Synapse cannot create the
+                federated room and invite remote AS users, create order must return `502` instead of silently degrading.
               </div>
-              <h3 class="subheading">Admin API для проверки</h3>
+              <h3 class="subheading">Admin API checks</h3>
               <pre><code>curl -fsS -H "authorization: Bearer admin-token" "$SERVER/admin/config"
 curl -fsS -H "authorization: Bearer admin-token" "$SERVER/admin/allowlist"
 curl -fsS -H "authorization: Bearer admin-token" "$SERVER/admin/projections/summary"
+curl -fsS -H "authorization: Bearer admin-token" "$SERVER/admin/evm-escrow/status"
 curl -fsS -X POST -H "authorization: Bearer admin-token" "$SERVER/admin/catalog/rebuild"</code></pre>
             </section>
 
             <section id="internals" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Runtime internals</p>
-                <h2>10. Как это работает внутри</h2>
+                <h2>10. How it works internally</h2>
               </div>
               <div class="pipeline wide-pipeline">
                 <div><span>01</span><strong>UI / CLI / HTTP client</strong><small>role token + JSON request</small></div>
                 <div><span>02</span><strong>Morpheus API</strong><small>actor scope, DTO validation, state prechecks</small></div>
-                <div><span>03</span><strong>Matrix publisher</strong><small>catalog room или backend-owned order room</small></div>
+                <div><span>03</span><strong>Matrix publisher</strong><small>catalog room or backend-owned order room</small></div>
                 <div><span>04</span><strong>Synapse federation</strong><small>room membership, remote invites, AS transactions</small></div>
                 <div><span>05</span><strong>Protocol validation</strong><small>envelope, authority, event-specific body, lifecycle order</small></div>
                 <div><span>06</span><strong>Postgres projections</strong><small>catalog, orders, payments, entitlements, admin counters</small></div>
               </div>
               <div class="callout">
-                Секреты не попадают в Matrix events: payment secrets, bearer URLs, credentials, license keys и delivery files
-                остаются вне `io.marketplace.*`. В protocol событиях используются refs, hashes и evidence metadata.
+                Secrets do not enter Matrix events: payment secrets, bearer URLs, credentials, license keys, and delivery files
+                stay outside `io.marketplace.*`. Protocol events use references, hashes, and evidence metadata.
               </div>
             </section>
 
             <section id="troubleshooting" class="doc-section">
               <div class="section-heading">
                 <p class="eyebrow">Troubleshooting</p>
-                <h2>11. Диагностика developer setup</h2>
+                <h2>11. Developer setup diagnostics</h2>
               </div>
               <details open>
-                <summary>Сборка Docker снова качает Rust deps</summary>
+                <summary>Docker build downloads Rust dependencies again</summary>
                 <p>
-                  Первый build после cache-фича всё равно прогревает cache. Повторные build-и используют BuildKit cache mounts
-                  для Cargo registry/git/target. Cache сбрасывается `docker builder prune`, `docker system prune` или очисткой Docker Desktop.
+                  The first build after the cache feature still warms the cache. Later builds use BuildKit cache mounts
+                  for Cargo registry/git/target. Cache is reset by `docker builder prune`, `docker system prune`, or Docker Desktop cleanup.
                 </p>
               </details>
               <details>
-                <summary>Order create возвращает 502</summary>
+                <summary>Order create returns 502</summary>
                 <p>
-                  Проверьте federation proxies, DNS aliases `books.example`, `cases.example`, `fashion.example`,
-                  TLS CA trust в Synapse и то, что remote AS users могут быть invited/joined.
+                  Check federation proxies, DNS aliases `books.example`, `cases.example`, `fashion.example`,
+                  TLS CA trust in Synapse, and whether remote AS users can be invited and joined.
                 </p>
               </details>
               <details>
-                <summary>Catalog не видит remote товары</summary>
+                <summary>Catalog does not show remote products</summary>
                 <p>
-                  Проверьте allowlist capabilities `catalog` и `indexing`, `morpheus_url` в config/e2e/*.toml,
-                  доступность peer Morpheus API из контейнера и `POST /admin/catalog/rebuild`.
+                  Check allowlist capabilities `catalog` and `indexing`, `morpheus_url` in `config/e2e/*.toml`,
+                  peer Morpheus API reachability from the container, and `POST /admin/catalog/rebuild`.
                 </p>
               </details>
               <details>
-                <summary>UI показывает 401/403</summary>
+                <summary>UI shows 401/403</summary>
                 <p>
-                  401 обычно означает неверный bearer token для роли. 403 `ACTOR_FORBIDDEN` означает, что actor id
-                  не принадлежит local instance, например seller endpoint на books получил `seller:fashion.example:*`.
+                  401 usually means the bearer token is wrong for the role. 403 `ACTOR_FORBIDDEN` means the actor id
+                  does not belong to the local instance, for example when a books seller endpoint receives `seller:fashion.example:*`.
+                </p>
+              </details>
+              <details>
+                <summary>EVM escrow watcher is stale</summary>
+                <p>
+                  Check `GET /admin/evm-escrow/status`, `MORPHEUS_EVM_RPC_URL`, the deployed escrow address,
+                  token config, confirmations, and watcher checkpoint. After fixing the config or RPC endpoint,
+                  run `POST /admin/evm-escrow/replay`.
+                </p>
+              </details>
+              <details>
+                <summary>OIDC session is missing after login</summary>
+                <p>
+                  Check the Keycloak container, `MORPHEUS_OIDC_CLIENT_SECRET`, `MORPHEUS_SESSION_SECRET`,
+                  redirect URL `http://127.0.0.1:8080/auth/callback`, and the imported role/seller/customer claims.
                 </p>
               </details>
             </section>
