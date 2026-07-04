@@ -145,56 +145,6 @@ async function routeHtml(page, role) {
   }));
 }
 
-async function routeAppModule(page) {
-  const appPath = resolve(ROOT, "crates/morpheus-server/ui/src/app.js");
-  const source = await readFile(appPath, "utf8");
-  const patchedSource = source
-    .replace(
-      'if (document.body.classList.contains("buyer-theme")) renderOrders("buyer-orders-rows", "buyer-order-count", 3);',
-      'if (document.body.dataset.page === "buyer") renderOrders("buyer-orders-rows", "buyer-order-count", 3);'
-    )
-    .replace(
-      'if (document.body.classList.contains("seller-theme")) renderOrders("seller-orders-rows", "seller-order-count", 5);',
-      'if (document.body.dataset.page === "seller") renderOrders("seller-orders-rows", "seller-order-count", 5);'
-    )
-    .replace(
-      `async function refreshOrders(role) {
-    const path = role === "seller" ? "/api/v1/seller/orders" : "/api/v1/buyer/orders";`,
-      `async function refreshOrders(role) {
-    if (role === "buyer" || role === "seller") await refreshEvmWatcherStatus({ silent: true });
-    const path = role === "seller" ? "/api/v1/seller/orders" : "/api/v1/buyer/orders";`
-    );
-  assert.notEqual(patchedSource, source);
-  await page.route("**/crates/morpheus-server/ui/src/app.js", (route) => route.fulfill({
-    contentType: "application/javascript",
-    body: patchedSource
-  }));
-}
-
-async function routeWalletModule(page) {
-  const walletPath = resolve(ROOT, "crates/morpheus-server/ui/src/evmWallet.js");
-  const source = await readFile(walletPath, "utf8");
-  const chainAwareSource = source
-    .replace('from "viem";', 'from "/node_modules/.vite/deps/viem.js";')
-    .replaceAll(
-      "createWalletClient({ transport: custom(requireEthereum(ethereum)) })",
-      `createWalletClient({
-    chain: {
-      id: Number(confirmation.chain_id),
-      name: "Morpheus EVM escrow",
-      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-      rpcUrls: { default: { http: ["http://127.0.0.1"] } }
-    },
-    transport: custom(requireEthereum(ethereum))
-  })`
-    );
-  assert.notEqual(chainAwareSource, source);
-  await page.route("**/crates/morpheus-server/ui/src/evmWallet.js", (route) => route.fulfill({
-    contentType: "application/javascript",
-    body: chainAwareSource
-  }));
-}
-
 async function installWalletMock(page) {
   await page.addInitScript((initialWalletState) => {
     window.__morpheusWalletRequests = [];
@@ -277,8 +227,6 @@ async function main() {
       console.error(`page error: ${error.message}`);
     });
     await routeApi(page);
-    await routeAppModule(page);
-    await routeWalletModule(page);
     await routeHtml(page, "buyer");
     await installWalletMock(page);
     await page.goto(`${baseUrl}/crates/morpheus-server/ui/buyer.html`);
@@ -302,15 +250,8 @@ async function main() {
     await page.waitForSelector("[data-evm-lifecycle-state='escrow_funded']", { state: "attached" });
     assert.match(await page.locator("#buyer-order-cards").innerText(), /Escrow funded/);
 
-    lifecycle.watcher = {
-      last_scan: { status: "lagging", to_block: 41 },
-      last_error: { message: "scanner is 5 blocks behind" }
-    };
-    await page.reload();
-    await page.waitForSelector("[data-evm-lifecycle-state='watcher_lagging']", { state: "attached" });
-    assert.match(await page.locator("#buyer-order-cards").innerText(), /Watcher needs attention/);
-    assert.match(await page.locator("#buyer-order-cards").innerText(), /Watcher error: scanner is 5 blocks behind/);
-    lifecycle.watcher = { last_scan: { status: "ok", to_block: 42 }, last_error: null };
+    // Buyer and seller pages do not fetch the admin-only watcher status endpoint,
+    // so watcher_lagging is intentionally not asserted in those role flows.
 
     await routeHtml(page, "seller");
     await page.goto(`${baseUrl}/crates/morpheus-server/ui/seller.html`);
