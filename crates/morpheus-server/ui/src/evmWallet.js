@@ -74,6 +74,19 @@ export function requireEthereum(ethereum) {
   return ethereum;
 }
 
+export function walletChainFromConfirmation(confirmation) {
+  const chainId = Number(confirmation?.chain_id);
+  if (!Number.isFinite(chainId) || chainId <= 0) {
+    throw new Error("EVM chain id is not available for this order");
+  }
+  return {
+    id: chainId,
+    name: `Morpheus EVM escrow ${chainId}`,
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: { default: { http: ["http://127.0.0.1"] } }
+  };
+}
+
 export function requireRoleWallet(role, account, confirmation) {
   const actual = normalizeAddress(account);
   if (!actual) throw new Error("Connected wallet address is not available");
@@ -165,7 +178,10 @@ export function buildDepositCalls(order, account) {
 
 export async function requestEvmEscrowDeposit(order, ethereum = window.ethereum) {
   const confirmation = requireConfirmation(order);
-  const wallet = createWalletClient({ transport: custom(requireEthereum(ethereum)) });
+  const wallet = createWalletClient({
+    chain: walletChainFromConfirmation(confirmation),
+    transport: custom(requireEthereum(ethereum))
+  });
   const [account] = await wallet.requestAddresses();
   requireRoleWallet("buyer", account, confirmation);
   await switchWalletChain(ethereum, confirmation.chain_id);
@@ -192,7 +208,10 @@ export function buildReleaseCall(order) {
 
 export async function requestEvmEscrowRelease(order, ethereum = window.ethereum) {
   const confirmation = requireConfirmation(order);
-  const wallet = createWalletClient({ transport: custom(requireEthereum(ethereum)) });
+  const wallet = createWalletClient({
+    chain: walletChainFromConfirmation(confirmation),
+    transport: custom(requireEthereum(ethereum))
+  });
   const [account] = await wallet.requestAddresses();
   requireRoleWallet("seller", account, confirmation);
   await switchWalletChain(ethereum, confirmation.chain_id);
@@ -217,7 +236,10 @@ export function buildRefundCall(order) {
 
 export async function requestEvmEscrowRefund(order, ethereum = window.ethereum) {
   const confirmation = requireConfirmation(order);
-  const wallet = createWalletClient({ transport: custom(requireEthereum(ethereum)) });
+  const wallet = createWalletClient({
+    chain: walletChainFromConfirmation(confirmation),
+    transport: custom(requireEthereum(ethereum))
+  });
   const [account] = await wallet.requestAddresses();
   requireRoleWallet("arbiter", account, confirmation);
   await switchWalletChain(ethereum, confirmation.chain_id);
@@ -242,7 +264,10 @@ export function buildPartialRefundCall(order, buyerAmount) {
 
 export async function requestEvmEscrowPartialRefund(order, buyerAmount, ethereum = window.ethereum) {
   const confirmation = requireConfirmation(order);
-  const wallet = createWalletClient({ transport: custom(requireEthereum(ethereum)) });
+  const wallet = createWalletClient({
+    chain: walletChainFromConfirmation(confirmation),
+    transport: custom(requireEthereum(ethereum))
+  });
   const [account] = await wallet.requestAddresses();
   requireRoleWallet("arbiter", account, confirmation);
   await switchWalletChain(ethereum, confirmation.chain_id);

@@ -10,7 +10,8 @@ import {
   buildPartialRefundCall,
   classifyWalletError,
   requestEvmEscrowDeposit,
-  requireRoleWallet
+  requireRoleWallet,
+  walletChainFromConfirmation
 } from "./evmWallet.js";
 
 const order = {
@@ -33,6 +34,20 @@ const order = {
 assert.equal(
   evmEscrowConfirmation(order).order_hash,
   order.payment.body.confirmation.order_hash
+);
+
+const walletChain = walletChainFromConfirmation(order.payment.body.confirmation);
+assert.equal(walletChain.id, 31337);
+assert.equal(walletChain.name, "Morpheus EVM escrow 31337");
+assert.deepEqual(walletChain.nativeCurrency, { name: "Ether", symbol: "ETH", decimals: 18 });
+assert.deepEqual(walletChain.rpcUrls, { default: { http: ["http://127.0.0.1"] } });
+assert.throws(
+  () => walletChainFromConfirmation({}),
+  /EVM chain id is not available for this order/
+);
+assert.throws(
+  () => walletChainFromConfirmation({ chain_id: 0 }),
+  /EVM chain id is not available for this order/
 );
 
 const calls = buildDepositCalls(order, "0x0000000000000000000000000000000000000004");
