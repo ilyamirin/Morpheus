@@ -655,6 +655,45 @@ globalThis.MorpheusEvmWallet = {
     if (orderId) delete state.evm.pendingActions[orderId];
   }
 
+  const EVM_DEPOSIT_RESOLVED_STATUSES = new Set([
+    "payment_authorized",
+    "payment_captured",
+    "payment_refunded",
+    "refunded",
+    "entitlement_granted",
+    "entitlement_completed",
+    "completed"
+  ]);
+  const EVM_RELEASE_RESOLVED_STATUSES = new Set([
+    "payment_captured",
+    "entitlement_granted",
+    "entitlement_completed",
+    "completed"
+  ]);
+  const EVM_REFUND_RESOLVED_STATUSES = new Set(["payment_refunded", "refunded"]);
+
+  function evmPendingActionResolved(order, pending) {
+    const status = String((order && order.status) || "").toLowerCase();
+    if (!pending || !status) return false;
+    if (pending.kind === "deposit") {
+      return EVM_DEPOSIT_RESOLVED_STATUSES.has(status);
+    }
+    if (pending.kind === "release") {
+      return EVM_RELEASE_RESOLVED_STATUSES.has(status);
+    }
+    if (pending.kind === "refund" || pending.kind === "partial_refund") {
+      return EVM_REFUND_RESOLVED_STATUSES.has(status);
+    }
+    return false;
+  }
+
+  function reconcilePendingEvmActions() {
+    state.orders.forEach((order) => {
+      const pending = pendingEvmAction(order.order_id);
+      if (evmPendingActionResolved(order, pending)) clearPendingEvmAction(order);
+    });
+  }
+
   function selectedOffer(formEl) {
     const id = (formEl.elements.offer_id && formEl.elements.offer_id.value.trim()) || DEMO.offerId;
     if (state.selectedOffer && state.selectedOffer.offer_id === id) return state.selectedOffer;
@@ -1408,6 +1447,9 @@ globalThis.MorpheusEvmWallet = {
     if (!confirmation) {
       return `<div class="wallet-action-row"><span class="muted-text">Waiting for escrow payment intent.</span></div>`;
     }
+    if (pendingEvmAction(order.order_id)) return "";
+    const status = String((order && order.status) || "").toLowerCase();
+    if (status && status !== "payment_intent_created") return "";
     const hint = escrowPolicyHint(confirmation);
     const hintMarkup = hint ? `<span class="muted-text">${esc(hint)}</span>` : "";
     return `<div class="wallet-action-row"><button class="btn btn-small btn-primary" type="button" data-evm-escrow-deposit data-order-id="${esc(order.order_id || "")}">Approve and deposit</button><span class="mono">${esc(confirmation.order_hash || "order hash pending")}</span>${hintMarkup}</div>`;
@@ -1416,8 +1458,8 @@ globalThis.MorpheusEvmWallet = {
   function evmEscrowSellerReleaseAction(order) {
     if (!isEvmEscrowOrder(order)) return "";
     const confirmation = evmEscrowConfirmation(order);
-    const status = String((order && order.status) || "");
-    if (!confirmation || !/payment_authorized|payment_captured|entitlement_granted|entitlement_completed/.test(status)) {
+    const status = String((order && order.status) || "").toLowerCase();
+    if (!confirmation || pendingEvmAction(order.order_id) || status !== "payment_authorized") {
       return "";
     }
     return `<div class="wallet-action-row"><button class="btn btn-small btn-primary" type="button" data-evm-escrow-release data-order-id="${esc(order.order_id || "")}">Release escrow</button><span class="mono">${esc(confirmation.order_hash || "order hash pending")}</span></div>`;
@@ -1590,6 +1632,7 @@ globalThis.MorpheusEvmWallet = {
     if (!result.ok) return;
     state.orders = Array.isArray(result.body && result.body.orders) ? result.body.orders : [];
     if (role === "buyer") reconcilePendingOrders();
+    reconcilePendingEvmActions();
     if (role === "seller") {
       renderOrders("seller-orders-rows", "seller-order-count", 5);
       updateSellerMetrics();

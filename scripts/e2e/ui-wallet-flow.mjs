@@ -231,23 +231,25 @@ async function main() {
     await installWalletMock(page);
     await page.goto(`${baseUrl}/crates/morpheus-server/ui/buyer.html`);
     await page.waitForSelector("[data-evm-escrow-deposit]", { state: "attached" });
+    assert.match(await page.locator("#buyer-order-cards").innerText(), /Deposit window: 15 min/);
     await page.locator("[data-evm-escrow-deposit]").dispatchEvent("click", { bubbles: true });
     assert.match(await waitForResult(page, "submitted_waiting_for_watcher"), /submitted_waiting_for_watcher/);
     const buyerWalletRequestMethods = await walletRequestMethods(page);
     assert(buyerWalletRequestMethods.includes("wallet_switchEthereumChain"));
     assert(buyerWalletRequestMethods.includes("eth_sendTransaction"));
     assert.equal(await walletWriteCount(page), 2);
-    assert.equal(await page.locator("[data-evm-escrow-deposit]").count(), 1);
-    assert.match(await page.locator("#buyer-order-cards").innerText(), /Deposit window: 15 min/);
+    assert.equal(await page.locator("[data-evm-escrow-deposit]").count(), 0);
     assert.match(await page.locator("#result-panel").innerText(), /EVM escrow deposit/);
     await page.waitForSelector("[data-evm-lifecycle-state='deposit_submitted']", { state: "attached" });
     assert.match(await page.locator("#buyer-order-cards").innerText(), /Deposit submitted/);
     assert.match(await page.locator("#buyer-order-cards").innerText(), /Waiting for Morpheus watcher confirmation/);
+    assert.equal(await page.locator("[data-evm-escrow-deposit]").count(), 0);
 
     lifecycle.buyerStatus = "payment_authorized";
-    await page.reload();
+    await page.locator('[data-action="buyer-orders"]').dispatchEvent("click", { bubbles: true });
     await page.waitForSelector("[data-evm-lifecycle-state='escrow_funded']", { state: "attached" });
     assert.match(await page.locator("#buyer-order-cards").innerText(), /Escrow funded/);
+    assert.equal(await page.locator("[data-evm-escrow-deposit]").count(), 0);
 
     // Buyer and seller pages do not fetch the admin-only watcher status endpoint,
     // so watcher_lagging is intentionally not asserted in those role flows.
@@ -262,6 +264,13 @@ async function main() {
     await page.waitForSelector("[data-evm-lifecycle-state='release_submitted']", { state: "attached" });
     assert.match(await page.locator("#seller-orders-rows-cards").innerText(), /Release submitted/);
     assert.equal(await walletWriteCount(page), 1);
+    assert.equal(await page.locator("[data-evm-escrow-release]").count(), 0);
+
+    lifecycle.sellerStatus = "payment_captured";
+    await page.locator('[data-action="seller-orders"]').dispatchEvent("click", { bubbles: true });
+    await page.waitForSelector("[data-evm-lifecycle-state='captured']", { state: "attached" });
+    assert.match(await page.locator("#seller-orders-rows-cards").innerText(), /Payment captured/);
+    assert.equal(await page.locator("[data-evm-escrow-release]").count(), 0);
 
     await routeHtml(page, "admin");
     await page.goto(`${baseUrl}/crates/morpheus-server/ui/admin.html`);
