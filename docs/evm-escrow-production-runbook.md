@@ -223,6 +223,58 @@ export MORPHEUS_EVM_TESTNET_DEPLOYMENT_OUT=".local/e2e/testnet-evm-escrow.json"
 make testnet-evm-escrow
 ```
 
+### Manual Browser Testnet Rehearsal
+
+Use this rehearsal after `make testnet-evm-escrow` passes and before any
+real-money production pilot.
+
+Required setup:
+
+- Public testnet RPC in `MORPHEUS_EVM_RPC_URL`.
+- Runtime config with `[payments.evm_escrow].enabled = true`.
+- Testnet `chain_id`, `escrow_contract`, token contract, decimals, and
+  confirmations pinned in config.
+- Browser wallet funded with testnet native gas token.
+- Buyer, seller, and arbiter wallet addresses configured in the UI settings.
+- Optional `evm_escrow.explorer_base_url` in UI config for transaction links.
+
+Rehearsal path:
+
+1. Open the seller UI and accept a test order.
+2. Create the EVM escrow payment intent.
+3. Open the buyer UI with the buyer wallet selected.
+4. Confirm the status panel shows the expected chain, token, escrow contract,
+   amount, order hash, and watcher state.
+5. Click **Approve and deposit**.
+6. Confirm the UI shows submitted transaction state and does not mark escrow as
+   funded yet.
+7. Wait for watcher confirmation and refresh orders.
+8. Confirm the UI shows escrow funded from Morpheus payment state.
+9. Open the seller UI with the seller wallet selected.
+10. Click **Release escrow**.
+11. Confirm the UI shows release submitted, then payment captured only after
+    watcher evidence.
+12. Repeat the flow with a new order for full refund using the arbiter wallet.
+13. Repeat the flow with a new order for partial refund and verify buyer/seller
+    amounts before signing.
+
+Failure drills:
+
+- Switch the browser wallet to the wrong chain and verify the UI reports
+  `chain_mismatch`.
+- Connect the wrong role wallet and verify the UI blocks signing.
+- Reject the wallet signature and verify the UI reports `wallet_rejected`.
+- Stop or misconfigure the watcher and verify submitted transactions remain
+  pending instead of becoming final payment state.
+
+Evidence to keep:
+
+- Order id and payment id.
+- Chain id and escrow contract.
+- Deposit, release, refund, and partial refund transaction hashes.
+- `/admin/evm-escrow/status` response after each phase.
+- Explorer links for signed transactions.
+
 ### Audit Gate
 
 The audit checker validates that an external report exists and includes minimum
