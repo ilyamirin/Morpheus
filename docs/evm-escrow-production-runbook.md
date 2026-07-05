@@ -250,7 +250,7 @@ Rehearsal path:
 2. Create the EVM escrow payment intent.
 3. Open the buyer UI with the buyer wallet selected.
 4. Confirm the status panel shows the expected chain, token, escrow contract,
-   amount, order hash, role, and wallet address.
+   amount, order hash, and role.
 5. Click **Approve and deposit**.
 6. Confirm the UI shows submitted transaction state and does not mark escrow as
    funded yet.
@@ -264,13 +264,15 @@ Rehearsal path:
     Morpheus records watcher evidence.
 12. As an operator, verify release watcher evidence in the admin UI or
     `/admin/evm-escrow/status`.
-13. Repeat the flow with a new order for full refund: open the admin UI, provide
-    the admin token, open the EVM arbiter refund form, connect the arbiter
-    wallet, select or provide the order id, and submit a full refund.
-14. Repeat the flow with a new order for partial refund: open the admin UI,
-    provide the admin token, open the EVM arbiter refund form, connect the
-    arbiter wallet, select or provide the order id, verify buyer/seller amounts,
-    and submit a partial refund.
+13. Repeat the flow with a new, newly funded/deposited order for full refund:
+    open the admin UI, provide the admin token, open the EVM arbiter refund form,
+    connect the arbiter wallet, select or provide the order id, and submit a full
+    refund.
+14. Repeat the flow with a new, newly funded/deposited order for partial refund:
+    open the admin UI, provide the admin token, open the EVM arbiter refund form,
+    connect the arbiter wallet, select or provide the order id, enter buyer refund amount units,
+    and submit a partial refund. Verify the buyer/seller split in
+    watcher/admin evidence after confirmation.
 
 Failure drills:
 
