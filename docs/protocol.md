@@ -199,7 +199,9 @@ Rust entry points:
 
 ## Payments
 
-Payment events record protocol state and external evidence. They do not execute real payments.
+Payment events record protocol state and external evidence. The protocol does not
+execute payments by itself; payment adapters execute or verify external payment
+rails and then emit protocol-valid events.
 
 Payment lifecycle events:
 
@@ -225,7 +227,11 @@ Rules:
 - Refund amount and currency are constrained by captured amount, authorized escrow amount, and any dispute ruling.
 - Payment provider references and receipts are evidence, not secrets.
 
-The initial implementation is protocol-level only. Real payment provider adapters should sit behind a separate adapter trait and emit valid protocol events after provider verification.
+The `evm_escrow` adapter is the first real custody adapter. It keeps ERC-20 funds
+in a Vyper escrow contract and publishes `payment.authorized`,
+`payment.captured`, or `payment.refunded` only after the watcher verifies
+finalized contract logs. Wallet-submitted transaction hashes remain UX/debug
+hints until verified external evidence is accepted.
 
 ## Entitlements
 

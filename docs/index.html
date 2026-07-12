@@ -86,7 +86,7 @@
           <article>
             <span class="dot cyan"></span>
             <strong>EVM escrow MVP</strong>
-            <p>Vyper ERC-20 escrow, watcher replay, and viem wallet actions are wired for local E2E.</p>
+            <p>Vyper ERC-20 escrow, watcher replay, viem wallet actions, pending UI states, role checks, and arbiter refunds are wired for local E2E.</p>
           </article>
         </section>
 
@@ -545,6 +545,7 @@ cargo run -p morpheus-cli -- conformance run</code></pre>
                 <article>
                   <h3>EVM escrow gate</h3>
                   <pre><code>make e2e-evm-escrow
+npm run build:ui
 npm run test:ui-wallet-flow
 make coverage-payment</code></pre>
                 </article>
@@ -609,6 +610,23 @@ make coverage-payment</code></pre>
                   Check `GET /admin/evm-escrow/status`, the `MORPHEUS_EVM_RPC_URL` value, the configured
                   `chain_id`, `escrow_contract`, confirmations, and watcher checkpoint. Use
                   `POST /admin/evm-escrow/replay` after fixing RPC or deployment configuration.
+                </p>
+              </details>
+              <details>
+                <summary>EVM wallet action stays pending</summary>
+                <p>
+                  Submitted wallet transactions are not final payment state. Refresh buyer or seller orders only
+                  after the watcher has verified a finalized contract log. The UI should clear `Deposit submitted`
+                  or `Release submitted` only when the projected order status moves to `payment_authorized`,
+                  `payment_captured`, or `refunded`.
+                </p>
+              </details>
+              <details>
+                <summary>EVM wallet action fails before submitting</summary>
+                <p>
+                  Wrong role wallets, failed chain switches, and user rejection are expected pre-submit failures.
+                  The result panel reports `wallet_error`, `chain_mismatch`, or `wallet_rejected`, no escrow
+                  transaction is submitted, and the action remains available for retry with the correct wallet.
                 </p>
               </details>
               <details>

@@ -454,8 +454,11 @@ curl -fsS http://127.0.0.1:18083/readyz</code></pre>
                   <ol>
                     <li>Run `make e2e-evm-escrow` to start Anvil, deploy the Vyper escrow, launch Morpheus with EVM escrow enabled, and exercise the local flow.</li>
                     <li>For an EVM escrow order, the seller card uses `/api/v1/seller/orders/{order_id}/evm-escrow/payment-intent` to create deposit instructions.</li>
-                    <li>The buyer wallet action calls approve and deposit through viem; the embedded watcher projects authorized payment state from finalized logs.</li>
-                    <li>The seller can release escrow, or the admin/arbiter wallet can refund or partially refund from the admin UI.</li>
+                    <li>The buyer wallet action calls approve and deposit through viem, then shows `Deposit submitted` until the embedded watcher projects authorized payment state from finalized logs.</li>
+                    <li>After watcher confirmation and order refresh, the buyer card shows `Escrow funded` and removes the deposit action.</li>
+                    <li>The seller can release escrow; the seller card shows `Release submitted` until watcher evidence projects `Payment captured`, then removes the release action.</li>
+                    <li>The admin/arbiter wallet can refund or partially refund from the admin UI, with submitted transactions treated as pending evidence until watcher confirmation.</li>
+                    <li>Wrong role wallets, wrong chains, and rejected wallet requests are shown as UI errors without submitting custody-changing transactions.</li>
                     <li>Use `GET /admin/evm-escrow/status` and `POST /admin/evm-escrow/replay` to inspect or replay watcher indexing.</li>
                   </ol>
                 </article>

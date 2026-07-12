@@ -141,6 +141,51 @@ kept in the EVM log evidence for auditability.
 Buyer-submitted transaction hashes are UX hints only. Morpheus payment state must
 come from verified contract logs read through trusted RPC.
 
+## Browser Wallet Lifecycle
+
+The static buyer, seller, and admin UIs expose wallet actions only for projected
+orders that use `payment_adapter = "evm_escrow"` and include EVM confirmation
+metadata. The UI uses viem to ask the connected browser wallet to submit
+transactions, but it does not treat a submitted transaction as final settlement.
+
+Buyer path:
+
+1. `payment_intent_created` shows **Payment intent ready** with chain id, token,
+   amount units, escrow contract, order hash, deposit window, buyer review
+   window, and fee hint.
+2. **Approve and deposit** submits ERC-20 `approve` and escrow `deposit`.
+3. The card switches to **Deposit submitted**, stores the pending transaction hash,
+   hides the deposit button, and waits for watcher evidence.
+4. After order refresh returns `payment_authorized`, pending state is cleared and
+   the card shows **Escrow funded**.
+
+Seller path:
+
+1. `payment_authorized` shows **Escrow funded** and the seller/operator
+   **Release escrow** action.
+2. Submitted release switches the card to **Release submitted**, stores the
+   pending transaction hash, and hides the release button.
+3. After watcher evidence projects `payment_captured`, the card shows
+   **Payment captured** and no longer exposes release.
+
+Admin/arbiter path:
+
+- The EVM arbiter form can submit full `refund` or `partial_refund` with buyer
+  amount units.
+- Refund submissions are pending wallet actions until the watcher maps finalized
+  `EscrowRefunded` or `EscrowPartiallyRefunded` logs to Morpheus payment events.
+
+Wallet safeguards:
+
+- Buyer, seller, and arbiter actions validate that the connected wallet address
+  matches the expected role address in the payment confirmation.
+- Wrong-role wallets produce `wallet_error` and do not submit transactions.
+- Wrong-chain failures surface `chain_mismatch` and do not submit transactions.
+- User wallet rejection surfaces `wallet_rejected` and leaves the relevant action
+  available for retry.
+- Action buttons are hidden while the same order has a pending wallet action or
+  after the projected backend status has passed that action.
+
 ## Watcher Operation
 
 The embedded watcher starts only when `[payments.evm_escrow].enabled = true`.
@@ -162,6 +207,24 @@ is updated after the watcher verifies finalized logs.
 - Seller/operator wallet submits escrow `release`.
 - Arbiter wallet submits escrow `refund` and `partial_refund`.
 - Morpheus server does not hold private keys or sign custody-changing transactions.
+
+## Verification Commands
+
+Use the browser and backend gates together:
+
+```sh
+npm run test:ui-wallet
+npm run build:ui
+npm run test:ui-wallet-flow
+make coverage-payment
+make e2e-evm-escrow
+```
+
+`npm run build:ui` verifies the committed browser bundle can be produced.
+`npm run test:ui-wallet-flow` drives a real browser through the UI pages with
+mocked API and wallet responses. `make e2e-evm-escrow` proves the contract, server
+adapter, watcher, Postgres projections, and local Anvil chain agree on deposit,
+release, full refund, and partial refund behavior.
 
 ## Watcher Verification
 

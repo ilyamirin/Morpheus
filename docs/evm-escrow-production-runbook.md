@@ -177,9 +177,10 @@ Do not use production funds until all gates pass:
 - Rust workspace tests pass.
 - Payment backend coverage passes:
   `make coverage-payment`.
-- UI wallet tests and UI build pass.
+- UI wallet tests and UI build pass:
+  `npm run test:ui-wallet` and `npm run build:ui`.
 - Browser-level wallet UI smoke passes:
-  `make ui-wallet-flow`.
+  `make ui-wallet-flow` or `npm run test:ui-wallet-flow`.
 - Local `make e2e-evm-escrow` passes.
 - Testnet escrow drill passes against the selected public testnet:
   `make testnet-evm-escrow`.
@@ -252,15 +253,16 @@ Rehearsal path:
 4. Confirm the status panel shows the expected chain, token, escrow contract,
    amount, order hash, and role.
 5. Click **Approve and deposit**.
-6. Confirm the UI shows submitted transaction state and does not mark escrow as
-   funded yet.
+6. Confirm the UI shows **Deposit submitted**, records the pending transaction hash,
+   hides **Approve and deposit**, and does not mark escrow as funded yet.
 7. As an operator, verify watcher health in the admin UI or
    `/admin/evm-escrow/status`, then wait for watcher confirmation and refresh
    orders.
 8. Confirm the UI shows escrow funded from Morpheus payment state.
 9. Open the seller UI with the seller wallet selected.
 10. Click **Release escrow**.
-11. Confirm the UI shows release submitted, then payment captured only after
+11. Confirm the UI shows **Release submitted**, records the pending transaction
+    hash, hides **Release escrow**, then shows **Payment captured** only after
     Morpheus records watcher evidence.
 12. As an operator, verify release watcher evidence in the admin UI or
     `/admin/evm-escrow/status`.
@@ -283,6 +285,8 @@ Failure drills:
 - Reject the wallet signature and verify the UI reports `wallet_rejected`.
 - Stop or misconfigure the watcher and verify submitted transactions remain
   pending instead of becoming final payment state.
+- Refresh buyer and seller order panels after watcher confirmation and verify
+  pending transaction rows disappear while the final projected state remains.
 
 Evidence to keep:
 
@@ -291,6 +295,8 @@ Evidence to keep:
 - Deposit, release, refund, and partial refund transaction hashes.
 - Admin UI state or `/admin/evm-escrow/status` response after each phase,
   captured by an operator with admin access.
+- Buyer, seller, and admin screenshots or Playwright artifacts showing pending
+  and final wallet states.
 - Explorer links for signed transactions.
 
 ### Audit Gate

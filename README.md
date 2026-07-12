@@ -28,7 +28,7 @@ Implemented today:
 - Buyer resilience flows for stale offers, pending order projections, and temporarily unavailable trusted remote catalogs.
 - Seller product image upload in the dev UI: images are compressed in-browser and published as product media metadata, with category images as fallback.
 - Three-instance Docker E2E stack: books, smartphone cases, and fashion marketplaces, each with its own Morpheus server, Synapse homeserver, and Postgres database.
-- EVM escrow adapter MVP: Vyper ERC-20 escrow, embedded finalized-log watcher, viem wallet actions for buyer deposit, seller release, and arbiter refund, plus local Anvil E2E wiring.
+- EVM escrow adapter MVP: Vyper ERC-20 escrow, embedded finalized-log watcher, viem wallet actions for buyer deposit, seller release, and arbiter full/partial refund, browser lifecycle status panels, role-wallet validation, pending transaction states, and local Anvil E2E wiring.
 
 Important current limitation:
 
@@ -40,6 +40,7 @@ User-facing edge cases now covered:
 - Withdrawn offers are removed from buyer discovery and direct order creation returns `409 OFFER_WITHDRAWN`.
 - After `Create order`, the buyer UI shows a pending projection state until Synapse AS ingest catches up, then resolves to the projected order timeline.
 - If projection does not catch up inside the polling window, the UI surfaces `projection_timeout` and keeps the submitted room/event context in Advanced output.
+- For EVM escrow orders, buyer/seller/admin wallet actions show submitted-but-not-final pending states until the watcher verifies finalized contract logs. Wrong role wallets, wrong chains, and rejected wallet requests are surfaced without submitting custody-changing transactions.
 
 ## Documents
 
@@ -205,12 +206,28 @@ Required tools:
 The runner starts Anvil, tests/deploys the Vyper contracts, starts local Postgres,
 launches `morpheus-server` with EVM escrow enabled, submits the Morpheus order and
 payment intent flow, sends token/escrow transactions with Cast, and waits for the
-embedded watcher to project authorized and captured payment states.
+embedded watcher to project authorized, captured, refunded, and partially refunded
+payment states.
+
+The browser wallet UI flow is also covered independently:
+
+```bash
+npm run test:ui-wallet
+npm run build:ui
+npm run test:ui-wallet-flow
+```
+
+The UI flow exercises the buyer path `Approve and deposit -> Deposit submitted -> Escrow funded`,
+the seller path `Release escrow -> Release submitted -> Payment captured`, admin full
+and partial refunds, role-wallet enforcement, wrong-chain handling, and wallet
+rejection handling. Submitted wallet transaction hashes are kept as UX/debug hints
+only; final payment state still comes from watcher-verified contract logs.
 
 Payment production-readiness checks:
 
 ```bash
 make coverage-payment
+npm run build:ui
 npm run test:ui-wallet-flow
 make testnet-evm-escrow
 make audit-evm-escrow
@@ -239,6 +256,8 @@ Protocol confidence is measured by contract coverage first, line coverage second
 - Every required conformance vector and migrated parity scenario must have a Rust test with stable accept/reject status and error code.
 - Behavioral coverage must exercise envelope validation, catalog replay, order lifecycle, payments, entitlements, disputes, arbitration, privacy/security, and Application Service ingest.
 - Line coverage is enforced for protocol/core/matrix/conformance crates with a practical `98%` gate.
+- Payment backend and store coverage is tracked separately with `make coverage-payment`; it is not included in the protocol-only `coverage-protocol` gate.
+- Browser payment regressions must keep the UI wallet smoke green and should cover both happy paths and failure drills before testnet or production use.
 - Protocol behavior changes require a spec note, conformance vector, and Rust behavioral test.
 
 ## License
